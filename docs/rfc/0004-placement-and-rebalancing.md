@@ -17,12 +17,11 @@ related: RFC-0001, RFC-0002, RFC-0003, RFC-0005, RFC-0006, RFC-0009
 
 ## Summary
 
-A placer selects the nodes that host each shard's replicas. We propose two kinds of placer and two adapters:
+A placer selects the nodes that host each shard's replicas. We propose two kinds of placer and one adapter:
 
 - A function placer computes each shard's nodes from the layout and the node list alone, so every node computes the same placement without a coordinator. The built-ins are `rendezvous`, `consistent-hash`, `bounded-load`, `jump` and `maglev`.
-- The `planner` computes placements in a controller from the current assignment, load and constraints. Hard constraints reject moves, and weighted goals in priority tiers score them. A local search applies the best moves under a move budget. Guardrails in CEL add application rules.
+- The `planner` computes placements in a controller from the current assignment, load and constraints. Hard constraints reject moves, and weighted goals in priority tiers score them. A local search applies the best moves under a move budget. Applications register their own constraints and goals.
 - The `static` adapter places shards where an operator lists them.
-- The `external` adapter asks an outside optimiser.
 
 The core checks every plan against the constraints and the state model before it commits anything. A plan from a faulty placer that violates either is rejected. A placer places the shards of one cell on the nodes of that cell, so cells place in parallel, each in its own controller.
 
@@ -176,7 +175,9 @@ type Goal interface {
 | `drain` | Adds a replica to a draining node | none |
 | `max-per-node` | Gives a node more than `max` replicas of any shard, or of one role | `max`, `role` |
 | `move-limits` | Exceeds the pass's move budget per node, per shard or in total | `perNode`: 2, `perShard`: 1, `total`: 100 |
-| `guardrail` | Fails a CEL expression over `shard`, `node` and `role` | `expr`, `costLimit` |
+| `match-label` | Places a replica on a node whose value of a label differs from the shard's value of the same label | `label`, such as `jurisdiction` |
+
+`match-label` keeps the shards of a regulated tenant in the tenant's jurisdiction when the partitioner labels each shard with it. A rule that no built-in covers is a Go factory of `Constraint` that the application registers, and the spec names it in the planner's configuration.
 
 #### Built-in goals
 
@@ -236,10 +237,11 @@ A pass's work depends on `maxMoves` and `sample`, not on the size of the cell, b
 
 The churn budget caps the fraction of shards that one periodic pass may move. Its default, 9%, is Slicer's per-adjustment key churn budget. `triggers` skip a periodic pass while the most loaded node is below `activeAbove` of its capacity, or while the ratio of the highest to the mean node load is below `minImbalance`. Slicer suppresses rebalancing below 25% CPU for the same reason: when no node is at risk, a move has a cost and no benefit.
 
-### Adapters
+### The static adapter
 
-- `static` places each shard on the nodes and roles an operator lists in the spec. It reports a shard whose listed node is not live as unplaced, unless its `failover` field names another placer to fill the gap.
-- `external` sends the `Input` to an outside optimiser over gRPC and takes its `Plan` back, within a deadline. The core validates the returned plan like any other.
+`static` places each shard on the nodes and roles an operator lists in the spec. It reports a shard whose listed node is not live as unplaced, unless its `failover` field names another placer to fill the gap.
+
+An application that uses an optimiser in another process registers a `Placer` that calls it. The core validates the plan that it returns like any other.
 
 ### Load
 
@@ -266,7 +268,7 @@ In a namespace with `delegated` ownership, the application's authority chooses e
 
 Formulate placement as a mixed-integer program or a constraint program and solve it with CP-SAT or a MIP solver. The solver proves optimality or bounds the gap, and new constraints are formulas.
 
-**Why not:** SM found MIP too slow at its scale and moved to local search. OR-Tools has no officially supported Go binding. Its maintainers describe the Go wrapper as community-built and dependent on Bazel. A cgo solver also removes determinism across platforms. The `external` adapter lets an application use such a solver outside the process.
+**Why not:** SM found MIP too slow at its scale and moved to local search. OR-Tools has no officially supported Go binding. Its maintainers describe the Go wrapper as community-built and dependent on Bazel. A cgo solver also removes determinism across platforms. An application can still register a placer that calls such a solver in another process.
 
 ### Simulated annealing as the only search
 
@@ -278,7 +280,7 @@ Service Fabric's approach: random moves, with worsening moves accepted at a prob
 
 Place every shard with a hash ring. A ring runs without a controller and moves few shards on a membership change. Every node computes the same ring.
 
-**Why not:** a ring cannot honour capacity, zone spread, regional preference or a guardrail, and it balances only on counts, not on measured load. It remains available as a function placer for applications that need nothing more.
+**Why not:** a ring cannot honour capacity, zone spread, regional preference or a label rule, and it balances only on counts, not on measured load. It remains available as a function placer for applications that need nothing more.
 
 ### One scoring pass per shard
 
@@ -292,7 +294,6 @@ Filter the feasible nodes and pick the highest-scoring one for each shard, as a 
 - We have not measured the planner. SM reports 30 seconds for 75,000 shards on 1,000 servers with a mature, heavily optimised solver, growing to 205 seconds for 375,000 shards on 5,000 servers. A first Go implementation has none of that optimisation.
 - A plan is deterministic only when the move budget ends the pass. A pass that the timeout ends produces a result that depends on the machine.
 - Tiers and weights are configuration that users must understand. A goal list with badly chosen weights moves shards without improving anything that matters.
-- Each guardrail costs one CEL evaluation per candidate move. With 16 samples per shard and 100,000 shards, a pass evaluates each guardrail up to 1.6 million times.
 - Function placers that ignore load can overload a node that serves hot shards. `bounded-load` limits the imbalance in shard count, not in measured load.
 - Placement never crosses a cell. A cell whose nodes are full cannot use the free capacity of another cell until an operator moves nodes between them.
 

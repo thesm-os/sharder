@@ -28,7 +28,7 @@ By default a cell holds at most 5,000 nodes and 1,000,000 shards. An operator sp
 The target scale is larger than one controller, one store cluster or one membership pool can serve:
 
 - One control-plane instance has a ceiling. The largest instances of SM's control plane manage about 50,000 servers and 1.3 million shards, each on an 18-core machine with 64 GB of memory. SM as a whole manages nearly 100 million shards on over one million servers, because it divides large applications into "non-overlapping partitions, where each partition typically comprises thousands of servers and hundreds of thousands of shard replicas".
-- One etcd cluster has ceilings. It accepts 1.5 MiB per request and 128 operations per transaction by default, suggests at most 8 GiB of data, and completes more than 30,000 requests per second under heavy load by its documentation. Each client connection costs it 17 KB of memory.
+- One store cluster has ceilings. An etcd cluster, for example, accepts 1.5 MiB per request and 128 operations per transaction by default, suggests at most 8 GiB of data, and completes more than 30,000 requests per second under heavy load by its documentation. Each client connection costs it 17 KB of memory.
 - One membership pool has a ceiling. HashiCorp recommends at most 5,000 Consul agents per gossip pool, and Kubernetes found that node heartbeats reached etcd's storage limit in clusters of more than 2,000 nodes whose Node objects listed many images.
 - One routing table has a ceiling. A client cannot hold every route of a namespace with a hundred million shards. Bigtable resolves tablet locations through a three-level hierarchy that addresses 2^34 tablets, with clients that cache locations lazily.
 
@@ -45,7 +45,7 @@ A cell is a disjoint set of nodes, the shards placed on them and one controller.
 - Every replica of a shard is on a node of the shard's cell. Placement, the disruption budget and the planner therefore work within one cell.
 - Each cell has its own scope in the store, its own membership and its own lease sessions.
 
-The spec bounds a cell. `cells.maxNodes` defaults to 5,000, the size of pool that HashiCorp recommends for Consul's gossip, at which a cell's lease renewals reach about 1,500 per second with the default TTL. `cells.maxShards` defaults to 1,000,000, near the 1.3 million shards of SM's largest control-plane instance, and about 1 GB of etcd data by our estimate. The root reports a cell above either bound. It does not split cells by itself.
+The spec bounds a cell. `cells.maxNodes` defaults to 5,000, the size of pool that HashiCorp recommends for Consul's gossip, at which a cell sends about 1,500 lease renewals per second with the default TTL. `cells.maxShards` defaults to 1,000,000, near the 1.3 million shards of SM's largest control-plane instance, and about 1 GB of store data at about 1 KB per shard, by our estimate. The root reports a cell above either bound. It does not split cells by itself.
 
 ### The root
 
@@ -73,11 +73,11 @@ A cell's controller starts in four steps:
 
 ```mermaid
 flowchart TB
-    root[Root controller] -->|cell map and controller placements| rs[(Root scope on etcd cluster A)]
+    root[Root controller] -->|cell map and controller placements| rs[(Root scope on store cluster A)]
     root -->|cell c1 at epoch 7| c1[Controller of cell c1]
     root -->|cell c2 at epoch 3| c2[Controller of cell c2]
-    c1 -->|commits fenced at epoch 7| s1[(Scope of c1 on etcd cluster A)]
-    c2 -->|commits fenced at epoch 3| s2[(Scope of c2 on etcd cluster B)]
+    c1 -->|commits fenced at epoch 7| s1[(Scope of c1 on store cluster A)]
+    c2 -->|commits fenced at epoch 3| s2[(Scope of c2 on store cluster B)]
     c1 -->|callbacks| n1[Nodes of cell c1]
     c2 -->|callbacks| n2[Nodes of cell c2]
     router[Router in a client] -->|cell map| rs
@@ -87,7 +87,7 @@ flowchart TB
 
 ### Store scopes on more than one cluster
 
-The etcd adapter maps each scope to one etcd cluster through a table in its configuration. A deployment adds clusters as its cells grow: by our estimate, a cluster within etcd's suggested 8 GiB holds about seven cells of 1,000,000 shards with three replicas, or many more small cells. The root scope is small and can share a cluster with any cell. A cell's scope never spans clusters, so every commit remains one transaction on one cluster.
+A store adapter can place each scope on a backend cluster of its own, so a deployment adds clusters as its cells grow. The etcd adapter maps scopes to clusters through a table in its configuration, and by our estimate one etcd cluster within its suggested 8 GiB fits about seven cells of 1,000,000 shards with three replicas. The root scope is small and can share a cluster with any cell. A cell's scope never spans clusters, so every commit remains one transaction on one cluster.
 
 ### Routing across cells
 
@@ -105,7 +105,7 @@ Every component that grows with the namespace is per cell, and only the root and
 | Component | Load per cell, at the default bounds | How it scales |
 |---|---|---|
 | Controller | One planner, one transition engine, and lookups for up to 5,000 nodes and 1,000,000 shards | The root spreads cells over controller processes |
-| Store | About 1 GB of placements and about 1,500 lease renewals per second, by our estimate | The adapter spreads scopes over etcd clusters |
+| Store | About 1 GB of placements and about 1,500 lease renewals per second, by our estimate | The store adapter spreads scopes over backend clusters |
 | Membership | One session per node in the cell's scope | Per cell |
 | Routers | One watch of the root scope, and lookups at the controllers of the cells used | Per cell used |
 | Root | One placement and one controller session per cell | Grows with the number of cells only |
@@ -131,7 +131,7 @@ The split never moves data. Step 2 moves replicas within one cell, through the n
 | A cell's controller process crashes | Its session in the root scope expires | The root places the cell on another process at a higher epoch. The new controller continues the cell's transitions | None. Routers keep cached routes, and lookups of uncached routes read the cell's scope |
 | A replaced controller keeps running | Its next commit fails with `epoch.ErrFenced`. A node refuses its callbacks once the node has seen the new controller's higher epoch in a callback or a report reply | It abdicates | None |
 | The root's leader crashes | Its election key expires | Another controller process wins `Campaign` and continues | None. Cells keep their controllers, and no cell can change controller meanwhile |
-| An etcd cluster is unavailable | Failed commits and renewals in its scopes | Its cells stop transitions. Other cells continue | Its cells' writers stop at their lease deadline or continue fenced, as the ownership mode configures |
+| A store cluster is unavailable | Failed commits and renewals in its scopes | Its cells stop transitions. Other cells continue | Its cells' writers stop at their lease deadline or continue fenced, as the ownership mode configures |
 
 ## Alternatives considered
 
@@ -139,7 +139,7 @@ The split never moves data. Step 2 moves replicas within one cell, through the n
 
 Run the whole namespace in one controller with one scope, as SM's control plane does for one partition.
 
-**Why not as the only mode:** one controller, one etcd cluster and one membership pool each reach a ceiling below the target scale, as the Motivation measures. A namespace with one cell is exactly this design, so small namespaces lose nothing.
+**Why not as the only mode:** one controller, one store cluster and one membership pool each have a ceiling below the target scale, as the Motivation measures. A namespace with one cell is exactly this design, so small namespaces lose nothing.
 
 ### Cells that share nodes
 
@@ -184,7 +184,6 @@ Split a cell as soon as it exceeds a bound, without an operator.
 ## Unresolved and future work
 
 - Moving a shard from one cell to another without splitting the cell is not proposed here.
-- Placing a cell's scope on a store other than etcd is not proposed here. The store interface admits it.
 - Balancing load across cells automatically is not proposed here.
 
 ## References

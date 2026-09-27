@@ -23,7 +23,7 @@ Every strategy depends on these mechanisms:
 - The store persists the cell map, each cell's assignment and the transitions in flight.
 - Distribution delivers each committed change to agents and routers.
 
-We propose one interface for each, written in core's vocabulary: epochs from `epoch`, conditional-write errors from `version`, pages from `page`, and error classes from `errs`. The store is an interface with a conformance suite, `store/storetest`, and etcd is its default adapter. Each cell has its own scope in the store, and a deployment can place scopes on different etcd clusters, so the store scales with the number of cells.
+We propose one interface for each, written in core's vocabulary: epochs from `epoch`, conditional-write errors from `version`, pages from `page`, and error classes from `errs`. The store and membership are interfaces with conformance suites. The root module contains an in-memory store and a static membership, and adapters in their own modules implement both over real backends. Each adapter reports its own limits, so the core depends on no backend. Each cell has its own scope in the store, and an adapter can place scopes on separate backend clusters, so the store scales with the number of cells.
 
 Every commit goes through a writer bound to one epoch, and the store applies core's fence laws to it: a commit from a replaced controller fails with `epoch.ErrFenced`, and a commit whose generation moved fails with `version.ErrMismatch`. An agent that restarts reads its own placements from its cell's scope through a per-node index, and resumes its non-writer replicas before a controller contacts it.
 
@@ -33,13 +33,12 @@ These mechanisms set the bounds within which the strategies work:
 
 - Detection time spans an order of magnitude across published defaults. Pekko's phi accrual detector triggers after about 5.5 seconds by default. Kubernetes marks a node unreachable after a 50-second grace period and waits 5 minutes before evicting its pods. Dicer detects a crashed pod in roughly 30 seconds.
 - Gossip runs without a consensus store, and its views are weaker than a store's. SWIM's suspicion mechanism "reduces (but does not eliminate)" false failure detections, and Lifeguard cut the remaining false positives by more than 50 times. A gossip view cannot back a lease that a fence relies on.
-- The store bounds the size of a commit and of a scope. etcd allows 128 operations in one transaction and 1.5 MiB in one request by default. Its default storage quota is 2 GiB, and it suggests at most 8 GiB. A controller that writes a large plan as one transaction fails at those limits.
-- The store bounds throughput. etcd's documentation measures a three-member cluster at more than 30,000 requests per second under heavy load, and its benchmark at 44,341 to 50,104 single-key writes per second from 1,000 clients.
-- The store bounds fan-out. etcd's watch benchmark measures 17 KB of server memory per client connection, 18 KB per watch stream and 350 bytes per watched range. Kubernetes found that node heartbeats reached etcd's storage limit in clusters of more than 2,000 nodes whose Node objects listed many images, and moved the heartbeats to small Lease objects.
+- Every consistent store bounds the size of a commit and of a scope, and the bounds differ between stores. etcd, for example, allows 128 operations in one transaction and 1.5 MiB in one request by default, and suggests at most 8 GiB of data. A controller that writes a large plan as one commit fails at those limits, so the core has to learn them from the adapter.
+- A consistent store bounds throughput and fan-out. etcd's documentation measures a three-member cluster at more than 30,000 requests per second under heavy load, and its watch benchmark measures 17 KB of server memory per client connection. Kubernetes found that node heartbeats brought etcd to its storage limit in clusters of more than 2,000 nodes whose Node objects listed many images, and moved the heartbeats to small Lease objects.
 - The control plane can fail without taking the data plane down. SM's application servers read their assignment at start-up "without dependency on the SM control plane", and Slicer's clients keep routing on cached assignments when every component of the Slicer service fails.
 - A deposed controller can continue to act as leader. Slicer's preferred-assigner rule is eventually consistent, and its storage concurrency control prevents divergence. Helix's issue 1027 traced double masters to two controller pipelines running at once.
 
-Storage must also be replaceable. etcd is the default, but the library defines the store as an interface, so that a team that runs another consistent store can write an adapter, and a conformance suite decides whether the adapter is correct.
+Storage must also be replaceable. A team that runs another consistent store writes an adapter, and the conformance suite decides whether the adapter is correct. The root module then does not import the client of any store.
 
 ## Detailed design
 
@@ -91,17 +90,15 @@ type Membership interface {
 }
 ```
 
-| Backend | Package | Liveness mechanism | Incarnation | Detection time with defaults | Provides |
-|---|---|---|---|---|---|
-| `etcd` | `membership/etcd` | A key per node in the cell's scope, attached to a lease with the spec's TTL | The key's create revision | The TTL, 10 s | `leases` |
-| `kubernetes` | `membership/kubernetes` | A `coordination.k8s.io` Lease per node, renewed by the agent | The Lease's resource version at creation | The TTL, 10 s | `leases`, `ordinal-nodes` |
-| `static` | `membership/static` | None. The spec lists the nodes | Always 1 | Never | `ordinal-nodes` |
+| Implementation | Module | Liveness mechanism | Detection time with defaults | Provides |
+|---|---|---|---|---|
+| `membership/static` | the root module | None. The embedder lists the nodes | Never | `ordinal-nodes` |
+| etcd adapter | `go.thesmos.sh/sharder/etcd` | A key per node in the cell's scope, attached to a lease | The lease's TTL, 10 s | `leases` |
+| Kubernetes adapter | `go.thesmos.sh/sharder/kubernetes` | A `coordination.k8s.io` Lease per node, renewed by the agent | The Lease's duration, 10 s | `leases`, `ordinal-nodes` |
 
-The `kubernetes` backend uses its own Lease objects instead of the kubelet's node leases. The node lifecycle's 50-second grace period is too slow for failover.
+Each adapter declares its capabilities through `config.Provider`, and the controller checks the spec's requirements against them. Every implementation keeps each node's description with its session, including the node's identity, so the cell's controller knows which identity each node's reports must come from.
 
-Every backend keeps each node's description with its session, including the node's identity, so the cell's controller knows which identity each node's reports must come from. The `static` backend takes the identities from the spec's node list.
-
-Each cell's nodes register in the cell's own scope, so the renewals of a namespace spread over its cells and over the etcd clusters that store them. A cell of 5,000 nodes that renew every 3.3 seconds, a third of the default TTL, sends about 1,500 renewals per second to its store. We have not measured etcd's renewal throughput.
+Each cell's nodes register in the cell's own scope, so the renewals of a namespace spread over its cells and over the backend clusters that store them. A cell of 5,000 nodes that renew every 3.3 seconds, a third of the default TTL, sends about 1,500 renewals per second to its store. We have not measured any backend's renewal throughput.
 
 The core waits `failoverDelay` after a node's session ends before it moves the node's replicas, as SM lets applications configure. The default is zero. A node that restarts inside the delay registers a new incarnation, and the core restores its replicas through the normal protocols, with a new epoch for every writer.
 
@@ -209,9 +206,20 @@ type Event struct {
  Mutation   Mutation
 }
 
-// Leadership is the tenure of one root controller. It lasts until Done is closed.
+// Limits bounds what one commit may contain. The controller splits a larger plan
+// across consecutive generations, each a valid assignment.
+type Limits struct {
+ // MaxPlacements is the most placements that one commit may put or delete,
+ // together with their transitions.
+ MaxPlacements int
+ // MaxBytes is the most bytes that one commit may write.
+ MaxBytes int
+}
+
+// Leadership is one tenure in an election. It lasts until Done is closed.
 type Leadership interface {
- // Term is the tenure's fence epoch. The store grants each term to one candidate.
+ // Term is the tenure's fence epoch. The store grants each term of an election to
+ // one candidate.
  Term() epoch.Epoch
  Done() <-chan struct{}
  Resign(ctx context.Context) error
@@ -239,8 +247,13 @@ type Store interface {
  Watch(ctx context.Context, s Scope, from epoch.Epoch, node shard.NodeID) iter.Seq2[Event, error]
  // Writer returns a writer for s bound to term. It performs no I/O.
  Writer(s Scope, term epoch.Epoch) Writer
- // Campaign blocks until candidate leads the root scope s, or until ctx ends.
- Campaign(ctx context.Context, s Scope, candidate string) (Leadership, error)
+ // Campaign blocks until candidate leads election in scope s, or until ctx ends.
+ // The root campaigns in its scope for the election "root". In the leaderless
+ // topology, a shard's writer campaigns in the cell's scope for the shard's ID.
+ // candidate is the process's identity when the transport authenticates peers.
+ Campaign(ctx context.Context, s Scope, election, candidate string) (Leadership, error)
+ // Limits returns the bounds of one commit.
+ Limits() Limits
  Close() error
 }
 ```
@@ -248,6 +261,13 @@ type Store interface {
 The store keeps one watermark per scope and applies core's fence laws to every commit. A commit is admitted when its writer's epoch is at or above the watermark, a greater epoch advances the watermark, and the check runs in the same transaction as the commit. A cell's controller writes with the epoch that the root granted it, and the root writes with the term that `Campaign` granted it.
 
 A controller's first commit in a scope advances the watermark to the controller's epoch before the controller reads the scope, so every later commit of the controller it replaced fails, as a fenced writer's acquisition does before its first read. The root's first commit is empty. A cell controller's first commit writes the cell's record: its own address, its identity and its epoch. Agents read the record to learn which identity their controller's calls must come from, and a replaced controller cannot overwrite it.
+
+A backend qualifies when it provides these mechanisms:
+
+- an atomic commit of many keys, conditioned on stored values
+- a watch of ordered changes that resumes from a generation
+- leases that expire on a timer
+- an election that grants each term to one candidate
 
 #### Laws and conformance
 
@@ -257,8 +277,9 @@ Every store adapter passes `store/storetest`, which checks these laws:
 2. Every `Writer` is a fenced writer. The suite runs core's `coretest/epochtest.AssertFencedWriter` over it: a commit through a superseded writer returns `epoch.ErrFenced`, classifies as `errs.Conflict` and changes nothing, and a writer at the current epoch commits.
 3. Every page of one `Read` is at one generation, and walking the pages to the end yields every selected placement once.
 4. `Watch` yields every generation after the given one exactly once, in order. A node-filtered `Watch` and `Read` return exactly the placements with a replica on the node.
-5. `Campaign` grants each term to one candidate. Core's admit-equal law is sound only under this condition.
-6. A commit that returned is readable, with the same generation, after the store is opened again.
+5. `Campaign` grants each term of an election to one candidate. Core's admit-equal law is sound only under this condition.
+6. A commit within `Limits` succeeds unless its generation moved or its writer is superseded.
+7. A commit that returned is readable, with the same generation, after the store is opened again.
 
 ```go
 // Package storetest checks a store.Store against the laws of package store.
@@ -289,43 +310,9 @@ func AssertStore(t *testing.T, newStore func(t *testing.T) store.Store, opts ...
 
 The suite follows core's own conformance suites for storage, which check every adapter against the laws of its package and across a restart. The in-memory store, `store/memory`, is its first subject.
 
-#### The etcd store
-
-Each scope is a prefix: `/sharder/<ns>/root` for the root, and `/sharder/<ns>/cells/<cell>` for a cell.
-
-| Key under the scope | Value | Changed by |
-|---|---|---|
-| `generation` | The current generation, in `epoch.Epoch`'s 8-byte big-endian encoding | Every commit |
-| `term` | The watermark: the highest epoch admitted, in the same encoding | Every commit that advances it |
-| `layout-version` | The layout version | Resharding |
-| `cell` | The cell's record: its controller's address, identity and epoch | The controller's first commit, in a cell's scope |
-| `spec` | The accepted spec, with the proposal and the signatures that approved it | Spec changes, in the root scope |
-| `approvals/<version>` | One version of the approvals section, as the signed spec proposal that introduced it | Spec changes that change the approvals section, in the root scope |
-| `proposal/<id>` | An applied proposal with its signatures, until its `Expires` passes | Commits that apply a proposal, and later commits that forget it |
-| `placement/<start>` | One shard's placement, keyed by the hexadecimal start of its range | Commits that change the shard |
-| `node/<node>/<start>` | The shard ID and epoch of one of the node's replicas | Commits that add or remove the node's replicas |
-| `transition/<shard>` | One shard's transition in flight | The transition engine |
-| `leader/<lease>` | The candidate's name, attached to its lease. The name is the candidate's identity when the embedder authenticates peers | Election, in the root scope |
-| `member/<node>` | The node's description, attached to its lease | `membership/etcd` |
-| `own/<shard>` | The owning node, attached to its lease | The leaderless topology only |
-
-A commit is one etcd transaction. Its conditions compare the `generation` value with the expected generation, and the `term` value with the writer's epoch plus one, as big-endian bytes: `term < epoch+1` admits a writer at or above the watermark. Its operations write the changed keys, the next generation and the writer's epoch. The encodings are the canonical binary forms that `epoch.Epoch` defines, which sort as bytes in numeric order. The root's term is the create revision of its key in etcd's `concurrency.Election`, which etcd grants to one candidate, and which core's fence documentation names as a valid source of fence epochs.
-
-Placements are keyed by the start of their range, so the placement that contains a position is one reverse range read with a limit of one. The per-node index lets an agent read and watch only its own placements. Moving one replica therefore changes three keys: the placement and two index entries.
-
-The adapter maps each scope to one etcd cluster through a table in its configuration, so a deployment places cells on as many clusters as their size needs.
-
-| Quantity | Bound | Reason |
-|---|---|---|
-| Keys changed in one commit | 120, about 30 replica moves with their transition records | etcd allows 128 operations per transaction by default. The controller splits a larger plan across consecutive generations, each a valid assignment |
-| Bytes in one commit | 1.5 MiB | etcd's default maximum request size |
-| Size of a cell's scope | About 1 KB per shard with three replicas, by our estimate: 1 GB for a cell of 1,000,000 shards | The placement, three index entries and etcd's per-key overhead |
-| Cells per etcd cluster | About 7 cells of 1,000,000 shards within etcd's suggested 8 GiB, or many more small cells | The size of each cell's scope, with room for revisions between compactions |
-| Watch history | The store's compaction interval | A watcher that falls further behind gets `ErrCompacted` and reads again |
-
 ### The controller
 
-One `Controller` serves every namespace of its process. It takes the store and the client for the agents of its own process as arguments, and core's seams and the embedder's transport as options. It resolves every other strategy of a namespace from the namespace's spec through the registry.
+One `Controller` serves every namespace of its process. It takes the store, the membership and the client for calls to agents as arguments, and core's seams as options. It resolves every other strategy of a namespace from the namespace's spec through the registry, with the capabilities that the store and the membership provide. The controller implements `protocol.ControllerServer`, which the embedder serves through a transport adapter.
 
 ```go
 // Package controller runs the root and cell controllers of namespaces: the planning
@@ -340,6 +327,7 @@ import (
  "go.thesmos.sh/core/rand"
  "go.thesmos.sh/core/telemetry"
  "go.thesmos.sh/sharder/config"
+ "go.thesmos.sh/sharder/membership"
  "go.thesmos.sh/sharder/protocol"
  "go.thesmos.sh/sharder/shard"
  "go.thesmos.sh/sharder/store"
@@ -365,6 +353,8 @@ type Controller struct {
  // unexported fields
 }
 
+var _ protocol.ControllerServer = (*Controller)(nil)
+
 // Option configures a Controller.
 type Option func(*options)
 
@@ -373,7 +363,6 @@ type options struct {
  rand      rand.Rand
  telemetry telemetry.Reporter
  logger    *slog.Logger
- transport *protocol.Transport
  trust     map[shard.Namespace]config.Trust
 }
 
@@ -392,27 +381,30 @@ func WithTelemetry(r telemetry.Reporter) Option
 // WithLogger sets the controller's logger. The default is slog.Default.
 func WithLogger(l *slog.Logger) Option
 
-// WithTransport sets the embedder's gRPC transport. The controller serves
-// ControllerService on it, calls the agents of other processes through it, and checks
-// the identity of each agent that reports with it. Without it, the controller serves
-// no network connection and calls only the agents that its client serves.
-func WithTransport(t protocol.Transport) Option
-
 // WithTrust makes the controller apply only the specs and proposals of namespace ns
 // whose approvals verify from the anchor in t. A namespace without an anchor accepts
 // every spec.
 func WithTrust(ns shard.Namespace, t config.Trust) Option
 
-// New returns a controller that keeps namespace state in st and calls agents through
-// client. It builds each namespace's other strategies from the namespace's spec with
-// reg.
-func New(reg *config.Registry, st store.Store, client protocol.Client, opts ...Option) (*Controller, error)
+// New returns a controller that keeps namespace state in st, follows the live nodes
+// of each cell through m, and calls agents through agents. It builds each namespace's
+// strategies from the namespace's spec with reg.
+func New(reg *config.Registry, st store.Store, m membership.Membership, agents protocol.AgentClient, opts ...Option) (*Controller, error)
 
 // Run campaigns for the root of each namespace and hosts the cells that the roots
 // assign to this controller, until ctx ends. It runs every loop under task.Run, so it
 // returns only after every goroutine it started has returned: ctx.Err() once ctx
 // ends, or the first error that stops it before then.
 func (c *Controller) Run(ctx context.Context, namespaces ...shard.Namespace) error
+
+// Report accepts one report of an agent of a cell that this controller hosts. It
+// returns an error of class errs.Denied when caller is not the registered identity of
+// r.Node.
+func (c *Controller) Report(ctx context.Context, caller shard.Identity, r protocol.Report) (protocol.Ack, error)
+
+// Lookup returns the placements of cell that contain positions, and up to prefetch
+// placements after the last of them, in position order, from the controller's memory.
+func (c *Controller) Lookup(ctx context.Context, caller shard.Identity, cell shard.CellID, positions [][]byte, prefetch int) ([]protocol.Located, error)
 ```
 
 ### Distribution
@@ -437,7 +429,7 @@ An agent reads its node's placements from its cell's scope, through the per-node
 
 ### The leaderless topology
 
-A leaderless namespace has one cell. Without a controller, every agent computes placement with the namespace's function placer from the layout and the membership view. For `exclusive` ownership, the agent that the function selects as a shard's writer acquires the shard's ownership key. The acquisition is a transaction that creates `own/<shard>` in the cell's scope only if the key does not exist, attached to the agent's lease. The key's create revision is the shard's epoch. An agent that the function no longer selects deletes the key after it stops writing. A crashed agent's key expires with its lease. Epochs in this topology are store revisions, which increase by more than one.
+A leaderless namespace has one cell. Without a controller, every agent computes placement with the namespace's function placer from the layout and the membership view. For `exclusive` ownership, the agent that the function selects as a shard's writer campaigns in the cell's scope for the shard's ID, and the term that `Campaign` grants is the shard's epoch. An agent that the function no longer selects resigns after it stops writing. A crashed agent's tenure ends with its lease. The terms of one election increase, but not necessarily by one.
 
 Every agent watches the cell's membership, so each change of membership reaches every agent. The default bound of 5,000 nodes per cell bounds that fan-out. A leaderless deployment that outgrows one cell runs more than one namespace.
 
@@ -449,37 +441,75 @@ Every agent watches the cell's membership, so each change of membership reaches 
 | The root | Keep serving | Keep routing on the last cell map | Continue in every cell. No cell can change controller | Renew normally |
 | The store of a cell | Keep serving | Keep routing on cached routes | Stop in that cell | Cannot renew. Writers stop at their deadline or continue fenced, as the ownership mode configures |
 
+### Adapters
+
+Each adapter is a Go module of its own, so an application imports only the backends it uses.
+
+#### etcd
+
+`go.thesmos.sh/sharder/etcd` implements the store and the membership over etcd v3. Each scope is a prefix: `/sharder/<ns>/root` for the root, and `/sharder/<ns>/cells/<cell>` for a cell.
+
+| Key under the scope | Value | Changed by |
+|---|---|---|
+| `generation` | The current generation, in `epoch.Epoch`'s 8-byte big-endian encoding | Every commit |
+| `term` | The watermark: the highest epoch admitted, in the same encoding | Every commit that advances it |
+| `layout-version` | The layout version | Resharding |
+| `cell` | The cell's record | The controller's first commit, in a cell's scope |
+| `spec` | The accepted spec, with the proposal and the signatures that approved it | Spec changes, in the root scope |
+| `approvals/<version>` | One version of the approvals section, as the signed spec proposal that introduced it | Spec changes that change the approvals section |
+| `proposal/<id>` | An applied proposal with its signatures, until its `Expires` passes | Commits that apply a proposal, and later commits that forget it |
+| `placement/<start>` | One shard's placement, keyed by the hexadecimal start of its range | Commits that change the shard |
+| `node/<node>/<start>` | The shard ID and epoch of one of the node's replicas | Commits that add or remove the node's replicas |
+| `transition/<shard>` | One shard's transition in flight | The transition engine |
+| `election/<name>/<lease>` | The candidate, attached to its lease | `Campaign` |
+| `member/<node>` | The node's description, attached to its lease | Membership |
+
+A commit is one etcd transaction. Its conditions compare the `generation` value with the expected generation, and the `term` value with the writer's epoch plus one, as big-endian bytes: `term < epoch+1` admits a writer at or above the watermark. A term is the create revision of the candidate's key in etcd's `concurrency.Election`, which etcd grants to one candidate, and which core's fence documentation names as a valid source of fence epochs. Placements are keyed by the start of their range, so the placement that contains a position is one reverse range read with a limit of one. Moving one replica changes three keys: the placement and two index entries.
+
+The adapter maps each scope to one etcd cluster through a table in its configuration. Its limits and sizes:
+
+| Quantity | Value | Reason |
+|---|---|---|
+| `Limits.MaxPlacements` | 30 | etcd allows 128 operations per transaction by default, and a move takes about four |
+| `Limits.MaxBytes` | 1.5 MiB | etcd's default maximum request size |
+| Size of a cell's scope | About 1 KB per shard with three replicas, by our estimate | The placement, three index entries and etcd's per-key overhead |
+| Cells per etcd cluster | About 7 cells of 1,000,000 shards within etcd's suggested 8 GiB | The size of each cell's scope, with room for revisions between compactions |
+
+#### Kubernetes
+
+`go.thesmos.sh/sharder/kubernetes` implements membership with one `coordination.k8s.io` Lease per node, which the agent renews. It uses its own Lease objects instead of the kubelet's node leases, because the node lifecycle's 50-second grace period is too slow for failover.
+
 ## Alternatives considered
 
 ### Gossip for membership and for the assignment
 
 Spread membership and the assignment by gossip, as Cassandra and Ringpop do, or through `hashicorp/memberlist`. With gossip, there is no store to operate and no single point of failure.
 
-**Why not:** gossip views converge only eventually, so two nodes can disagree on a shard's owner for a while, and gossip lacks a lease for a fence to rely on. Gossip does not remove the need for cells either. HashiCorp recommends at most 5,000 Consul agents per gossip pool, because gossip messages can queue faster than a pool with churn transmits them, and it names churn rather than size as the risk. Cells already bound a namespace's membership to 5,000 nodes through store leases that do support fencing. The `Membership` interface admits a gossip backend, and this proposal does not include one.
+**Why not:** gossip views converge only eventually, so two nodes can disagree on a shard's owner for a while, and gossip lacks a lease for a fence to rely on. Gossip does not remove the need for cells either. HashiCorp recommends at most 5,000 Consul agents per gossip pool, because gossip messages can queue faster than a pool with churn transmits them, and it names churn rather than size as the risk. Cells already bound a namespace's membership to 5,000 nodes through store leases that do support fencing. The `Membership` interface admits a gossip adapter, and this proposal does not include one.
 
 ### Heartbeats to the cell controller instead of store leases
 
-Let agents renew their leases by heartbeats on the report stream to their cell's controller, as Kafka's group coordinators time out consumer sessions. The store then receives no renewals at all.
+Let agents renew their leases by heartbeats in their reports to the cell's controller, as Kafka's group coordinators time out consumer sessions, which removes the renewals from the store.
 
-**Why not in this proposal:** a lease granted by a controller needs a rule for the controller's own failure: a new controller must wait out every lease the old one granted before it moves a writer. Store leases avoid that rule, and cells already divide the renewals across etcd clusters. The alternative becomes necessary if a cell's renewals exceed what one etcd cluster sustains, which we have not measured.
+**Why not in this proposal:** a lease granted by a controller needs a rule for the controller's own failure. A new controller must wait until every lease of the old controller has expired before it moves a writer. Store leases avoid that rule, and cells already divide the renewals across store clusters. The alternative becomes necessary if a cell's renewals exceed what one store cluster sustains, which we have not measured.
 
 ### ZooKeeper
 
 SM and Helix use ZooKeeper for membership, election and the assignment, at large scale. Its ephemeral nodes and sessions match this design's leases.
 
-**Why not as the first adapter:** Helix's maintainers report ZooKeeper write load as a cause of slow mastership handoff and session expiry at scale. ZooKeeper is also a JVM service, and the default adapters of this proposal use etcd. A ZooKeeper adapter can implement `store.Store` and pass `store/storetest`.
+**Why not as the first adapter:** Helix's maintainers report ZooKeeper write load as a cause of slow mastership handoff and session expiry at scale, and ZooKeeper is a JVM service. A ZooKeeper adapter can implement `store.Store` and pass `store/storetest`.
 
 ### Raft inside the library
 
 Embed a Raft log in the controller processes, as Splitter does. The library then runs without an external store.
 
-**Why not:** the library would operate a consensus log, with its data directories, snapshots, membership changes and recovery procedures. An external etcd moves that work to a component that already does it.
+**Why not:** the library would operate a consensus log, with its data directories, snapshots, membership changes and recovery procedures. An external consistent store moves that work to a component that already does it.
 
 ### The Kubernetes API as the store
 
 Store specs and assignments as custom resources, with resource versions for compare-and-set and watches for distribution.
 
-**Why not as the default:** the Kubernetes API server is itself backed by etcd. It adds its own request limits, and every watch passes through it. The `kubernetes` membership backend is included, because leases and node ordinals are where Kubernetes adds information that etcd does not have.
+**Why not as an adapter here:** the Kubernetes API server is itself backed by etcd. It adds its own request limits, and every watch passes through it. The Kubernetes membership adapter is included, because leases and node ordinals are where Kubernetes adds information that a store does not have.
 
 ### PostgreSQL
 
@@ -495,12 +525,12 @@ Define the store over a generic key-value interface, with the sharder's layout o
 
 ## Drawbacks
 
-- etcd becomes a production dependency for every namespace with exclusive ownership. Its operation, including compaction, defragmentation and quota, is the application team's work, and a namespace of many large cells needs several etcd clusters.
-- The 120-key commit limit splits large plans across generations. Routers then see intermediate assignments. Each is valid, but a large rebalance takes one commit per 30 replica moves.
-- The per-node index adds two keys to every replica move, in exchange for agents that read and watch only their own replicas.
-- A router with `watch` puts one etcd watch per cell on the store. With many clients this load grows linearly, and `lookup` exists for that case.
+- Every namespace with exclusive ownership needs a store adapter with leases and elections, and an operated consistent store behind it. The etcd adapter is the only one proposed, so its operation, including compaction, defragmentation and quota, is the application team's work.
+- A store's commit limit splits large plans across generations. Routers then see intermediate assignments. Each is valid, but with the etcd adapter a large rebalance takes one commit per 30 replica moves.
+- The per-node index adds writes to every replica move, in exchange for agents that read and watch only their own replicas.
+- A router with `watch` puts one store watch per cell on the store. With many clients this load grows linearly, and `lookup` exists for that case.
 - Restoring writers only with a new epoch delays write availability after a fast restart by one handoff protocol run.
-- The store and membership adapters are five implementations to keep correct: `store/memory`, `store/etcd`, `membership/etcd`, `membership/kubernetes` and `membership/static`.
+- The store and membership implementations are five to keep correct: `store/memory` and `membership/static` in the root module, the etcd module's store and membership, and the Kubernetes module's membership.
 
 ## Open questions
 
@@ -512,7 +542,7 @@ Define the store over a generic key-value interface, with the sharder's layout o
 
 - A dedicated distribution service, like Slicer's distributors, is not proposed here.
 - A PostgreSQL store adapter is not proposed here. The store interface and `store/storetest` define what one must do.
-- A gossip membership backend is not proposed here.
+- A gossip membership adapter is not proposed here.
 
 ## References
 

@@ -17,9 +17,9 @@ related: RFC-0002, RFC-0003, RFC-0004, RFC-0005, RFC-0006, RFC-0007, RFC-0008, R
 
 ## Summary
 
-We propose `sharder`, a Go library that a sharded application embeds to map keys to shards, place shards on nodes and move them safely. The library separates what differs between applications from what must not differ. Each of nine axes has pluggable strategies: partitioning, placement, replication, ownership, handoff, membership, store, topology and routing. An application selects one strategy per axis in a declarative namespace spec, or starts from a preset and overrides single fields. A fixed core applies every strategy's decisions. It assigns epochs, sequences transitions, enforces the disruption budget and checks each strategy's output against eight invariants. A strategy computes where shards go. It cannot weaken fencing, exceed the budget or skip a step of a transition. An application with its own election, such as a consensus protocol, selects the `delegated` ownership mode, in which its election grants each writer's epoch and the core follows it.
+We propose `sharder`, a Go library that a sharded application embeds to map keys to shards, place shards on nodes and move them safely. The library separates what differs between applications from what must not differ. Each of seven axes has pluggable strategies: partitioning, placement, replication, ownership, handoff, topology and routing. An application selects one strategy per axis in a declarative namespace spec, or starts from a preset and overrides single fields. A fixed core applies every strategy's decisions. It assigns epochs, sequences transitions, enforces the disruption budget and checks each strategy's output against eight invariants. A strategy computes where shards go. It cannot weaken fencing, exceed the budget or skip a step of a transition. An application with its own election, such as a consensus protocol, selects the `delegated` ownership mode, in which its election grants each writer's epoch and the core follows it.
 
-A namespace scales horizontally in cells. A cell is a disjoint set of nodes, the shards placed on them and one controller, with its own keyspace in the store. The library builds on `go.thesmos.sh/core` for time, randomness, epochs and fencing, conditional writes, errors, state machines, structured concurrency, retries and telemetry, and defines only what core does not.
+A namespace scales horizontally in cells. A cell is a disjoint set of nodes, the shards placed on them and one controller, with its own keyspace in the store. The library builds on `go.thesmos.sh/core` for time, randomness, epochs and fencing, conditional writes, errors, state machines, structured concurrency, retries and telemetry, and defines only what core does not. Its root module imports only core and the standard library. The store, the membership and the transport are interfaces. Adapter modules implement them over etcd, Kubernetes, gRPC, and binary codecs that kanon generates.
 
 ## Motivation
 
@@ -229,16 +229,16 @@ Each axis is an interface with built-in strategies. A strategy has a registered 
 | Axis | Decides | Interface | Built-in strategies |
 |---|---|---|---|
 | Partitioning | The position of a key, and the shards of a cell | `partition.Partitioner` | `fixed-slots`, `hash-range`, `key-range`, `explicit`, `singleton` |
-| Placement | Which nodes of a cell host each shard's replicas | `placement.Placer`, `placement.Function` | `planner`, `rendezvous`, `consistent-hash`, `bounded-load`, `jump`, `maglev`, `static`, `external` |
+| Placement | Which nodes of a cell host each shard's replicas | `placement.Placer`, `placement.Function` | `planner`, `rendezvous`, `consistent-hash`, `bounded-load`, `jump`, `maglev`, `static` |
 | Replication | The roles of a replica, the replica count, and when a shard counts as available | `replication.Model` | `primary-only`, `secondary-only`, `primary-secondary`, custom models |
 | Ownership | What a replica may assume about exclusivity, and who elects the writers | `ownership.Mode` | `affinity`, `exclusive`, `overlapping`, `delegated` |
 | Handoff | The order of callbacks that moves a replica | `handoff.Protocol` | `break-before-make`, `make-before-break`, `graceful`, `staged`, `elect` |
-| Membership | Which nodes of a cell are live | `membership.Membership` | `etcd`, `kubernetes`, `static` |
-| Store | Where cell maps, assignments and in-flight transitions persist | `store.Store` | `memory`, `etcd` |
 | Topology | Where the controllers run | `controller.Topology` | `embedded`, `service`, `leaderless` |
 | Routing | How clients find a shard's replicas | `router.Source` | `watch`, `lookup` |
 
 The disruption budget, the load model and the cell bounds are typed sections of the spec, not strategies. Every namespace has all three, and none has a credible alternative implementation.
+
+The store, the membership and the transport are process wiring, not axes. The embedder builds them and passes them to the controller and the agent, because the spec is stored in the store and cannot select it. Each store and membership adapter declares the capabilities it provides, such as leases, and the spec's strategies are checked against them.
 
 ### What core provides
 
@@ -250,7 +250,7 @@ The library takes every mechanism below from core and defines none of them itsel
 | Randomness that a seed reproduces | `rand.Rand`, `rand/pcg` | Planner sampling, jitter, the simulator |
 | Ordered counters | `epoch.Epoch` | Shard epochs, generations, terms, incarnations, spec versions |
 | Fencing | `epoch.Admissible`, `epoch.ErrFenced`, and the fence laws | Every fenced write: application storage and the store |
-| A conformance suite for fenced writers | `coretest/epochtest` | The fence adapters and every store adapter |
+| A conformance suite for fenced writers | `coretest/epochtest` | Every application's fence and every store adapter |
 | Conditional writes | `version.ErrMismatch` | A commit whose generation moved |
 | Pagination | `page.Page`, `page.Cursor` | Reading a cell's placements from the store |
 | Error classes | `errs.Classify`, `errs.WithClass` | Every sentinel error of the library |
@@ -261,11 +261,13 @@ The library takes every mechanism below from core and defines none of them itsel
 | Labels | `tag.Tags` | Node labels and shard labels |
 | Signature thresholds | `sign.Policy`, `sign.Resolver`, `crypto.NewFramer` | Approvals of specs and operations |
 | Digests | `crypto.Digest` | The anchor of a namespace's approvals |
+| Non-cryptographic hashing | XXH64 | Key positions in `fixed-slots` and `hash-range` |
+| Ordered maps with copy-on-write clones | A B-tree | Route caches |
 | Metrics and traces | `telemetry.Reporter` | Every metric of the library |
 
 The fence laws come from core: a write whose epoch is at or above the scope's watermark is admitted, a greater epoch advances the watermark, a zero epoch is unfenced, and validation runs in the same atomic step as the write, against durable state. Logs go through `log/slog`, as in core.
 
-The library takes from outside core what core does not cover: xxHash for key hashing, a copy-on-write B-tree for route caches, CEL for guardrails, the etcd client, and gRPC.
+The root module takes nothing from outside core and the standard library. The adapters take what their backends need: the etcd client, client-go, gRPC, and codecs that kanon generates.
 
 ### The fixed core
 
@@ -326,7 +328,7 @@ The topology axis selects where the controllers run. The controller code is the 
 |---|---|---|---|---|
 | `embedded` | The application processes of the namespace | The root is elected through the store. Each cell's controller runs on a node of its cell | Namespaces without a separate service | Controller work shares the application's CPU |
 | `service` | Dedicated `sharderd` processes that serve many namespaces | The root is elected through the store and places cell controllers on `sharderd` processes | Many namespaces, and every namespace above one cell | One more service to deploy and operate |
-| `leaderless` | Nowhere. Each agent computes placement with a function placer | None | Affinity routing, and exclusive ownership through one store lease per shard | One cell per namespace. Placement must be a `Function`, and there is no planner and no budget across nodes |
+| `leaderless` | Nowhere. Each agent computes placement with a function placer | None | Affinity routing, and exclusive ownership through one store election per shard | One cell per namespace. Placement must be a `Function`, and there is no planner and no budget across nodes |
 
 ### Presets
 
@@ -344,7 +346,9 @@ A preset fills every axis for one use case. The application still overrides any 
 
 `exclusive-worker` is the default preset. A spec without a preset starts from it. Exclusive ownership is the safer contract to relax than to add.
 
-### Packages
+### Packages and modules
+
+The root module, `go.thesmos.sh/sharder`, contains these packages. They import packages of core, of the standard library and of the module itself.
 
 | Package | Contains | Imports from the library |
 |---|---|---|
@@ -357,21 +361,27 @@ A preset fills every axis for one use case. The application still overrides any 
 | `ownership` | Ownership modes and lease parameters | `shard` |
 | `handoff` | Handoff protocols, their abort paths and the transition lifecycle | `shard`, `ownership`, `protocol` |
 | `fence` | Fencing tokens and the guard interface | `shard` |
-| `fence/sqlfence` | The PostgreSQL fence adapter | `fence` |
-| `protocol` | Requests, reports, lookups and the transport interfaces | `shard` |
+| `protocol` | The protocol's messages, its server and client interfaces, and `Local`, which connects the servers of one process | `shard` |
 | `store` | The store interface | `shard` |
 | `store/memory` | The in-memory store, the conformance suite's first subject | `store` |
-| `store/etcd` | The etcd store | `store` |
 | `store/storetest` | The conformance suite for store adapters | `store` |
 | `membership` | The membership interface | `shard` |
-| `membership/etcd` | Membership through etcd leases | `membership` |
-| `membership/kubernetes` | Membership through Kubernetes Lease objects | `membership` |
 | `membership/static` | A fixed node list | `membership` |
-| `controller` | The root and cell controllers: planning loop, transition engine, budget enforcement, topologies | every package above except the adapters |
+| `controller` | The root and cell controllers: planning loop, transition engine, budget enforcement, topologies | every package above except `store/memory`, `store/storetest` and `membership/static` |
 | `replica` | The agent that an application process runs | `shard`, `config`, `protocol`, `fence`, `store`, `membership` |
 | `router` | The client-side router and its route cache | `shard`, `protocol`, `store`, `partition` |
 | `budget` | The disruption budget | `shard`, `replication` |
 | `sim` | The deterministic simulator | every package above |
+
+Each adapter is a module of its own, so an application's build contains only the backends it imports. The embedder constructs the adapters and passes them to `controller.New` and `replica.Start`.
+
+| Module | Implements | Depends on |
+|---|---|---|
+| `go.thesmos.sh/sharder/etcd` | `store.Store` and `membership.Membership` | The etcd v3 client |
+| `go.thesmos.sh/sharder/kubernetes` | `membership.Membership` through Kubernetes Lease objects | client-go |
+| `go.thesmos.sh/sharder/grpc` | The protocol's clients, and a gRPC service that calls its servers | gRPC and protobuf |
+| A binary transport, path not chosen | The protocol's clients, and a server that calls its servers | Codecs that kanon generates |
+| `go.thesmos.sh/sharder/cmd` | `sharderd` and `sharderctl` | The adapters that each program selects |
 
 ### Verification
 
@@ -379,7 +389,7 @@ The simulator and the conformance suites check that a combination of strategies 
 
 The simulator in package `sim` runs the root, the controllers, the agents, the store and the membership in one goroutine against core's virtual clock, `clock/fake`, and draws every random choice from `rand/pcg` with the run's seed. It injects node crashes, process pauses, message loss, clock drift and store unavailability, and it checks all eight invariants after every event. A failing seed reproduces the run exactly.
 
-Each axis has a conformance suite that every strategy, built-in or external, must pass. A partitioner must map every key to exactly one position and every position to exactly one shard, and a placer must return the same plan for the same input. Every store adapter passes `store/storetest`. Every fenced writer, the fence adapters and the store's writers alike, passes core's `coretest/epochtest`.
+Each axis has a conformance suite that every strategy, built-in or external, must pass. A partitioner must map every key to exactly one position and every position to exactly one shard, and a placer must return the same plan for the same input. Every store adapter passes `store/storetest`. Every fenced writer, the application's fence and the store's writers alike, passes core's `coretest/epochtest`.
 
 ```go
 package sim
@@ -424,7 +434,7 @@ SM itself excluded the 1% of applications with their own orchestrators, which us
 
 ### A toolkit without a core
 
-Publish independent packages: a rendezvous hash, an etcd lease helper, a placement solver, a router. Each application composes what it needs. This is the smallest library, and every package is useful alone.
+Publish independent packages: a rendezvous hash, a lease helper, a placement solver, a router. Each application composes what it needs. This is the smallest library, and every package is useful alone.
 
 **Why not:** the hard parts are the interactions between the packages:
 
@@ -450,6 +460,12 @@ Splitter, Cadence's shard-manager and Apache Helix each cover part of this desig
 - Cadence's shard-manager has no release and depends on Cadence's RPC framework. It passes no epoch to the application.
 - Helix is written in Java and requires ZooKeeper. It does not fence a participant that loses its ZooKeeper session.
 
+### Adapters as packages of the root module
+
+Put the etcd store, the Kubernetes membership and the gRPC transport in the root module, as packages. One module has one version, so a root interface and its adapters change in the same release.
+
+**Why not:** the requirements in the root module's `go.mod` enter the module graph of an application that imports the module. Minimal version selection applies them even when the application does not import an adapter package. An application that uses gRPC or client-go at an older version would move to the version that sharder requires.
+
 ### sharder's own clock, epochs and retries
 
 Define the time seam, the epoch type, the fence rules and the retry loop inside the library, tuned to sharding.
@@ -458,18 +474,21 @@ Define the time seam, the epoch type, the fence rules and the retry loop inside 
 
 ## Drawbacks
 
-- The library has 24 packages and 29 exported interfaces, counted from the code in these RFCs. The built-in strategies number 35 across the nine axes.
-- The axes multiply. Counting built-ins only, partitioning (5) × placement (8) × replication (3) × ownership (4) × handoff (5) × membership (3) × store (2) × topology (3) × routing (2) gives 86,400 combinations. The capability checks reject many of them, but the remainder is still too large to test one by one. Coverage comes from per-axis conformance suites, the simulator over random combinations, and end-to-end tests of the seven presets.
-- Every axis adds configuration that a user can get wrong. The spec has 16 top-level fields, and 9 of them select a strategy with its own configuration schema. Presets fill most of them, and validation reports every problem at once, but a misconfigured namespace is a failure mode that a fixed framework does not have.
+- The root module has 20 packages and 32 exported interfaces, counted from the code in these RFCs. The built-in strategies number 29 across the seven axes. The counts exclude the five adapter modules.
+- The axes multiply. Counting built-ins only, partitioning (5) × placement (7) × replication (3) × ownership (4) × handoff (5) × topology (3) × routing (2) gives 12,600 combinations. The capability checks reject many of them, but the remainder is still too large to test one by one. Coverage comes from per-axis conformance suites, the simulator over random combinations, and end-to-end tests of the seven presets.
+- Every axis adds configuration that a user can get wrong. The spec has 14 top-level fields, and 7 of them select a strategy with its own configuration schema. Presets fill most of them, and validation reports every problem at once, but a misconfigured namespace is a failure mode that a fixed framework does not have.
 - Generality costs speed on the hot path. A router lookup maps a key to a position and searches a cache instead of computing an inlined hash. We measured the cache at 241 to 292 ns per lookup at 1,000,000 cached ranges, against a few nanoseconds for a hash.
 - Cells add a root controller and a second level of lookup, and a cell's nodes cannot help another cell's load until an operator moves them.
 - The library depends on core's `fsm`, `task`, `coretest/epochtest`, fence laws, and the `Policy`, `Signature` and `Resolver` of `crypto/sign`, which core contains at commit `8edf26a` and which no core release contains. The latest release, v0.6.1, predates all five.
+- The root module needs an XXH64 hash and a copy-on-write B-tree from core, and core does not contain either at commit `8edf26a`.
+- An adapter module has its own version and its own release. A change to a root interface requires a new release of the adapter modules that implement it.
 
 ## Open questions
 
 1. Is `go.thesmos.sh/sharder` the module path?
 2. Is `exclusive-worker` the right default preset, or should a spec have to name its preset?
 3. Should the simulator be a release gate, so that every strategy needs a clean run over a fixed set of seeds before a release?
+4. What is the module path of the binary transport, whose codecs kanon generates?
 
 ## Unresolved and future work
 
@@ -490,3 +509,4 @@ Define the time seam, the epoch type, the fence rules and the retry loop inside 
 | Apache Helix issue 691, a partitioned participant remains MASTER | https://github.com/apache/helix/issues/691 |
 | DeCandia et al., "Dynamo: Amazon's Highly Available Key-value Store", SOSP '07 | https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf |
 | go.thesmos.sh/core at 8edf26a: ordering and fencing (RFC-0026), finite state machines (RFC-0031), structured concurrency (RFC-0030), resilience (RFC-0023) | https://github.com/thesmos-ai/core |
+| Go Modules Reference, module graph pruning | https://go.dev/ref/mod#graph-pruning |

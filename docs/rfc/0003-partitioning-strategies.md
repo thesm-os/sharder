@@ -82,7 +82,7 @@ func (l Layout) Locate(pos []byte) (shard.ID, error)
 type Shard struct {
  ID    shard.ID
  Range shard.Range
- // Labels contains attributes that placement goals and guardrails read, such as a
+ // Labels contains attributes that placement goals and constraints read, such as a
  // tenant or a preferred region.
  Labels tag.Tags
 }
@@ -195,12 +195,18 @@ Each shard has either a key prefix or a key range. Prefixes and ranges must not 
 
 ### Hash functions
 
-A hash function is part of the layout, because two processes that disagree on it route the same key to different shards. The name is recorded in the layout, and changing it is a resharding operation.
+A hash function is part of the layout, because two processes that disagree on it route the same key to different shards. The name is recorded in the layout, and changing it is a resharding operation. The one built-in, `xxhash64`, is XXH64 with seed 0 over the key bytes, from core.
 
-| Name | Definition | Source |
-|---|---|---|
-| `xxhash64` | XXH64 with seed 0 over the key bytes | `github.com/cespare/xxhash/v2` v2.3.0, `Sum64` |
-| `fnv1a64` | 64-bit FNV-1a over the key bytes | `hash/fnv` in the standard library |
+We measured four candidates over 1,048,576 keys in 1,024 buckets. The balance columns give chi-square per degree of freedom: 1.0 is uniform, and the 99.9% bound is about 1.14. The speed column is one core of a Ryzen 9 9950X3D, with Go 1.27.1:
+
+| Hash | Top 10 bits, keys `user:<n>` | Top 10 bits, 8-byte counters | ns per key of 16, 64 and 256 bytes |
+|---|---|---|---|
+| XXH64 | 1.02 | 1.00 | 2.6, 5.6, 11.5 |
+| XXH3, 64-bit | 1.01 | 1.02 | 2.2, 2.9, 11.3 |
+| FNV-1a, 64-bit | 73.3 | 3,680 | 4.8, 27.6, 163 |
+| CRC-32C | 0.05 | 0.00 | 4.0, 5.3, 11.2 |
+
+`hash-range` splits the 64-bit space by its top bits, so FNV-1a would put most sequential keys into a few shards. CRC-32C is linear, and its 32 bits cannot address the 64-bit space of `hash-range`. XXH64 and XXH3 are both uniform. The 3 ns between them is about 1% of a route lookup, so the library uses XXH64, the simpler algorithm.
 
 The Go runtime's `hash/maphash` is excluded because its seed differs between processes. Core's `crypto.Hasher` implementations are cryptographic hashes, and the routing path needs neither their collision resistance nor their cost.
 
@@ -218,7 +224,7 @@ A split or merge changes which shard serves a key. The core applies a layout cha
 2. For each change, the core places every new shard on the nodes and roles of the shard it comes from. For a merge, the placer first co-locates the parents on the same nodes. A merge whose parents are not co-located waits until they are.
 3. The core commits the new layout version and the new placements in one generation. Each new shard's epoch is one higher than the highest epoch among its parents.
 4. The core instructs each node to add the new shards and drop the parents, through the namespace's handoff protocol. A node whose handler implements the agent's optional `Resharder` interface receives one call per change, so that it can re-key local data in one step. Without it, the node receives `AddShard` for each new shard and then `DropShard` for each parent, and moves its data inside those calls.
-5. The new writer's fence acquisition retires the parents. The instruction for a new shard lists the parents in `Supersedes`, and the fence adapter raises each parent's watermark to `fence.Retired` in the same transaction as the acquisition. `fence.Retired` is above every epoch that the core issues, so fenced storage rejects every later write under a parent's token with `epoch.ErrFenced`, and the parent's writer abdicates.
+5. The new writer's fence acquisition retires the parents. The instruction for a new shard lists the parents in `Supersedes`, and the application's fence raises each parent's watermark to `fence.Retired` in the same transaction as the acquisition. `fence.Retired` is above every epoch that the core issues, so fenced storage rejects every later write under a parent's token with `epoch.ErrFenced`, and the parent's writer abdicates.
 
 Step 5 closes the stale-writer window. Suppose a writer of the parent pauses before step 4 and resumes after step 5. Its token refers to the parent, whose watermark is above the token's epoch, so its write fails. Without the retirement, the parent's watermark would still equal the old epoch. The write would then succeed on keys that belong to a child.
 
@@ -258,17 +264,16 @@ Store the location of each key or small key group in a directory, as Facebook's 
 
 ## Drawbacks
 
-- Five built-in strategies and two hash functions are about 1,500 lines of code by our estimate, plus the conformance suite each must pass.
-- Resharding adds a path that runs rarely and must be correct the first time: co-locating merge parents, a new layout and new placements in one generation, and retirement of parent tokens. Each fence adapter must raise the parents' watermarks in the same transaction as the acquisition. An adapter that gets this wrong reopens the stale-writer window.
+- Five built-in strategies are about 1,500 lines of code by our estimate, plus the conformance suite each must pass.
+- Resharding adds a path that runs rarely and must be correct the first time: co-locating merge parents, a new layout and new placements in one generation, and retirement of parent tokens. Each application's fence must raise the parents' watermarks in the same transaction as the acquisition. A fence that gets this wrong reopens the stale-writer window.
 - `key-range` depends on the application to report sizes and split positions. An application that reports neither never splits.
 - `fixed-slots` cannot change its slot count except by an integer factor. A namespace that starts with too few slots for its largest deployment must reshard. Too many slots add per-slot overhead to every router.
 - A router in watch mode keeps the layouts of the cells it watches. A sorted index of 1,000,000 ranges takes 24 bytes per entry, measured, plus the bytes of each start: about 40 MB with 16-byte starts.
 
 ## Open questions
 
-1. Is `xxhash64` the right default, or should the default be `fnv1a64`, which is in the standard library but distributes short keys less evenly?
-2. Should `fixed-slots` offer compatibility hashes, such as Redis Cluster's CRC16 or Kafka's murmur2, for applications that migrate with their existing key-to-slot mapping?
-3. Should `hash-range` split on more than one metric at once, or on one?
+1. Should `fixed-slots` offer compatibility hashes, such as Redis Cluster's CRC16 or Kafka's murmur2, for applications that migrate with their existing key-to-slot mapping?
+2. Should `hash-range` split on more than one metric at once, or on one?
 
 ## Unresolved and future work
 
@@ -287,5 +292,5 @@ Store the location of each key or small key group in a directory, as Facebook's 
 | Elasticsearch split index API | https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-indices-split |
 | CockroachDB range size and splits | https://www.cockroachlabs.com/docs/stable/architecture/distribution-layer |
 | Annamalai et al., "Sharding the Shards: Managing Datastore Locality at Scale with Akkio", OSDI '18 | https://www.usenix.org/conference/osdi18/presentation/annamalai |
-| cespare/xxhash v2.3.0 | https://github.com/cespare/xxhash |
+| xxHash specification, XXH64 | https://github.com/Cyan4973/xxHash/blob/dev/doc/xxhash_spec.md |
 | Our measurement of sorted slices and B-trees, 2026-09-27 | Research-0003 |

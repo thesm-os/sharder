@@ -1,6 +1,6 @@
 ---
 rfc: 0008
-title: The replica agent, the router, disruption budgets and the wire protocol
+title: The replica agent, the router, disruption budgets and the protocol
 author: Roy Klopper
 status: Draft
 created: 2026-09-27
@@ -13,7 +13,7 @@ research: Research-0001, Research-0002, Research-0003
 related: RFC-0001, RFC-0003, RFC-0005, RFC-0006, RFC-0007, RFC-0009
 ---
 
-# RFC-0008: The replica agent, the router, disruption budgets and the wire protocol
+# RFC-0008: The replica agent, the router, disruption budgets and the protocol
 
 ## Summary
 
@@ -22,7 +22,7 @@ An application uses the library through four components:
 - The agent runs inside each application process and calls the application's `Handler` to add and drop replicas. Optional interfaces enable role changes, the graceful and staged handoffs, consensus membership changes and resharding, and the agent reports which ones the application implements.
 - The router runs inside each client and maps a key to the replicas that serve it. In `lookup` mode it caches only the routes it uses, fetches missing routes from the cell's controller in coalesced batches, and corrects a route when a server replies that it no longer serves the shard.
 - The disruption budget admits planned operations, such as a rolling restart, only when every shard keeps enough replicas.
-- A gRPC protocol defines the calls between controllers, agents and routers in separate processes. The calls run on the embedder's gRPC server and credentials, and the library checks each caller's identity against the state in the store.
+- A protocol defines the calls between controllers, agents and routers, as Go types and interfaces with no wire format. Transport adapters in their own modules encode the calls and run them on the embedder's servers and credentials, and the library checks each caller's identity against the state in the store.
 
 The library is Go-only. `sharderctl`, a set of metrics reported through core's `telemetry.Reporter`, and logs through `log/slog` cover operations.
 
@@ -32,7 +32,7 @@ SM's authors attribute its adoption to a small application interface, "a small, 
 
 Clients need a defined way to learn that an assignment moved. Redis Cluster replies to a request for a moved slot with `MOVED` and the new owner. CockroachDB returns an error that points at the node it believes to be the leaseholder. Pekko's cluster sharding instead buffers messages during a handoff, and drops what it buffered in the region that hands off, to avoid reordering. Each choice is visible to the application, so the library has to make it explicit.
 
-A client of a large namespace cannot keep every route. At 1,000,000 shards per cell and many cells, a full copy costs tens of megabytes per cell in every client process, and every client that watches the store costs the store memory: etcd measures 17 KB per client connection. Systems at that scale cache locations lazily. Bigtable's client library caches tablet locations from a three-level hierarchy, needs three network round trips with an empty cache and up to six with a stale one, and prefetches the locations of neighbouring tablets. CockroachDB's nodes cache range descriptors from two levels of meta ranges and update the cache when a request reaches the wrong replica.
+At 1,000,000 shards per cell and many cells, a full copy of the routes costs tens of megabytes per cell in every client process, and every client that watches the store costs the store memory, such as 17 KB per client connection in etcd. Systems at that scale cache locations lazily. Bigtable's client library caches tablet locations from a three-level hierarchy, needs three network round trips with an empty cache and up to six with a stale one, and prefetches the locations of neighbouring tablets. CockroachDB's nodes cache range descriptors from two levels of meta ranges and update the cache when a request arrives at the wrong replica.
 
 Any process that can call an agent can take or disable any shard unless the agent checks who is calling. An `add` in the writer role at an epoch above every epoch that the node has seen makes the agent acquire the fence at that epoch, and every write of the real writer then fails with `epoch.ErrFenced`. An `add` whose `supersedes` list names arbitrary shards raises their fence watermarks to `fence.Retired`, which no epoch that the core issues can pass. Those shards then refuse every write until an operator repairs their fence records. The embedder's transport can prove who is calling, but only sharder's state tells whether that caller is the cell's current controller.
 
@@ -141,11 +141,9 @@ type Config struct {
  Membership membership.Membership
  // Guard, when set, acquires each shard's fence before this node starts to write it.
  Guard fence.Acquirer
- // Transport is the embedder's gRPC transport. The agent serves AgentService on it,
- // calls the cell's controller through it, and checks the identity of each caller
- // with it. With a nil Transport, the agent accepts callbacks only from a controller
- // in its own process.
- Transport *protocol.Transport
+ // Controller sends the agent's reports to the cell's controller, through a transport
+ // adapter or, in one process, through protocol.Local.
+ Controller protocol.ControllerClient
  // Trust anchors the approvals of the namespace's specs. With it, the agent refuses a
  // spec whose approvals do not verify from the anchor. Nil accepts every spec.
  Trust *config.Trust
@@ -158,18 +156,21 @@ type Config struct {
  Logger *slog.Logger
 }
 
-// Agent hosts the replicas that the cell's controller assigns to this node.
+// Agent hosts the replicas that the cell's controller assigns to this node. The
+// embedder serves it to controllers through a transport adapter.
 type Agent struct {
  // unexported fields
 }
+
+var _ protocol.AgentServer = (*Agent)(nil)
 
 // ErrNotWriter is returned by Token when this node is not the shard's current writer.
 // It classifies as errs.Conflict.
 var ErrNotWriter = errs.WithClass(errors.New("replica: not the shard's writer"), errs.Conflict)
 
 // Start joins the node's cell and reads this node's placements from the cell's scope.
-// It restores the node's non-writer replicas through h and serves callbacks until ctx
-// ends.
+// It restores the node's non-writer replicas through h and runs the agent's loops until
+// ctx ends.
 func Start(ctx context.Context, cfg Config, h Handler) (*Agent, error)
 
 // Token returns the fencing token for a shard this node writes. It returns
@@ -182,6 +183,12 @@ func (a *Agent) Token(id shard.ID) (fence.Token, error)
 // Close asks the controller to move this node's replicas away under the namespace's
 // handoff protocol. It waits until they have moved or ctx ends, then leaves the cell.
 func (a *Agent) Close(ctx context.Context) error
+
+// Do runs one callback of the cell's controller. It returns an error of class
+// errs.Denied when caller is not the identity that the scope names as its controller,
+// and of class errs.Conflict when r's shard epoch or controller epoch is below the
+// highest this node has seen. A repeated r.ID returns the first result.
+func (a *Agent) Do(ctx context.Context, caller shard.Identity, r protocol.Request) error
 
 // Election is a writer tenure that a delegated namespace's authority granted to this
 // node without a request from the core, such as after a failover or a split.
@@ -233,7 +240,7 @@ An application reports a replica that cannot serve, such as one on a failed disk
 - A replica with a permanent fault is replaced on another node, as the replicas of a failed node are.
 - A replica with a transient fault remains on its node. The core may give it the writer role again after `Recovered`.
 
-The agent runs its loops, the lease renewal, the report stream and the watch of its node's index, under `task.Run` from core, and renews with `task.Every`. `Close` therefore returns only after every goroutine the agent started has returned.
+The agent runs its loops, the lease renewal, the reports and the watch of its node's index, under `task.Run` from core, and renews with `task.Every`. `Close` returns only after every goroutine the agent started has returned.
 
 An application that restarts for a deploy calls `Close` first, from its shutdown hook. `Close` moves the node's replicas away under the namespace's protocol before the process exits, so a deploy never looks like a crash. Kubernetes gives a pod 30 seconds between the termination signal and a forced kill by default, and Dicer moves its slices away within that period. A node whose `Close` does not finish in time is handled as a crash when its lease expires.
 
@@ -322,7 +329,7 @@ A router first maps a key to its position with the namespace's partitioner, then
 
 In `watch` mode, the cache is the cell's whole assignment, kept current by a watch of the cell's scope. In `lookup` mode, the cache contains only the routes that the router has used:
 
-- A cache miss becomes a lookup at the cell's controller, which answers from memory. Concurrent misses in one cell are coalesced into one call by a `batch.Loader` from core, which also merges concurrent misses of the same position. Each lookup returns the requested placements and the 16 placements after them, as Bigtable's client prefetches neighbouring locations.
+- A cache miss becomes a lookup at the cell's controller, through the router's `protocol.ControllerClient`, and the controller serves it from memory. Concurrent misses in one cell are coalesced into one call by a `batch.Loader` from core, which also merges concurrent misses of the same position. Each lookup returns the requested placements and the 16 placements after them, as Bigtable's client prefetches neighbouring locations.
 - When the controller does not respond, the router reads the same placements from the cell's scope in the store.
 - A `NotOwnerError` evicts the route it names. The next request for the shard looks the route up again, with its neighbours.
 - The cache keeps at most `maxRoutes` routes, 1,000,000 by default, and evicts routes at random above that, so the lookup path records no access.
@@ -335,158 +342,30 @@ The cache structure depends on the partitioner. `fixed-slots` positions are slot
 | `github.com/google/btree` v1.1.3 | 291 ns | 3.6 to 3.7 µs | 52 bytes |
 | `github.com/tidwall/btree` v1.8.1 | 292 ns | 2.9 to 3.0 µs | 36 bytes |
 
-A cache that changes one route at a time must publish cheaply, so the router uses `tidwall/btree`. It publishes 20% faster than `google/btree` and uses 30% less memory per entry, at the same lookup cost. A sorted slice remains the right structure for data that is rebuilt whole, such as a layout.
+A cache that changes one route at a time must publish cheaply, so the router uses core's copy-on-write B-tree. The measured B-trees give the figures it has to match: about 290 ns per lookup, about 3 µs per published change, and 36 bytes per entry. The router needs four operations from it: a clone in constant time, a seek to the largest key at or below a position, iteration in order from a key, and a lookup without an allocation. A sorted slice remains the right structure for data that is rebuilt whole, such as a layout.
 
 A server replies to a request for a shard it does not serve, or for a lower epoch than its own, with `NotOwnerError`. It classifies as `errs.Conflict`, the class whose remedy is to read the state again and retry. Redis Cluster's `MOVED` and CockroachDB's not-leaseholder error follow the same redirect model. In `watch` mode, the router waits for the server's generation of the cell and routes again, because one generation can move many shards, such as every shard of a failed node.
 
 The router does not buffer requests by default. A namespace can set `hold` in its routing configuration, such as `{"hold": {"max": "2s", "requests": 1000}}`. With `hold`, a request for a shard in the middle of a transition waits until the transition publishes its generation, for at most `max`. A request fails once more than `requests` requests are waiting. Pekko buffers the same way and delivers at most once. The router keeps each held request's order, and it never delivers a held request after `max`.
 
-### The wire protocol
+### The protocol
 
-Controllers, agents and routers in separate processes call each other through gRPC, on the embedder's transport, as the section on transport security describes. The library is Go-only, and protobuf is still the wire format, because its numbered fields let processes of two releases talk to each other during a rolling upgrade. In the `embedded` topology, a controller calls the agents of its own process in-process.
+Controllers, agents and routers in separate processes call each other through a transport adapter. The protocol itself is Go types and interfaces, without a wire format:
 
-```protobuf
-syntax = "proto3";
+- The agent implements `AgentServer`, and the controller implements `ControllerServer`.
+- A controller sends callbacks through an `AgentClient`, and agents and routers send reports and lookups through a `ControllerClient`.
+- A transport adapter implements both clients, and serves both servers on the embedder's server with the embedder's credentials. The gRPC adapter, `go.thesmos.sh/sharder/grpc`, defines the protocol as a protobuf service. A lightweight binary adapter encodes each message with a codec that kanon generates.
+- `Local` connects the servers of one process by direct calls. A controller calls the agent of its own process through it, and the simulator runs every process of a simulation on it.
 
-package sharder.v1;
-
-option go_package = "go.thesmos.sh/sharder/gen/sharderv1;sharderv1";
-
-// AgentService runs on every node. A cell's controller calls it to change local
-// replicas.
-service AgentService {
-  // Do runs one callback on the node's replica of a shard. A repeated idempotency key
-  // returns the first result.
-  rpc Do(DoRequest) returns (DoResponse);
-}
-
-// ControllerService runs in each cell's controller.
-service ControllerService {
-  // Report streams an agent's replicas, load and capabilities. The controller replies
-  // with the generations it has committed.
-  rpc Report(stream ReportRequest) returns (stream ReportResponse);
-  // Lookup returns the placements of a cell that contain the given positions, and the
-  // placements that follow them.
-  rpc Lookup(LookupRequest) returns (LookupResponse);
-}
-
-enum Call {
-  CALL_UNSPECIFIED = 0;
-  CALL_ADD = 1;
-  CALL_DROP = 2;
-  CALL_CHANGE_ROLE = 3;
-  CALL_PREPARE_ADD = 4;
-  CALL_PREPARE_DROP = 5;
-  CALL_CANCEL_PREPARE = 6;
-  CALL_LOAD_STATE = 7;
-  CALL_UNLOAD_STATE = 8;
-  CALL_UPDATE_MEMBERSHIP = 9;
-  CALL_RESHARD = 10;
-  CALL_ELECT = 11;
-  CALL_ABDICATE = 12;
-}
-
-enum Fault {
-  FAULT_UNSPECIFIED = 0;
-  FAULT_TRANSIENT = 1;
-  FAULT_PERMANENT = 2;
-}
-
-message KeyRange {
-  bytes start = 1;
-  bytes end = 2;
-}
-
-message Replica {
-  string node = 1;
-  string role = 2;
-}
-
-message DoRequest {
-  Call call = 1;
-  string namespace = 2;
-  string shard = 3;
-  KeyRange range = 4;
-  string role = 5;
-  string from_role = 6;
-  string peer = 7;
-  repeated Replica members = 8;
-  repeated string supersedes = 9;
-  uint64 epoch = 10;
-  uint64 generation = 11;
-  string id = 12;
-  string cell = 13;
-  uint64 controller_epoch = 14;
-}
-
-message DoResponse {}
-
-message Observed {
-  string shard = 1;
-  string role = 2;
-  uint64 epoch = 3;
-  string status = 4;
-  map<string, double> load = 5;
-  Fault fault = 6;
-  string cause = 7;
-  KeyRange range = 8;
-  repeated string parents = 9;
-}
-
-message ReportRequest {
-  string node = 1;
-  uint64 incarnation = 2;
-  repeated Call capabilities = 3;
-  repeated Observed replicas = 4;
-  string cell = 5;
-}
-
-message ReportResponse {
-  uint64 generation = 1;
-  uint64 controller_epoch = 2;
-}
-
-message LookupRequest {
-  string namespace = 1;
-  string cell = 2;
-  repeated bytes positions = 3;
-  uint32 prefetch = 4;
-}
-
-message Located {
-  string shard = 1;
-  KeyRange range = 2;
-  uint64 epoch = 3;
-  repeated Replica replicas = 4;
-  repeated string addresses = 5;
-}
-
-message LookupResponse {
-  uint64 generation = 1;
-  repeated Located located = 2;
-}
-```
-
-| Condition | gRPC status | Error class at the caller |
-|---|---|---|
-| The request's shard epoch or controller epoch is lower than the node's | `FAILED_PRECONDITION` | `errs.Conflict` |
-| The caller's identity is not the identity that the authorisation rules require | `PERMISSION_DENIED` | `errs.Denied` |
-| The node does not implement the call | `UNIMPLEMENTED` | `errs.Unsupported` |
-| The step's timeout passed | `DEADLINE_EXCEEDED` | `errs.Transient` |
-| The handler returned an error | `INTERNAL`, with the handler's message and class | The handler error's class |
-
-The protocol client returns each status as an error of the class in the table, and the transition engine retries only `errs.Transient`. A stale epoch ends the step at once, for every call. A handler error without a class is `errs.Unspecified`, which core's `errs.Retryable` reports as not retryable. A handler whose failure a retry can fix classifies its error as `errs.Transient`.
-
-The Go side of the transport:
+Every adapter numbers the fields of its encoding, as protobuf and kanon do, so processes of two releases decode each other's messages during a rolling upgrade.
 
 ```go
 // Package protocol defines the requests, reports and lookups between controllers,
-// agents and routers, and the transports between them.
+// agents and routers, and the interfaces that transport adapters implement.
 package protocol
 
 import (
  "context"
- "iter"
 
  "go.thesmos.sh/core/epoch"
  "go.thesmos.sh/sharder/shard"
@@ -541,13 +420,13 @@ type Report struct {
  Replicas     []shard.Observed
 }
 
-// Client sends requests to the agents of the controller's own process, such as every
-// agent of a simulation, and receives their reports. A controller calls every other
-// agent through its Transport.
-type Client interface {
- Do(ctx context.Context, node shard.NodeID, r Request) error
- // Reports yields every report that agents send, until ctx ends.
- Reports(ctx context.Context) iter.Seq2[Report, error]
+// Ack is the controller's reply to a report.
+type Ack struct {
+ // Generation is the latest generation of the cell that the controller has committed.
+ Generation epoch.Epoch
+ // ControllerEpoch is the controller's fence epoch. The agent refuses callbacks with
+ // a lower one.
+ ControllerEpoch epoch.Epoch
 }
 
 // Located is one placement with the addresses of its replicas' nodes.
@@ -558,62 +437,103 @@ type Located struct {
  Addresses []string
 }
 
-// Resolver answers route lookups for the cells of one namespace. The controller of
-// each cell serves it, and routers call it through gRPC.
-type Resolver interface {
+// AgentServer receives the callbacks of a cell's controller. Its caller parameter is
+// the identity that the transport adapter authenticated. An adapter that authenticates
+// no caller passes an empty identity.
+type AgentServer interface {
+ Do(ctx context.Context, caller shard.Identity, r Request) error
+}
+
+// ControllerServer receives the reports of agents and the lookups of routers.
+type ControllerServer interface {
+ // Report accepts one report of an agent.
+ Report(ctx context.Context, caller shard.Identity, r Report) (Ack, error)
  // Lookup returns the placements of cell that contain positions, and up to prefetch
  // placements after the last of them, in position order.
- Lookup(ctx context.Context, cell shard.CellID, positions [][]byte, prefetch int) ([]Located, error)
+ Lookup(ctx context.Context, caller shard.Identity, cell shard.CellID, positions [][]byte, prefetch int) ([]Located, error)
 }
+
+// AgentClient sends callbacks to agents in other processes. Transport adapters
+// implement it.
+type AgentClient interface {
+ Do(ctx context.Context, node shard.Node, r Request) error
+}
+
+// ControllerClient sends reports and lookups to the controller of a cell. Transport
+// adapters implement it, and check that the controller presents cell's
+// ControllerIdentity.
+type ControllerClient interface {
+ Report(ctx context.Context, cell shard.Cell, r Report) (Ack, error)
+ Lookup(ctx context.Context, cell shard.Cell, positions [][]byte, prefetch int) ([]Located, error)
+}
+
+// Local connects the servers of one process by direct calls, without an encoding. It
+// implements AgentClient and ControllerClient, and passes the process's identity as
+// the caller.
+type Local struct {
+ // unexported fields
+}
+
+// NewLocal returns a Local for the process with identity self.
+func NewLocal(self shard.Identity) *Local
+
+// AddAgent makes the agent of node n reachable through l.
+func (l *Local) AddAgent(n shard.NodeID, s AgentServer)
+
+// AddController makes the controller of cell c reachable through l.
+func (l *Local) AddController(c shard.CellID, s ControllerServer)
+
+// Do passes r to the agent that AddAgent registered for node.ID, with the process's
+// identity as the caller. Without such an agent, it returns an error of class
+// errs.Transient, as a transport does for an unreachable node.
+func (l *Local) Do(ctx context.Context, node shard.Node, r Request) error
+
+// Report passes r to the controller that AddController registered for cell.ID, with
+// the process's identity as the caller. Without such a controller, it returns an error
+// of class errs.Transient.
+func (l *Local) Report(ctx context.Context, cell shard.Cell, r Report) (Ack, error)
+
+// Lookup passes the lookup to the controller that AddController registered for
+// cell.ID, with the process's identity as the caller. Without such a controller, it
+// returns an error of class errs.Transient.
+func (l *Local) Lookup(ctx context.Context, cell shard.Cell, positions [][]byte, prefetch int) ([]Located, error)
+
+var (
+ _ AgentClient      = (*Local)(nil)
+ _ ControllerClient = (*Local)(nil)
+)
 ```
+
+| Condition | Error class at the caller |
+|---|---|
+| The request's shard epoch or controller epoch is lower than the node's | `errs.Conflict` |
+| The caller's identity is not the identity that the authorisation rules require | `errs.Denied` |
+| The node does not implement the call | `errs.Unsupported` |
+| The step's timeout passed | `errs.Transient` |
+| The handler returned an error | The handler error's class |
+
+A transport adapter keeps each error's class across the wire, and the gRPC adapter maps each class to a gRPC status. The transition engine retries only `errs.Transient`, so a stale epoch ends the step at once, for every call. A handler error without a class is `errs.Unspecified`, which core's `errs.Retryable` reports as not retryable. A handler whose failure a retry can fix classifies its error as `errs.Transient`.
 
 ### Transport security
 
-The embedder is responsible for transport security. The library runs on the transport that the embedder configures:
+The embedder is responsible for transport security, and the root module contains no transport:
 
-- The embedder chooses how processes authenticate each other: mutual TLS, a service mesh, or another gRPC credential. The library does not set a TLS version, a cipher or a certificate policy, and it runs on whatever the embedder configures.
-- The agent, the controller and the router take a `protocol.Transport`. Sharder's services run on the embedder's gRPC server, and sharder's calls use the embedder's dialer.
-- The store and membership adapters take clients that the embedder built, such as an etcd client or a client-go clientset.
-- `sharderd`, the process of the `service` topology, is its own embedder, and its `main` package configures its credentials.
-- A controller calls the agent of its own process without a transport.
+- A transport adapter serves on the embedder's server and dials with the embedder's credentials: mutual TLS, a service mesh, or whatever else the adapter supports. The library does not set a TLS version, a cipher or a certificate policy.
+- The adapter authenticates each caller and passes the caller's identity to `AgentServer` and `ControllerServer`.
+- The store and membership adapters take clients that the embedder built.
+- `sharderd`, the program of the `service` topology, is its own embedder, and its `main` package chooses its adapters and configures its credentials.
 
-```go
-package protocol
+Whether an authenticated caller may make a call depends on sharder's state: which identity is a cell's current controller, and which identity is node N. The transport knows neither. In the `embedded` topology, every application process can run a controller and must be able to call every agent. Without a check against that state, one compromised process can fence any writer with a forged `add` at a high epoch or retire any shard with a forged `supersedes` list. The core issues epochs one at a time from 1, so both are permanent in practice.
 
-import (
- "context"
-
- "google.golang.org/grpc"
-
- "go.thesmos.sh/sharder/shard"
-)
-
-// Transport is the embedder's gRPC transport. The embedder configures its credentials,
-// interceptors and listeners, and the agent, the controller and the router use it for
-// every call between processes.
-type Transport struct {
- // Server receives sharder's services: AgentService in an agent's process and
- // ControllerService in a controller's process.
- Server grpc.ServiceRegistrar
- // Dial returns a connection to address with the embedder's credentials.
- Dial func(ctx context.Context, address string) (grpc.ClientConnInterface, error)
- // Identity returns the authenticated identity of the caller of an incoming call,
- // from the call's context. Nil turns off every check that compares identities.
- Identity func(ctx context.Context) (shard.Identity, error)
-}
-```
-
-Whether an authenticated caller may make a call depends on sharder's state: which identity is a cell's current controller, and which identity is node N. The embedder's transport knows neither. In the `embedded` topology, every application process can run a controller and must be able to call every agent. Without a check against that state, one compromised process can fence any writer with a forged `add` at a high epoch or retire any shard with a forged `supersedes` list. The core issues epochs one at a time from 1, so both are permanent in practice.
-
-The library checks each call against its own state, with the identity that `Transport.Identity` returns:
+The library checks each call against its own state, with the identity that the transport adapter passes:
 
 1. Each node registers its identity with its membership session, in `shard.Node.Identity`. Each cell's controller writes its identity to the cell's record in its first commit, and the root's leader campaigns under its identity.
 2. An agent accepts `Do` only from the identity that its scope names as its controller: the cell's record in a cell's scope, and the root's leader in the root scope. It also refuses a controller epoch below the highest it has seen.
 3. A cell's controller accepts a `Report` for node N only from N's registered identity.
 
-A nil `Identity` turns off rules 2 and 3, and any process that can call an agent can then take or retire any shard. A deployment without the function relies on a network policy to limit which processes can call agents.
+An adapter that authenticates no caller passes an empty identity, which turns off rules 2 and 3. Any process that can call an agent can then take or retire any shard, and a deployment relies on a network policy to limit which processes can call agents.
 
-`Lookup` returns placements and addresses without changing any state, so the embedder authorises its callers, with a mesh policy or a gRPC interceptor. The shard and controller epoch checks apply whatever the transport.
+`Lookup` returns placements and addresses without changing any state, so the embedder authorises its callers, in the transport adapter or with a mesh policy. The shard and controller epoch checks apply whatever the transport.
 
 Identities, cell records and membership sessions are in the store, so the store's access control is the root of trust for rules 2 and 3. A deployment gives each role its own store credentials: controllers write the root and cell scopes, nodes write their own membership keys, and routers only read.
 
@@ -678,7 +598,7 @@ Before it admits a disruption, the core moves the replicas in `drainRoles` off t
 
 SM's TaskController works the same way: it approves a subset of pending container operations under a global cap and a per-shard cap that count replicas already down. A non-negotiable disruption is SM's non-negotiable event, which arrives with notice and an impact class. The budget cannot delay it, so the core uses the notice to move replicas away first.
 
-Every replica of a shard is on a node of the shard's cell, so each cell's controller enforces the budget of its own cell. Cluster managers and operators submit disruptions through `sharderctl drain`, through the gRPC API of the node's cell controller, or from a process's shutdown hook through `Agent.Close`.
+Every replica of a shard is on a node of the shard's cell, so each cell's controller enforces the budget of its own cell. Cluster managers and operators submit disruptions through `sharderctl drain`, through the node's cell controller, or from a process's shutdown hook through `Agent.Close`.
 
 ### Operations
 
@@ -709,7 +629,7 @@ The library reports these instruments through core's `telemetry.Reporter`. Each 
 | `sharder.moves` | Counter | `{move}` | Replicas moved, per reason: failure, rebalance, drain, reshard |
 | `sharder.lease.renewal.duration` | Histogram | `s` | Latency of lease renewals per node |
 | `sharder.budget.deferred` | Counter | `{disruption}` | Disruptions and transitions the budget deferred |
-| `sharder.fence.rejections` | Counter | `{write}` | Writes that a fence adapter rejected |
+| `sharder.fence.refusals` | Counter | `{acquisition}` | Fence acquisitions that returned `epoch.ErrFenced` |
 | `sharder.router.lookups` | Counter | `{lookup}` | Route lookups, per result: hit, miss, redirect |
 | `sharder.router.cache.routes` | Gauge | `{route}` | Routes in a router's cache, per cell |
 
@@ -719,7 +639,7 @@ The library logs through `log/slog`, as core does.
 
 ### Applications implement the RPC service directly
 
-Define only the protobuf service, as SM does, and let each application implement it without a Go library. There is then nothing to embed.
+Define only the wire protocol, as SM does, and let each application implement it without a Go library. There is then nothing to embed.
 
 **Why not:** the agent's work is more than the calls. It keeps the highest epoch per shard, deduplicates repeated idempotency keys, runs the lease timer, acquires fences, restores replicas at start-up and moves them at shutdown. Each application would re-implement that work, and the library is Go-only.
 
@@ -733,13 +653,13 @@ Route requests through a proxy tier that knows the assignment, as Vitess routes 
 
 Keep the whole assignment of every cell in every router, as the `watch` mode does for the cells a router uses.
 
-**Why not as the only mode:** at 1,000,000 shards per cell, a sorted index costs about 40 MB per cell in every client process, and every client adds a watch connection to the store at 17 KB of etcd memory each. Bigtable and CockroachDB cache locations lazily for the same reason. `watch` remains for namespaces small enough that a full copy is cheaper than a lookup.
+**Why not as the only mode:** at 1,000,000 shards per cell, a sorted index costs about 40 MB per cell in every client process, and every client adds a watch connection to the store, at 17 KB of memory each in etcd. Bigtable and CockroachDB cache locations lazily for the same reason. `watch` remains for namespaces small enough that a full copy is cheaper than a lookup.
 
-### A sorted slice or google/btree for the route cache
+### A sorted slice for the route cache
 
-A sorted slice has the fastest lookup and the smallest entries, and `google/btree` is the most widely known Go B-tree.
+A sorted slice has the fastest lookup and the smallest entries.
 
-**Why not:** a sorted slice copies every entry to publish one change: 12.7 ms and 24 MB per change at 1,000,000 entries. `google/btree` publishes a change at 3.6 to 3.7 µs with 52 bytes per entry, against 2.9 to 3.0 µs and 36 bytes for `tidwall/btree`, at the same lookup cost. Either B-tree serves. The measured difference decides it.
+**Why not:** a sorted slice copies every entry to publish one change: 12.7 ms and 24 MB per change at 1,000,000 entries. A copy-on-write B-tree publishes a change in about 3 µs at nearly the same lookup cost.
 
 ### Redirects without refresh
 
@@ -756,23 +676,24 @@ Use Kubernetes' own disruption budgets, which limit how many pods of a workload 
 ## Drawbacks
 
 - The agent defines eight application interfaces. Most applications implement one or two, but the documentation and the conformance suite cover all eight.
-- The library's checks are only as strong as the embedder's authentication. An `Identity` function that returns an identity that the transport did not prove lets any caller pass them.
+- The library's checks are only as strong as the transport's authentication. An adapter that passes an identity that it did not prove lets any caller pass them.
 - A node registers its own identity through the store, so a writer to the store can register an identity of its own. Only the store's access control prevents it.
 - Capabilities are detected at runtime, so an application that omits an interface finds out from the controller's report, not from the compiler.
 - `Close` makes a deploy wait for its node's replicas to move. With the graceful protocol and many shards per node, that takes longer than Kubernetes' default 30-second grace period, which then needs raising.
 - A router in `lookup` mode pays a lookup round trip for each cold route, and `batch.Loader` adds its accumulation window to that round trip. Bigtable's clients pay three round trips with an empty cache and up to six with a stale one.
 - `batch.Loader` passes the lookup function a context without any caller's values, so a lookup's trace does not join the trace of the request that missed.
 - `hold` delays requests during transitions and fails them past its limits. Applications that cannot tolerate either leave it off and handle `NotOwnerError` themselves.
-- The protobuf service is a second definition of the protocol, next to the Go types, and the two must change together.
-- The router depends on `github.com/tidwall/btree`, whose author made 142 of the roughly 180 commits that GitHub counts. `google/btree` offers the same operations if that dependency becomes a problem.
+- Each transport adapter maps the protocol's Go types to its own encoding, and must keep its field numbers and the error classes stable across releases.
+- The route cache needs core's copy-on-write B-tree, which core does not contain at commit `8edf26a`.
 
 ## Open questions
 
-1. Should the gRPC service use Connect, so that HTTP/1.1 clients can call it, or plain gRPC?
+1. Which transport adapter should `sharderd` use by default: gRPC or the kanon binary transport?
 2. Should the library provide a Kubernetes eviction webhook that consults the shard budget?
 3. Should the router hold requests during moves by default, or leave it off?
-4. Should the agent offer a gRPC forwarding helper for the graceful protocol, since every graceful application forwards writes?
+4. Should a transport adapter offer a forwarding helper for the graceful protocol, since every graceful application forwards writes?
 5. Are 16 prefetched placements per lookup, and 1,000,000 cached routes, the right defaults?
+6. Which protocol calls deliver `sharderctl submit`, `drain`, `move` and `status`, and a cluster manager's disruptions, to a controller? The protocol defines only `Do`, `Report` and `Lookup`.
 
 ## Unresolved and future work
 
@@ -795,7 +716,6 @@ Use Kubernetes' own disruption budgets, which limit how many pods of a workload 
 | CockroachDB replication layer, leaseholders | https://www.cockroachlabs.com/docs/stable/architecture/replication-layer |
 | Apache Pekko 1.7.0, cluster sharding concepts | https://pekko.apache.org/docs/pekko/current/typed/cluster-sharding-concepts.html |
 | Kubernetes v1.37.1, default termination grace period | https://github.com/kubernetes/kubernetes/blob/v1.37.1/staging/src/k8s.io/api/core/v1/types.go |
-| gRPC status codes | https://grpc.io/docs/guides/status-codes/ |
 | Microsoft Learn, Service Fabric `FaultType` | https://learn.microsoft.com/en-us/dotnet/api/system.fabric.faulttype?view=azure-dotnet |
 | tidwall/btree v1.8.1 | https://github.com/tidwall/btree |
 | google/btree v1.1.3 | https://github.com/google/btree |

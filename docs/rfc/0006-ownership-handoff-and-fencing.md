@@ -19,7 +19,7 @@ related: RFC-0001, RFC-0002, RFC-0003, RFC-0005, RFC-0007, RFC-0008, RFC-0009
 
 A namespace selects one of four ownership modes: `affinity`, `exclusive`, `overlapping` and `delegated`. The last three give each shard at most one writer per epoch. In `delegated`, the application's own authority, such as a consensus protocol, elects each writer and grants its epoch, and the core follows it. The handoff protocols `break-before-make`, `make-before-break`, `graceful` and `staged` move a replica between nodes, and `elect` asks a delegated namespace's authority to move the writer role. Each protocol is a script of callbacks with a defined abort path for every step, and the core persists each step before it runs it. Every transition follows one lifecycle, declared as a state machine in core's `fsm` package.
 
-Writers are protected at two levels. A node stops writing when its lease deadline passes. The deadline is a timer on the node's monotonic clock, shortened by a bound on clock drift. The application's storage applies core's fence laws: it admits a write whose epoch is at or above the shard's watermark, rejects a lower one with `epoch.ErrFenced`, and checks in the same transaction as the write. The library provides the fence as an interface, with a PostgreSQL adapter that passes core's conformance suite for fenced writers.
+Writers are protected at two levels. A node stops writing when its lease deadline passes. The deadline is a timer on the node's monotonic clock, shortened by a bound on clock drift. The application's storage applies core's fence laws: it admits a write whose epoch is at or above the shard's watermark, rejects a lower one with `epoch.ErrFenced`, and checks in the same transaction as the write. The library defines the fence as an interface. Each application implements it over its own storage and checks the implementation with core's conformance suite for fenced writers.
 
 ## Motivation
 
@@ -120,11 +120,11 @@ The deadline is a timer from core's `clock.Clock`, not a comparison of two time 
 Outside the `delegated` mode, the core assigns every epoch by these rules:
 
 - A shard's first writer gets epoch 1.
-- Each change of writer increments the epoch by one. In the leaderless topology, which has no core, the epoch is the store revision at which the node acquired the shard, so it increases by more than one.
+- Each change of writer increments the epoch by one. In the leaderless topology, which has no core, the epoch is the term that the store's election for the shard granted, which increases but not necessarily by one.
 - A shard created by a split or merge starts at one more than the highest epoch among its parents.
 - An abort that returns the writer role to the old node assigns a new epoch, because the new node may already have written under the epoch it was given.
 
-The core grants each epoch to one writer, because it commits every epoch to the store with a compare-and-set on the cell's generation. Core's admit-equal law is sound only under that condition: two holders of one epoch would both pass a fence. A store revision meets the same condition in the leaderless topology.
+The core grants each epoch to one writer, because it commits every epoch to the store with a compare-and-set on the cell's generation. Core's admit-equal law is sound only under that condition: two holders of one epoch would both pass a fence. A term from the store's election meets the same condition in the leaderless topology.
 
 A cell's controller receives its epoch from the root by the same rules, because the root treats the cell as a shard and the controller as its writer.
 
@@ -441,62 +441,15 @@ type Writer[Tx any] interface {
 
 A split or merge retires its parents in the acquisition of each new shard. `Retired` is `math.MaxInt64`, and the core issues epochs one at a time from 1, so no writer ever holds an epoch at or above it. The admit-equal law then rejects every writer of a retired shard, and the fence needs no separate retired flag.
 
-The PostgreSQL adapter, in package `fence/sqlfence`, uses this table:
+The application implements `Guard` over its own storage, because the fence has to run in the same transaction as the application's writes. Every implementation meets these requirements:
 
-```sql
-CREATE TABLE sharder_fence (
-    namespace text   NOT NULL,
-    shard     text   NOT NULL,
-    epoch     bigint NOT NULL,
-    PRIMARY KEY (namespace, shard)
-);
+- `Acquire` advances the shard's watermark and raises every parent's watermark to `Retired` in one transaction.
+- `Check` reads the watermark under a lock that makes a concurrent `Acquire` wait until the write's transaction ends, and advances the watermark in that transaction when the writer's epoch is above it.
+- An absent record is a watermark of zero.
 
--- Acquire, in one transaction with the retirements. Zero affected rows means the
--- watermark is above the epoch, and Acquire returns epoch.ErrFenced.
-INSERT INTO sharder_fence (namespace, shard, epoch) VALUES ($1, $2, $3)
-ON CONFLICT (namespace, shard) DO UPDATE SET epoch = EXCLUDED.epoch
-WHERE sharder_fence.epoch <= EXCLUDED.epoch;
+In a SQL database, the fence is one row per shard. `Acquire` is an upsert conditioned on the stored epoch, and `Check` reads the row with a shared row lock, such as PostgreSQL's `SELECT ... FOR SHARE`. A new writer's `Acquire` then waits for every write transaction of the old writer that has already checked the fence, and every later `Check` of the old writer sees the new epoch and fails.
 
--- Retire one parent. 9223372036854775807 is fence.Retired.
-INSERT INTO sharder_fence (namespace, shard, epoch) VALUES ($1, $4, 9223372036854775807)
-ON CONFLICT (namespace, shard) DO UPDATE SET epoch = EXCLUDED.epoch;
-
--- Check, inside every write transaction. The shared lock makes a concurrent Acquire
--- wait until this transaction ends. An absent row is a watermark of zero.
-SELECT epoch FROM sharder_fence WHERE namespace = $1 AND shard = $2 FOR SHARE;
-```
-
-PostgreSQL locks the conflicting row even when the `WHERE` clause prevents the update, and a shared row lock blocks other transactions from updating the row. A new writer's `Acquire` waits for every write transaction of the old writer that has already checked the fence, and every later `Check` of the old writer sees the new epoch and fails. A `Check` that finds the watermark below its epoch updates the row in the same transaction before it admits the write.
-
-```go
-// Package sqlfence implements fence.Guard over a table in a database/sql database.
-package sqlfence
-
-import (
- "context"
- "database/sql"
-
- "go.thesmos.sh/sharder/fence"
-)
-
-// Guard implements fence.Guard[*sql.Tx] over the sharder_fence table.
-type Guard struct {
- // unexported fields
-}
-
-// New returns a guard that uses table, which must have the sharder_fence schema.
-func New(db *sql.DB, table string) (*Guard, error)
-
-// Acquire implements fence.Acquirer.
-func (g *Guard) Acquire(ctx context.Context, t fence.Token) error
-
-// Writer implements fence.Guard.
-func (g *Guard) Writer(t fence.Token) fence.Writer[*sql.Tx]
-
-var _ fence.Guard[*sql.Tx] = (*Guard)(nil)
-```
-
-`sqlfence` passes core's `coretest/epochtest.AssertFencedWriter`, with two named writes: the acquisition, and a transaction that checks the fence and writes one row. The suite asserts that a write through a superseded writer returns `epoch.ErrFenced`, classifies as `errs.Conflict` and changes nothing. It also asserts that a write at the current epoch is admitted, that a writer at `epoch.Zero` neither validates nor advances, and that a fresh writer at a new epoch succeeds where the superseded one fails. Every fence adapter must pass the same suite.
+Every implementation passes core's `coretest/epochtest.AssertFencedWriter`, with two named writes: the acquisition, and a transaction that checks the fence and writes one row. The suite asserts that a write through a superseded writer returns `epoch.ErrFenced`, classifies as `errs.Conflict` and leaves the fence record unchanged. It also asserts that a write at the current epoch is admitted, that a writer at `epoch.Zero` neither validates nor advances, and that a fresh writer at a new epoch succeeds where the superseded one fails.
 
 ### Delegated ownership
 
@@ -586,7 +539,7 @@ Let a consensus application follow the core's choice of writer, as the other mod
 
 ## Drawbacks
 
-- Every application that wants exclusive ownership must route its writes through a fence adapter for its storage. The library provides one adapter, for PostgreSQL. Each other store needs its own, and an adapter that gets locking wrong reopens the window this RFC closes. Core's conformance suite catches a write that escapes validation, but not every locking mistake.
+- Every application that wants exclusive ownership must route its writes through a fence that it implements for its storage. An implementation that gets locking wrong reopens the window this RFC closes. Core's conformance suite catches a write that escapes validation, but not every locking mistake.
 - Fencing costs one extra statement and one row lock per write transaction, and one acquisition per tenure. Writers of one shard serialise on the fence row. We have not measured the throughput cost.
 - The application must acquire before its first read. The agent acquires automatically when the application registers its guard, but code that writes outside the agent's tokens bypasses the fence.
 - A 10-second TTL with `Stop` stops every writer after 10 seconds of store unavailability. Shorter TTLs fail over faster and stop sooner in a store outage. Longer TTLs do the opposite.
@@ -599,9 +552,8 @@ Let a consensus application follow the core's choice of writer, as the other mod
 ## Open questions
 
 1. Is 10 seconds the right default TTL, when Service Fabric fails over in 1.9 seconds on average and Slicer recalls a lease in 2.6 seconds at the median?
-2. Should the library provide fence adapters for more stores, and which: MySQL, etcd, Cassandra lightweight transactions?
-3. Should `ContinueFenced` be the default when a spec declares every write fenced?
-4. Should the graceful protocol's forwarding be offered as a helper for gRPC servers, since every graceful application needs it?
+2. Should `ContinueFenced` be the default when a spec declares every write fenced?
+3. Should a transport adapter offer a helper for the graceful protocol's forwarding, since every graceful application needs it?
 
 ## Unresolved and future work
 
@@ -622,6 +574,5 @@ Let a consensus application follow the core's choice of writer, as the other mod
 | Lee et al., "Shard Manager", SOSP '21, §4.3 and §8.2 | https://dl.acm.org/doi/10.1145/3477132.3483546 |
 | Mao et al., "WriteGuards", OSDI '26 | https://www.usenix.org/system/files/osdi26-mao-ziming-writeguards.pdf |
 | Kakivaya et al., "Service Fabric", EuroSys '18, §8.5 | https://dprg.cs.uiuc.edu/data/files/2018/ServiceFabricEuroSys2018.pdf |
-| PostgreSQL 18, INSERT and explicit locking | https://www.postgresql.org/docs/current/sql-insert.html |
 | go.thesmos.sh/core at 8edf26a: ordering and fencing (RFC-0026), `epoch/fence.go`, `coretest/epochtest`, `clock/hlc/hlc.go`, resilience (RFC-0023), `resilience/retrier.go` | https://github.com/thesmos-ai/core |
 | go.thesmos.sh/ledger RFC-0011, "Replicated storage": shards, leases and leader election, planned transfers and leadership | `docs/rfc/0011-replicated-storage.md` in the ledger repository |

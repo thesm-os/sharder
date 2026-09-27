@@ -17,7 +17,7 @@ related: RFC-0001, RFC-0003, RFC-0004, RFC-0005, RFC-0006, RFC-0007, RFC-0008, R
 
 ## Summary
 
-A namespace has one declarative spec, which selects a preset and, per axis, a registered strategy with its own JSON configuration. Strategies register in an explicit `Registry` through a typed factory that parses and validates the strategy's configuration. Before a spec takes effect, `Resolve` applies the preset and defaults and parses every strategy configuration. It also compiles every CEL guardrail with a cost limit and checks every cross-axis requirement. `Resolve` reports all problems at once, each with its spec path. A running namespace accepts a new spec version only after `Change` confirms that the move from the old spec is possible by an edit alone. The controller records a rejected version with its reasons, and the namespace continues on the last accepted spec. A namespace can also require signatures from a threshold of approvers on every spec change and every operator's operation, checked against an anchor in each process's own configuration.
+A namespace has one declarative spec, which selects a preset and, per axis, a registered strategy with its own JSON configuration. Strategies register in an explicit `Registry` through a typed factory that parses and validates the strategy's configuration. Before a spec takes effect, `Resolve` applies the preset and defaults, parses every strategy configuration, and checks every cross-axis requirement, including the capabilities of the process's store and membership adapters. `Resolve` reports all problems at once, each with its spec path. A running namespace accepts a new spec version only after `Change` confirms that the move from the old spec is possible by an edit alone. The controller records a rejected version with its reasons, and the namespace continues on the last accepted spec. A namespace can also require signatures from a threshold of approvers on every spec change and every operator's operation, checked against an anchor in each process's own configuration.
 
 ## Motivation
 
@@ -45,6 +45,8 @@ We propose the same mechanism for sharding strategies.
 
 An application builds a spec in Go or decodes it from JSON. The namespace's root scope in the store contains the accepted spec, and `sharderctl` changes it.
 
+The spec selects strategies, not infrastructure. The store and membership adapters are process wiring: the embedder builds them and passes them to the controller and the agent. The spec could not select its own store, because the store contains the spec.
+
 ```go
 // Package config declares namespace specs, the strategy registry, presets and validation.
 package config
@@ -71,8 +73,6 @@ type Spec struct {
  Replication  Selection `json:"replication,omitzero"`
  Ownership    Selection `json:"ownership,omitzero"`
  Handoff      Selection `json:"handoff,omitzero"`
- Membership   Selection `json:"membership,omitzero"`
- Store        Selection `json:"store,omitzero"`
  Topology     Selection `json:"topology,omitzero"`
  Routing      Selection `json:"routing,omitzero"`
 
@@ -152,7 +152,7 @@ A spec that relies on its preset for everything but two fields:
     "name": "planner",
     "config": {
       "constraints": [
-        {"name": "guardrail", "config": {"expr": "node.labels['disk'] == 'ssd'"}}
+        {"name": "match-label", "config": {"label": "jurisdiction"}}
       ]
     }
   }
@@ -162,6 +162,8 @@ A spec that relies on its preset for everything but two fields:
 ### The registry
 
 A strategy registers through a factory for its axis. The factory's type parameter is the axis interface, such as `partition.Partitioner`. `Build` returns an error for a factory whose type parameter does not match the axis, such as a partitioner factory registered on the placement axis, and the controller calls `Build` for every axis when it starts.
+
+The planner's constraints and goals register the same way, under the kinds `constraint` and `goal`. An application adds a rule that no built-in covers as a Go factory of `placement.Constraint` or `placement.Goal`, and a spec names it in the planner's configuration.
 
 ```go
 package config
@@ -173,7 +175,8 @@ import (
  "go.thesmos.sh/core/errs"
 )
 
-// Axis names a spec field that selects a registered strategy.
+// Axis names a kind of registered strategy: a spec field, or the planner's
+// constraints and goals, which the planner's configuration names.
 type Axis string
 
 const (
@@ -182,10 +185,10 @@ const (
  Replication  Axis = "replication"
  Ownership    Axis = "ownership"
  Handoff      Axis = "handoff"
- Membership   Axis = "membership"
- Store        Axis = "store"
  Topology     Axis = "topology"
  Routing      Axis = "routing"
+ Constraint   Axis = "constraint"
+ Goal         Axis = "goal"
 )
 
 // Capability is a named property that a strategy provides to other axes,
@@ -249,6 +252,11 @@ func Register[T any](r *Registry, axis Axis, f Factory[T]) error
 // Build returns the strategy that res selected on axis, built by its factory.
 // It returns an error if the factory registered on axis does not build a T.
 func Build[T any](r *Registry, res *Resolved, axis Axis) (T, error)
+
+// BuildNamed returns the strategy registered as name on axis, built from raw. The
+// planner builds the constraints and goals that its configuration names with it. It
+// returns ErrUnknown when axis has no factory of that name.
+func BuildNamed[T any](r *Registry, axis Axis, name string, raw json.RawMessage) (T, error)
 ```
 
 The factories of the built-in strategies are in package `builtin`, which imports `config` and every strategy package. The strategy packages do not import `config`, so an application can use a partitioner or a function placer without a registry.
@@ -308,21 +316,21 @@ Resolution fills a field from three sources in order: the spec, the preset, and 
 
 ### Capabilities and cross-axis requirements
 
-A factory declares the capabilities its strategy provides and the capabilities it requires on other axes. `Resolve` checks every requirement against the strategies the spec selected. The capability names are part of the library's public contract.
+A factory declares the capabilities its strategy provides and the capabilities it requires on other axes. The store and membership adapters of the process declare what they provide through `Provider`, and the controller passes those capabilities to `Resolve`. `Resolve` checks every requirement against the strategies the spec selected and the adapters the process has. The capability names are part of the library's public contract.
 
 | Capability | Provided by | Required by |
 |---|---|---|
 | `ordered-keys` | `key-range` | none of the built-ins. An application's range scans can require it |
 | `reshapes` | `hash-range`, `key-range` | none |
 | `function` | `rendezvous`, `consistent-hash`, `bounded-load`, `jump`, `maglev` | topology `leaderless` |
-| `controller` | topologies `embedded`, `service` | partitioners that reshape, placers `planner`, `static` and `external`, handoffs `graceful`, `staged` and `elect` |
-| `ordinal-nodes` | membership `static`, `kubernetes` | placer `jump` |
+| `controller` | topologies `embedded`, `service` | partitioners that reshape, placers `planner` and `static`, handoffs `graceful`, `staged` and `elect` |
+| `ordinal-nodes` | membership adapters that number their nodes, such as `membership/static` | placer `jump` |
 | `single-writer` | `primary-only`, `primary-secondary`, custom models with one writer role | ownership `exclusive`, `overlapping` and `delegated`, handoff `graceful` |
 | `exclusive-safe` | handoffs `break-before-make`, `graceful`, `staged` | ownership `exclusive` |
 | `delegated-safe` | handoff `elect` | ownership `delegated` |
 | `overlap` | handoffs `make-before-break`, `staged` | ownership `overlapping` |
-| `leases` | stores `memory` and `etcd`, membership `etcd` and `kubernetes` | ownership `exclusive` and `overlapping` |
-| `durable` | store `etcd` | topology `service` |
+| `leases` | store and membership adapters whose leases expire on a timer | ownership `exclusive` and `overlapping` |
+| `durable` | store adapters that persist every commit | topology `service` |
 
 Validation rejects these combinations, among others:
 
@@ -341,64 +349,22 @@ type Resolved struct {
  Configs map[Axis]Parsed
 }
 
+// Provider is implemented by store and membership adapters. Provides lists the
+// capabilities that the adapter offers to the spec's strategies, such as "leases".
+type Provider interface {
+ Provides() []Capability
+}
+
 // Resolve applies the preset and defaults to spec, parses and validates every
-// selection with its factory, compiles every guardrail, and checks every cross-axis
-// requirement. The returned error joins every problem found, and each problem
-// classifies as errs.Invalid. Each problem names its spec path, such as
-// "placement.config.goals[1].weight".
-func Resolve(r *Registry, spec Spec) (*Resolved, error)
+// selection with its factory, including the constraints and goals that the planner's
+// configuration names, and checks every cross-axis requirement against the
+// selections and the capabilities in provided. The returned error joins every problem
+// found, and each problem classifies as errs.Invalid. Each problem names its spec
+// path, such as "placement.config.goals[1].weight".
+func Resolve(r *Registry, spec Spec, provided []Capability) (*Resolved, error)
 ```
 
 `Resolve` reports every problem in one error, so a user fixes a spec in one round instead of one round per problem. Every error of the package classifies as `errs.Invalid` under core's `errs.Classify`, so a generic retry loop never retries a spec that cannot succeed.
-
-### CEL guardrails
-
-A guardrail is a CEL expression that a placement move must satisfy. The planner evaluates it as a hard constraint. Guardrails express application rules that no built-in constraint covers, such as keeping shards of a regulated tenant in one jurisdiction.
-
-The expression sees three variables:
-
-| Variable | Type | Contents |
-|---|---|---|
-| `shard` | `map(string, dyn)` | `id`, `load` (a map of metric to value) and `labels` from the partitioner |
-| `node` | `map(string, dyn)` | `id`, `labels`, `capacity` and `load` |
-| `role` | `string` | The role of the replica being placed |
-
-`Resolve` type-checks each expression and rejects any expression whose output type is not `bool`. It builds each program with a runtime cost limit. An evaluation that exceeds the limit rejects the move and reports the guardrail by name. The default limit is 10,000. Kubernetes allows 1,000,000 per validation call, which its source estimates at about 0.1 seconds. A guardrail runs once per candidate move, so its limit is 100 times lower.
-
-```go
-package config
-
-import (
- "fmt"
-
- "cel.dev/cel-go/cel"
-)
-
-// DefaultGuardrailCost is the runtime cost limit of one guardrail evaluation.
-const DefaultGuardrailCost = 10_000
-
-// compileGuardrail type-checks expr and returns a program with a runtime cost limit.
-func compileGuardrail(expr string, costLimit uint64) (cel.Program, error) {
- env, err := cel.NewEnv(
-  cel.Variable("shard", cel.MapType(cel.StringType, cel.DynType)),
-  cel.Variable("node", cel.MapType(cel.StringType, cel.DynType)),
-  cel.Variable("role", cel.StringType),
- )
- if err != nil {
-  return nil, err
- }
- ast, iss := env.Compile(expr)
- if iss.Err() != nil {
-  return nil, iss.Err()
- }
- if !ast.OutputType().IsExactType(cel.BoolType) {
-  return nil, fmt.Errorf("guardrail %q returns %v, want bool", expr, ast.OutputType())
- }
- return env.Program(ast, cel.CostLimit(costLimit))
-}
-```
-
-The code uses `cel.dev/cel-go` v0.32.0, whose module path changed from `github.com/google/cel-go` in that release.
 
 ### Changing a running namespace
 
@@ -430,15 +396,16 @@ func Change(r *Registry, old, new *Resolved) error
 | Ownership to or from `delegated` | No | Recreating the namespace, because the core's epochs and the authority's epochs cannot share one fence |
 | Approvals section | Yes, by a `spec` proposal that the `spec` policies of the old and the new section both approve | |
 | Replication model | No | Recreating the namespace |
-| Store or membership backend | No | A migration to a new namespace |
 | Topology between `embedded` and `service` | Yes. The root moves each cell controller through the handoff protocol | |
 | Topology to or from `leaderless` | No | Recreating the namespace |
 | Cell bounds | Yes. The root reports the cells above the new bounds | |
 | Routing source | Yes. Routers switch at their next refresh | |
 
+The store and the membership adapters are not in the spec, so no spec change replaces them. Moving a namespace to another store is a migration to a new namespace.
+
 ### Approvals
 
-A namespace can require that a threshold of approvers sign each change by an operator, as dual control requires. Without approvals, anyone who can write the root scope decides how every shard is placed. A spec that drops the guardrail that keeps a regulated tenant in one jurisdiction moves the tenant's replicas out of it, and a change from `exclusive` to `affinity` is an edit that removes fencing tokens.
+A namespace can require that a threshold of approvers sign each change by an operator, as dual control requires. Without approvals, anyone who can write the root scope decides how every shard is placed. A spec that drops the constraint that keeps a regulated tenant in one jurisdiction moves the tenant's replicas out of it, and a change from `exclusive` to `affinity` is an edit that removes fencing tokens.
 
 A change is a proposal. The controller that applies it checks the proposal's signatures against the namespace's approvals section, with core's signature threshold, `sign.Policy`, and its table of verifiers, `sign.Resolver`. Approvers sign the bytes that core's `crypto.NewFramer` frames.
 
@@ -596,7 +563,7 @@ Register built-in and third-party strategies into one package-level registry fro
 
 ### Access control on the store instead of approvals
 
-Restrict writes to the root scope with the store's own access control, such as etcd's role-based access control, or with a change-management workflow in front of `sharderctl`.
+Restrict writes to the root scope with the store's own access control, such as role-based access control, or with a change-management workflow in front of `sharderctl`.
 
 **Why not:**
 
@@ -606,12 +573,11 @@ Restrict writes to the root scope with the store's own access control, such as e
 
 ## Drawbacks
 
-- The spec has 16 top-level fields and nine axes, and the built-in strategies add their own configuration schemas. A user reads one schema per selected strategy.
+- The spec has 14 top-level fields and seven axes, and the built-in strategies add their own configuration schemas. A user reads one schema per selected strategy.
 - Capability names are a second vocabulary next to strategy names. The table has 11 capabilities, and every new strategy must declare its capabilities correctly. A wrong declaration lets an invalid combination through validation. The simulator catches some of these. A missing requirement on an unusual combination can pass validation and fail in production.
-- Guardrails move application rules into strings that the Go compiler does not check. `Resolve` type-checks them, but a guardrail that is valid and wrong places shards wrongly without an error.
+- An application rule that no built-in constraint covers is Go code, so changing it requires a deploy of the application.
 - `Change` rejects some edits that users expect to work, such as changing the slot count. Each rejected edit needs an operation, which is more code to write and test.
 - A factory registered on the wrong axis fails when the controller starts, not when the application compiles. `Register` takes the axis as a value, so the compiler cannot match it to the factory's type parameter.
-- `cel.dev/cel-go` becomes a dependency of the `config` package, together with its transitive dependencies.
 - Strict parsing conflicts with rolling upgrades. A spec that uses a field added in a newer release is rejected by controllers that still run the older release. gRPC ignores unknown fields for this reason. Here, a spec may use a new field only after every controller runs a release that supports it, and the controller that rejects such a spec reports the unknown field by name.
 - Approvals need a signing key for each approver and the anchor in each process's configuration. A change of approvers needs signatures under both the old and the new policy.
 - A restarted process has no floor on the spec versions it accepts, so a writer to the store can return a restarted process to an earlier approved spec. Approvals stop unapproved specs, not rollbacks to approved ones.
@@ -619,9 +585,8 @@ Restrict writes to the root scope with the store's own access control, such as e
 ## Open questions
 
 1. Should specs also be accepted as Kubernetes custom resources, with the root watching them, or only through the store?
-2. Is a cost limit of 10,000 per guardrail evaluation the right default?
-3. Should `Resolve` warn, not only fail, for valid but suspicious combinations, such as `affinity` ownership with `graceful` handoff?
-4. Should the registry export a JSON Schema for editors, generated from the registered factories?
+2. Should `Resolve` warn, not only fail, for valid but suspicious combinations, such as `affinity` ownership with `graceful` handoff?
+3. Should the registry export a JSON Schema for editors, generated from the registered factories?
 
 ## Unresolved and future work
 
@@ -637,13 +602,11 @@ Restrict writes to the root scope with the store's own access control, such as e
 | database/sql in Go 1.27.1, Register | https://github.com/golang/go/blob/go1.27.1/src/database/sql/sql.go |
 | Go wiki, code review comments on blank imports | https://go.dev/wiki/CodeReviewComments#import-blank |
 | Kubernetes v1.37.1, scheduler plugin registry | https://github.com/kubernetes/kubernetes/blob/v1.37.1/pkg/scheduler/framework/runtime/registry.go |
-| Kubernetes v1.37.1, CEL cost limits | https://github.com/kubernetes/kubernetes/blob/v1.37.1/staging/src/k8s.io/apiserver/pkg/apis/cel/config.go |
 | OpenTelemetry Collector v0.161.0, confmap validation | https://github.com/open-telemetry/opentelemetry-collector/blob/v0.161.0/confmap/validation.go |
 | Caddy v2 module system | https://caddyserver.com/docs/extending-caddy |
 | OpenTelemetry Collector component factories | https://github.com/open-telemetry/opentelemetry-collector |
 | Envoy xDS protocol, ACK and NACK | https://www.envoyproxy.io/docs/envoy/latest/api-docs/xds_protocol |
 | Kubernetes CRD validation rules with CEL | https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definitions/#validation-rules |
-| cel-go v0.32.0 release notes | https://github.com/cel-expr/cel-go/releases/tag/v0.32.0 |
 | Go plugin package | https://pkg.go.dev/plugin |
 | HashiCorp go-plugin | https://github.com/hashicorp/go-plugin |
 | The Update Framework specification, §5.2 and §5.3, the trusted root and its rotation | https://theupdateframework.github.io/specification/latest/ |
