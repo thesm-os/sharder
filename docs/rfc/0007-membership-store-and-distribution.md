@@ -534,4 +534,4 @@ Define the store over a generic key-value interface, with the sharder's layout o
 | Lee et al., "Shard Manager", SOSP '21, §3.2 | https://dl.acm.org/doi/10.1145/3477132.3483546 |
 | Apache Helix issue 1027, double masters from two controller pipelines | https://github.com/apache/helix/issues/1027 |
 | Apache Helix wiki, ZooKeeper scalability | https://github.com/apache/helix/wiki/FederatedZkClient |
-| go.thesmos.sh/core at b1d1a4b: storage is per kind (ADR-0012), conformance for durable adapters (RFC-0038), `epoch/fence.go` | https://github.com/thesmos-ai/core |
+| go.thesmos.sh/core at 8edf26a: storage is per kind (ADR-0012), conformance for durable adapters (RFC-0038), `epoch/fence.go` | https://github.com/thesmos-ai/core |

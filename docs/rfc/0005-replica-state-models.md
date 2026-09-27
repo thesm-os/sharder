@@ -36,7 +36,7 @@ Replicated applications differ in what their replicas do:
 
 A fixed set of roles serves the first group and forces the others to build their own. With undeclared roles, the core cannot keep two writers apart, because the model does not state which role writes. A declared model gives the core what it needs to enforce the writer bound and to order promotions after demotions, for any set of roles.
 
-A model that users write is a lifecycle, and core validates lifecycles at construction. Core's `fsm.Spec` rejects a state that cannot be reached, a state that cannot be left and an edge that can never be taken, and it checks a stored status change in about half a nanosecond without an allocation.
+A model that users write is a lifecycle, and core validates lifecycles at construction. Core's `fsm.Spec` rejects a state that cannot be reached, a state that cannot be left, a state with no path to a terminal state and an edge that can never be taken, and it checks a stored status change in about half a nanosecond without an allocation.
 
 ## Detailed design
 
@@ -153,7 +153,7 @@ func (c *Compiled) Role(s State) (shard.Role, bool)
 func (c *Compiled) Allows(from, to shard.Role) bool
 ```
 
-`fsm.Builder.Build` reports a role that nothing transitions into, and a role with no transition out of it. A role must also have a path to `Dropped`, which only `Offline` leads to. The rule comes from Helix, which requires a path to its `DROPPED` state from every state. Without it, the core could strand a replica in a cycle of roles that it can neither drop nor demote. This proposal relies on `fsm.Builder.Build` to reject such a cycle, as a set of states from which no terminal state is reachable.
+`fsm.Builder.Build` reports a role that nothing transitions into, a role with no transition out of it, and a role with no path to a terminal state. `Dropped` is the only terminal state and only `Offline` leads to it, so every role needs a path to `Offline`. The rule comes from Helix, which requires a path to its `DROPPED` state from every state. Without it, the core could strand a replica in a cycle of roles that it can neither drop nor demote.
 
 The core compiles every model when a spec resolves, so an invalid model fails `Resolve` with each of its problems.
 
@@ -269,7 +269,6 @@ Treat every replica the same, and let the application elect its own leader if it
 - Custom models expand the test space. Each model changes which transitions exist and which orders the core may choose, and the simulator has to cover them.
 - The bound counts started transitions, so a slow transition blocks others. A secondary that takes an hour to catch up occupies its slot in the role's bound for that hour.
 - `Priority` values interact with bounds in ways that are hard to predict for a user who writes a custom model. `Compile` checks structure, not whether the priorities produce the intended order.
-- `Compile` depends on a rule that core's `fsm` lacks at commit `b1d1a4b`: rejecting a state from which no terminal state is reachable. The rule is requested from core. Without it, a model whose roles form a cycle with no path to `offline` compiles.
 - `fsm` limits a model to 256 states, so a model has at most 254 roles besides `offline` and `dropped`. Errors from `fsm` name states by index, and `Compile` adds each index's role name to them.
 - Scaling on load moves replicas when load moves, which adds churn. The cooldown limits it and adds delay.
 - A model allows one writer role with one replica. Multi-leader applications, where more than one replica accepts writes, cannot express their writers, and the core fences none of them.
@@ -294,3 +293,4 @@ Treat every replica the same, and let the application elect its own leader if it
 | Apache Helix 2.0.1, state models | https://helix.apache.org/2.0.1-docs/tutorial_state.html |
 | Apache Helix, MessageSelectionStage at 48674e6 | https://github.com/apache/helix/blob/48674e6ac2a94fb5365ce69a4b1ee1d57655da1d/helix-core/src/main/java/org/apache/helix/controller/stages/MessageSelectionStage.java |
 | Microsoft Learn, replica roles | https://learn.microsoft.com/en-us/dotnet/api/system.fabric.replicarole?view=azure-dotnet |
+| go.thesmos.sh/core at 8edf26a: finite state machines (RFC-0031), states that cannot finish (ADR-0024), `fsm/builder.go` | https://github.com/thesmos-ai/core |

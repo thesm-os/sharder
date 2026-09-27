@@ -463,7 +463,7 @@ Define the time seam, the epoch type, the fence rules and the retry loop inside 
 - Every axis adds configuration that a user can get wrong. The spec has 16 top-level fields, and 9 of them select a strategy with its own configuration schema. Presets fill most of them, and validation reports every problem at once, but a misconfigured namespace is a failure mode that a fixed framework does not have.
 - Generality costs speed on the hot path. A router lookup maps a key to a position and searches a cache instead of computing an inlined hash. We measured the cache at 241 to 292 ns per lookup at 1,000,000 cached ranges, against a few nanoseconds for a hash.
 - Cells add a root controller and a second level of lookup, and a cell's nodes cannot help another cell's load until an operator moves them.
-- The library depends on core's `fsm`, `task`, `coretest/epochtest`, fence laws, and the `Policy`, `Signature` and `Resolver` of `crypto/sign`, which core contains at commit `b1d1a4b` and which no core release contains. The latest release, v0.6.1, predates all five.
+- The library depends on core's `fsm`, `task`, `coretest/epochtest`, fence laws, and the `Policy`, `Signature` and `Resolver` of `crypto/sign`, which core contains at commit `8edf26a` and which no core release contains. The latest release, v0.6.1, predates all five.
 
 ## Open questions
 
@@ -489,4 +489,4 @@ Define the time seam, the epoch type, the fence rules and the retry loop inside 
 | atoms-co/splitter v1.5.0 | https://github.com/atoms-co/splitter |
 | Apache Helix issue 691, a partitioned participant remains MASTER | https://github.com/apache/helix/issues/691 |
 | DeCandia et al., "Dynamo: Amazon's Highly Available Key-value Store", SOSP '07 | https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf |
-| go.thesmos.sh/core at b1d1a4b: ordering and fencing (RFC-0026), finite state machines (RFC-0031), structured concurrency (RFC-0030), resilience (RFC-0023) | https://github.com/thesmos-ai/core |
+| go.thesmos.sh/core at 8edf26a: ordering and fencing (RFC-0026), finite state machines (RFC-0031), structured concurrency (RFC-0030), resilience (RFC-0023) | https://github.com/thesmos-ai/core |

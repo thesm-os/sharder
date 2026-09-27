@@ -799,5 +799,5 @@ Use Kubernetes' own disruption budgets, which limit how many pods of a workload 
 | Microsoft Learn, Service Fabric `FaultType` | https://learn.microsoft.com/en-us/dotnet/api/system.fabric.faulttype?view=azure-dotnet |
 | tidwall/btree v1.8.1 | https://github.com/tidwall/btree |
 | google/btree v1.1.3 | https://github.com/google/btree |
-| go.thesmos.sh/core at b1d1a4b: request coalescing (RFC-0024), telemetry (RFC-0004), structured concurrency (RFC-0030), error classes and `resilience/retrier.go` | https://github.com/thesmos-ai/core |
+| go.thesmos.sh/core at 8edf26a: request coalescing (RFC-0024), telemetry (RFC-0004), structured concurrency (RFC-0030), error classes and `resilience/retrier.go` | https://github.com/thesmos-ai/core |
 | Our measurement of sorted slices and B-trees, 2026-09-27 | Research-0003 |
