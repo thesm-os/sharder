@@ -11,8 +11,7 @@ System_Ext(manager, "Cluster manager", "Restarts and moves processes, such as Ku
 
 System(sharder, "sharder", "Maps keys to shards, places shards on nodes, and moves them under fencing and a disruption budget.")
 
-System_Ext(store, "Store", "A consistent store with leases and elections, such as etcd. Contains the root scope and the cell scopes of each namespace.")
-System_Ext(membership, "Membership backend", "Tracks live nodes by lease, such as Kubernetes Lease objects. The store can provide membership instead.")
+System_Ext(store, "Store", "A consistent store with leases and elections, such as etcd. Contains the root scope and the cell scopes of each namespace, the node leases, and the proposals that controllers applied.")
 System_Ext(storage, "Application storage", "The application's database. The application's fence checks every write against the shard's watermark in it.")
 System_Ext(authority, "Application authority", "Elects each shard's writer in the delegated ownership mode, such as the thesmos ledger.")
 System_Ext(monitoring, "Monitoring", "Stores the operator's metrics and logs.")
@@ -21,10 +20,9 @@ Rel(servers, sharder, "Embed the agent, the controller in the embedded topology,
 Rel(clients, sharder, "Route each key", "Go API, in process")
 Rel(operator, sharder, "Operates namespaces", "sharderctl")
 Rel(approver, sharder, "Signs proposals", "sharderctl sign")
-Rel(manager, sharder, "Submits planned disruptions", "sharderctl drain, Agent.Close")
+Rel(manager, sharder, "Admits and ends planned disruptions", "Disrupt, Done")
 
-Rel(sharder, store, "Campaigns, commits assignments, watches scopes", "a store adapter")
-Rel(sharder, membership, "Renews and watches node leases", "a membership adapter")
+Rel(sharder, store, "Campaigns, commits assignments and applied proposals, watches scopes, renews node leases", "a store adapter")
 Rel(sharder, storage, "Acquires each writer's fence", "the application's fence.Guard")
 Rel(sharder, authority, "Requests elections and abdications", "the application's Elector")
 Rel(sharder, monitoring, "Reports metrics and logs", "telemetry.Reporter, slog")

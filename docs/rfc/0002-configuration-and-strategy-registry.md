@@ -17,7 +17,7 @@ related: RFC-0001, RFC-0003, RFC-0004, RFC-0005, RFC-0006, RFC-0007, RFC-0008, R
 
 ## Summary
 
-A namespace has one declarative spec, which selects a preset and, per axis, a registered strategy with its own JSON configuration. Strategies register in an explicit `Registry` through a typed factory that parses and validates the strategy's configuration. Before a spec takes effect, `Resolve` applies the preset and defaults, parses every strategy configuration, and checks every cross-axis requirement, including the capabilities of the process's store and membership adapters. `Resolve` reports all problems at once, each with its spec path. A running namespace accepts a new spec version only after `Change` confirms that the move from the old spec is possible by an edit alone. The controller records a rejected version with its reasons, and the namespace continues on the last accepted spec. A namespace can also require signatures from a threshold of approvers on every spec change and every operator's operation, checked against an anchor in each process's own configuration.
+A namespace has one declarative spec, which selects a preset and, per axis, a registered strategy with its own JSON configuration. Strategies register in an explicit `Registry` through a typed factory that parses and validates the strategy's configuration. Before a spec takes effect, `Resolve` applies the preset and defaults, parses every strategy configuration, and checks every cross-axis requirement, including the capabilities of the process's store and membership adapters. `Resolve` reports all problems at once, each with its spec path, and warns about combinations that are valid but probably a mistake. A running namespace accepts a new spec version only after `Change` confirms that the move from the old spec is possible by an edit alone. The controller records a rejected version with its reasons, and the namespace continues on the last accepted spec. A namespace can also require signatures from a threshold of approvers on every spec change and every operator's operation, checked against an anchor in each process's own configuration.
 
 ## Motivation
 
@@ -65,8 +65,9 @@ type Spec struct {
  Namespace shard.Namespace `json:"namespace"`
  // Version increases by one with every accepted change of the spec.
  Version epoch.Epoch `json:"version"`
- // Preset names a registered preset. An empty Preset selects "exclusive-worker".
- Preset string `json:"preset,omitempty"`
+ // Preset names a registered preset. Resolve rejects a spec without one, so every
+ // strategy of a namespace is one that the spec or its preset selected.
+ Preset string `json:"preset"`
 
  Partitioning Selection `json:"partitioning,omitzero"`
  Placement    Selection `json:"placement,omitzero"`
@@ -165,6 +166,8 @@ A strategy registers through a factory for its axis. The factory's type paramete
 
 The planner's constraints and goals register the same way, under the kinds `constraint` and `goal`. An application adds a rule that no built-in covers as a Go factory of `placement.Constraint` or `placement.Goal`, and a spec names it in the planner's configuration.
 
+Hash functions register under the kind `hash`, as factories of `partition.Hash`, and a partitioner's configuration names one. The one built-in is `xxhash64`. An application that migrates with an existing key-to-slot mapping registers that mapping's hash under a name of its own, such as Redis Cluster's CRC16 or Kafka's murmur2.
+
 ```go
 package config
 
@@ -175,8 +178,9 @@ import (
  "go.thesmos.sh/core/errs"
 )
 
-// Axis names a kind of registered strategy: a spec field, or the planner's
-// constraints and goals, which the planner's configuration names.
+// Axis names a kind of registered strategy: a spec field, the planner's constraints
+// and goals, which the planner's configuration names, or the hash functions, which a
+// partitioner's configuration names.
 type Axis string
 
 const (
@@ -189,6 +193,7 @@ const (
  Routing      Axis = "routing"
  Constraint   Axis = "constraint"
  Goal         Axis = "goal"
+ Hash         Axis = "hash"
 )
 
 // Capability is a named property that a strategy provides to other axes,
@@ -207,6 +212,9 @@ type Requirement struct {
 type Capabilities struct {
  Provides []Capability
  Requires []Requirement
+ // Prefers lists requirements whose failure Resolve reports as a warning instead of
+ // an error, for combinations that work but are probably a mistake.
+ Prefers []Requirement
 }
 
 // Parsed is a strategy configuration after parsing. Validate returns every invalid
@@ -322,14 +330,15 @@ A factory declares the capabilities its strategy provides and the capabilities i
 |---|---|---|
 | `ordered-keys` | `key-range` | none of the built-ins. An application's range scans can require it |
 | `reshapes` | `hash-range`, `key-range` | none |
-| `function` | `rendezvous`, `consistent-hash`, `bounded-load`, `jump`, `maglev` | topology `leaderless` |
-| `controller` | topologies `embedded`, `service` | partitioners that reshape, placers `planner` and `static`, handoffs `graceful`, `staged` and `elect` |
+| `function` | `rendezvous`, `consistent-hash`, `bounded-load`, `jump`, `maglev` | topology `leaderless`, routing source `compute` |
+| `controller` | topologies `embedded`, `service` | partitioners that reshape, placers `planner` and `static`, handoffs `graceful`, `staged` and `elect`, routing sources `watch` and `lookup` |
 | `ordinal-nodes` | membership adapters that number their nodes, such as `membership/static` | placer `jump` |
 | `single-writer` | `primary-only`, `primary-secondary`, custom models with one writer role | ownership `exclusive`, `overlapping` and `delegated`, handoff `graceful` |
 | `exclusive-safe` | handoffs `break-before-make`, `graceful`, `staged` | ownership `exclusive` |
 | `delegated-safe` | handoff `elect` | ownership `delegated` |
 | `overlap` | handoffs `make-before-break`, `staged` | ownership `overlapping` |
-| `leases` | store and membership adapters whose leases expire on a timer | ownership `exclusive` and `overlapping` |
+| `writer-epochs` | ownership `exclusive`, `overlapping`, `delegated` | none. Handoff `graceful` prefers it |
+| `leases` | store and membership adapters that end a node's session within a bounded time after the node stops renewing it | ownership `exclusive` and `overlapping` |
 | `durable` | store adapters that persist every commit | topology `service` |
 
 Validation rejects these combinations, among others:
@@ -337,6 +346,9 @@ Validation rejects these combinations, among others:
 - `exclusive` ownership with `make-before-break` handoff fails validation, because `make-before-break` does not provide `exclusive-safe`. The check prevents two writers at once.
 - A `leaderless` topology with `planner` placement fails validation twice. The planner requires `controller`, and the leaderless topology requires `function`.
 - `delegated` ownership with any handoff other than `elect` fails validation, because only `elect` provides `delegated-safe`. The check keeps the core from moving a writer that the application's authority elected.
+- A `leaderless` topology with `watch` or `lookup` routing fails validation, because both sources read what a controller commits. Its routers use `compute`.
+
+Validation accepts `affinity` ownership with `graceful` handoff and warns about it. `graceful` prefers `writer-epochs`, and under `affinity` it runs a coordinated primary handoff for a writer that the core does not fence.
 
 ### Resolution
 
@@ -347,6 +359,17 @@ package config
 type Resolved struct {
  Spec    Spec
  Configs map[Axis]Parsed
+ // Warnings lists the preferences that the selections do not meet. sharderctl apply
+ // prints them, and the spec takes effect regardless.
+ Warnings []Warning
+}
+
+// Warning is a combination that Resolve accepts but that is probably a mistake.
+type Warning struct {
+ // Path is the spec path of the selection whose preference failed, such as "handoff".
+ Path string
+ // Reason is the failed preference's Reason.
+ Reason string
 }
 
 // Provider is implemented by store and membership adapters. Provides lists the
@@ -356,11 +379,13 @@ type Provider interface {
 }
 
 // Resolve applies the preset and defaults to spec, parses and validates every
-// selection with its factory, including the constraints and goals that the planner's
-// configuration names, and checks every cross-axis requirement against the
-// selections and the capabilities in provided. The returned error joins every problem
-// found, and each problem classifies as errs.Invalid. Each problem names its spec
-// path, such as "placement.config.goals[1].weight".
+// selection with its factory, including the constraints, goals and hash functions
+// that configurations name, and checks every cross-axis requirement against the
+// selections and the capabilities in provided. A spec without a preset is a problem.
+// The returned error joins every problem found, and each problem classifies as
+// errs.Invalid. Each problem names its spec path, such as
+// "placement.config.goals[1].weight". A preference that the selections do not meet
+// becomes a Warning in the result.
 func Resolve(r *Registry, spec Spec, provided []Capability) (*Resolved, error)
 ```
 
@@ -370,10 +395,12 @@ func Resolve(r *Registry, spec Spec, provided []Capability) (*Resolved, error)
 
 The root of a running namespace reads the spec from the root scope, and the cell controllers read it from there. A new version takes effect in these steps:
 
-1. `sharderctl apply` writes the new spec to the root scope as a proposal with the next version number. In a namespace with approvals, `apply` prints the proposal instead, and `sharderctl submit` sends it with its approvers' signatures.
-2. The root checks the proposal's approvals, resolves it, and calls `Change` with the current resolved spec.
-3. On success, the root commits the new spec, and each cell controller verifies it and applies it at its next planning pass.
-4. On failure, the root records the rejection and its reasons next to the proposal and continues with the current spec. `sharderctl apply` prints the reasons.
+1. `sharderctl apply` sends the new spec as a proposal with the next version number to the root, through the protocol's `Submit` call. In a namespace with approvals, `apply` prints the proposal instead, and `sharderctl submit` sends it with its approvers' signatures.
+2. The root checks the proposal's approvals, or the caller's identity in a namespace without approvals, resolves the proposal, and calls `Change` with the current resolved spec.
+3. On success, the root commits the new spec together with the proposal and its caller's identity, and each cell controller verifies the spec and applies it at its next planning pass. `Submit` returns the warnings of `Resolve`.
+4. On failure, `Submit` returns the reasons, and the root continues with the current spec.
+
+`sharderctl` prints what `Submit` returns. Operators do not need credentials for the store.
 
 ```go
 package config
@@ -431,6 +458,9 @@ const (
  Undrain    OperationKind = "undrain"
  Reshard    OperationKind = "reshard"
  CellSplit  OperationKind = "cell-split"
+ // Explain asks for the constraints and goal costs that placed a shard. The cell's
+ // controller returns them from Submit and commits nothing.
+ Explain OperationKind = "explain"
 )
 
 // Approvals maps each operation kind to the approvers of its proposals. A kind without
@@ -517,15 +547,18 @@ Each kind of proposal has a base and a controller that applies it:
 | `cell-split` | The version of the cell map | The root |
 | `move` | The shard's epoch | The cell's controller |
 | `drain`, `undrain` | The node's incarnation | The cell's controller |
+| `explain` | The cell's generation | The cell's controller |
 
 These rules apply to every namespace whose processes have a `Trust`:
 
 1. A process accepts a spec only when the spec's approvals chain starts at the anchor. The namespace's first spec is approved under the `spec` policy of its own approvals section. Every later version of the section is exactly one above the version before it, and is approved under the `spec` policies of both, as TUF requires of a new root.
 2. The controller that applies a proposal refuses it when its `Expires` has passed, when its scope has applied its ID, when the state has moved from its `Base`, or when the kind's policy is not met.
 3. The controller checks each policy with `sign.Policy.Check` and excludes no requester. A proposal's requester is not authenticated, so a party that proposed a change could name another key as the requester and approve its own proposal. The ledger's strict profiles count approvers the same way, with three distinct approvers so that at least two of them are not the requester.
-4. The controller commits the signed proposal and the change in one generation of its scope. The scope keeps the proposal under its ID until `Expires` passes, which bounds replays to the proposal's own lifetime. The root scope keeps the signed proposal of the current spec, and of every version of the approvals section, for as long as the namespace exists.
+4. The controller commits the signed proposal, the identity of the caller that submitted it, and the change in one generation of its scope. The scope keeps the proposal under its ID until `Expires` passes, which bounds replays to the proposal's own lifetime. The root scope keeps the signed proposal of the current spec, and of every version of the approvals section, for as long as the namespace exists.
 5. Every controller and every agent verifies each spec it reads, and refuses a spec whose version is below the highest version it has verified. A restarted process has no such floor.
 6. Automatic actions do not need approval: failover, emergency placement, periodic rebalancing, resharding by the partitioner, and `Agent.Close`. They act within the spec that the approvers signed.
+
+Each proposal arrives at the controller that applies it through the protocol's `Submit` call, which the transport adapter authenticates. In a namespace with approvals, the signatures authorise the proposal. Without approvals, a controller accepts a proposal only from an identity that `controller.WithOperators` lists. The list comes from the process's own configuration, next to its `Trust`, never from the store, so a writer to the store cannot grant itself operator rights.
 
 A process without a `Trust` accepts every spec, as a namespace without approvals does. `Resolve` checks that each policy's threshold is between one and its number of parties, and that no key appears twice. `Trust.Verify` builds each policy with `sign.NewPolicy` and the process's `Resolver`. Operators sign proposals with `sharderctl`, outside the store.
 
@@ -574,7 +607,7 @@ Restrict writes to the root scope with the store's own access control, such as r
 ## Drawbacks
 
 - The spec has 14 top-level fields and seven axes, and the built-in strategies add their own configuration schemas. A user reads one schema per selected strategy.
-- Capability names are a second vocabulary next to strategy names. The table has 11 capabilities, and every new strategy must declare its capabilities correctly. A wrong declaration lets an invalid combination through validation. The simulator catches some of these. A missing requirement on an unusual combination can pass validation and fail in production.
+- Capability names are a second vocabulary next to strategy names. The table has 12 capabilities, and every new strategy must declare its capabilities correctly. A wrong declaration lets an invalid combination through validation. The simulator catches some of these. A missing requirement on an unusual combination can pass validation and fail in production.
 - An application rule that no built-in constraint covers is Go code, so changing it requires a deploy of the application.
 - `Change` rejects some edits that users expect to work, such as changing the slot count. Each rejected edit needs an operation, which is more code to write and test.
 - A factory registered on the wrong axis fails when the controller starts, not when the application compiles. `Register` takes the axis as a value, so the compiler cannot match it to the factory's type parameter.
@@ -584,13 +617,13 @@ Restrict writes to the root scope with the store's own access control, such as r
 
 ## Open questions
 
-1. Should specs also be accepted as Kubernetes custom resources, with the root watching them, or only through the store?
-2. Should `Resolve` warn, not only fail, for valid but suspicious combinations, such as `affinity` ownership with `graceful` handoff?
-3. Should the registry export a JSON Schema for editors, generated from the registered factories?
+None.
 
 ## Unresolved and future work
 
 - Per-shard spec overrides beyond replica counts and placement preferences are not proposed here.
+- Specs as Kubernetes custom resources are not proposed here. The root reads specs only from the store.
+- A JSON Schema of the spec, generated from the registry for editors, is not proposed here.
 
 ## References
 

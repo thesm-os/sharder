@@ -208,11 +208,13 @@ A goal list for a replicated store that prefers each shard's home region:
 
 Tiers encode priority. The planner never accepts a move that worsens the cost of a lower tier to improve a higher one. SM orders its goals the same way: region preference, replica spread, planned maintenance, utilisation threshold, then global and regional balance.
 
+Kafka's assignors are planner configurations, not placers of their own. `count` alone spreads partitions as round-robin does, and `count` with `stickiness` keeps them in place as the sticky assignors do. No built-in goal keeps a member's partitions contiguous, as the range assignor does, and an application that needs that registers a goal.
+
 #### Search
 
 ```json
 {
-  "search": {"algorithm": "local", "maxMoves": 500, "sample": 16, "timeout": "10s"},
+  "search": {"algorithm": "local", "maxMoves": 500, "sample": 16, "timeout": "60s"},
   "churn": {"maxShardFraction": 0.09},
   "triggers": {"interval": "30s", "minImbalance": 1.1, "activeAbove": 0.25, "onMembership": true}
 }
@@ -233,9 +235,11 @@ The planner samples `sample` target nodes per candidate move, not every node, wh
 
 A pass is deterministic unless its `timeout` stops it. The planner draws every random choice from `Input.Rand`, a `rand/pcg` source from core, and reads the timeout through the controller's `clock.Clock`, so the simulator replays a pass exactly under a virtual clock. The timeout is a safety bound. When it stops a pass, the planner reports the timeout, because the result then depends on the machine's speed.
 
+The planner has two time bounds at the default cell bounds of 5,000 nodes and 1,000,000 shards, on 4 cores. Emergency mode places the replicas of one failed node within 1 second. A periodic pass ends within 60 seconds, the default `timeout`, with the best plan it has found. Benchmarks in CI enforce both bounds.
+
 A pass's work depends on `maxMoves` and `sample`, not on the size of the cell, because the planner starts from the nodes with the highest cost and samples targets. Each cell plans in its own controller, so a namespace of many cells plans its cells in parallel on as many processes. Inside one controller, the planner draws its samples on one goroutine, because a `rand/pcg` source is not safe for concurrent use. It then evaluates the candidate targets of a move in parallel with `task.Each` from core, bounded by the controller's CPU limit.
 
-The churn budget caps the fraction of shards that one periodic pass may move. Its default, 9%, is Slicer's per-adjustment key churn budget. `triggers` skip a periodic pass while the most loaded node is below `activeAbove` of its capacity, or while the ratio of the highest to the mean node load is below `minImbalance`. Slicer suppresses rebalancing below 25% CPU for the same reason: when no node is at risk, a move has a cost and no benefit.
+The churn budget caps the fraction of shards that one periodic pass may move. Its default, 9%, is Slicer's per-adjustment key churn budget. The simulator measures the balance and the moves that the default gives, and a preset can set its own budget. `triggers` skip a periodic pass while the most loaded node is below `activeAbove` of its capacity, or while the ratio of the highest to the mean node load is below `minImbalance`. Slicer suppresses rebalancing below 25% CPU for the same reason: when no node is at risk, a move has a cost and no benefit.
 
 ### The static adapter
 
@@ -246,6 +250,8 @@ An application that uses an optimiser in another process registers a `Placer` th
 ### Load
 
 Agents report each shard's load per metric, averaged over the spec's load window. Nodes report their capacity per metric at registration. The pseudo-metric `count` is the number of replicas, weighted by role. A shard with no report yet has the mean load of its cell, so placement treats a new shard as an average shard.
+
+The planner balances one namespace. Namespaces whose processes share machines rely on the platform's isolation of those processes, such as a container per namespace, or declare each namespace's share of a machine in `Node.Capacity`. Meta layers its fleet the same way: Twine gives each application containers that isolate it from the others on a server, and SM places shards only within an application's own containers.
 
 ### Plan validation in the core
 
@@ -282,6 +288,16 @@ Place every shard with a hash ring. A ring runs without a controller and moves f
 
 **Why not:** a ring cannot honour capacity, zone spread, regional preference or a label rule, and it balances only on counts, not on measured load. It remains available as a function placer for applications that need nothing more.
 
+### One planner across namespaces
+
+Plan every namespace whose processes share machines in one pass, over their combined load, as Helix's WAGED rebalancer does across all resources of a cluster and as Service Fabric's resource manager does across services. Idle capacity of one namespace then serves another, and no two planners move load onto the same machine at once.
+
+**Why not:**
+
+- One planner would span the cells of several namespaces, so its problem grows with the sum of their shards instead of one cell's bound. Helix's maintainers report partial rebalances of 30 to 40 seconds on clusters of more than 25,000 partitions, 1/40 of one cell's bound of 1,000,000 shards here.
+- A bad spec or a planner fault in one namespace could move the shards of every namespace that shares its machines.
+- Leaderless namespaces have no planner to join.
+
 ### One scoring pass per shard
 
 Filter the feasible nodes and pick the highest-scoring one for each shard, as a pod scheduler does. This is simple and fast, and it is what emergency mode does.
@@ -290,8 +306,9 @@ Filter the feasible nodes and pick the highest-scoring one for each shard, as a 
 
 ## Drawbacks
 
-- The planner is the largest component of the library: seven constraints, seven goals, three search algorithms and two modes. By our estimate it is 4,000 lines of code, and it needs benchmarks to show that it finishes within its bounds.
-- We have not measured the planner. SM reports 30 seconds for 75,000 shards on 1,000 servers with a mature, heavily optimised solver, growing to 205 seconds for 375,000 shards on 5,000 servers. A first Go implementation has none of that optimisation.
+- The planner is the largest component of the library: seven constraints, seven goals, three search algorithms and two modes. By our estimate it is 4,000 lines of code, and CI benchmarks must show that it meets its bounds of 1 second per emergency placement and 60 seconds per periodic pass.
+- We have not measured the planner. SM reports 30 seconds for 75,000 shards on 1,000 servers with a mature, heavily optimised solver, growing to 205 seconds for 375,000 shards on 5,000 servers. A 60-second pass over 1,000,000 shards ends on its move budget or its timeout, not at a converged plan.
+- Namespaces that share machines without isolation do not see each other's load. Capacity that one namespace leaves idle is not available to another.
 - A plan is deterministic only when the move budget ends the pass. A pass that the timeout ends produces a result that depends on the machine.
 - Tiers and weights are configuration that users must understand. A goal list with badly chosen weights moves shards without improving anything that matters.
 - Function placers that ignore load can overload a node that serves hot shards. `bounded-load` limits the imbalance in shard count, not in measured load.
@@ -299,14 +316,12 @@ Filter the feasible nodes and pick the highest-scoring one for each shard, as a 
 
 ## Open questions
 
-1. What pass duration must the planner meet for a cell at the default bounds of 5,000 nodes and 1,000,000 shards, and on how many cores?
-2. Should Kafka's assignment strategies (range, round-robin, sticky) exist as named placers for familiarity, or only as documented planner configurations? Kafka's own broker-side assignors, uniform and range, are both sticky, which the planner's `stickiness` goal reproduces.
-3. Should the planner balance across namespaces that share nodes, or only within one namespace?
-4. Is 9% the right default churn budget for placement, when Slicer chose it for key churn in hashed ranges?
+None.
 
 ## Unresolved and future work
 
 - Placement across namespaces, where a goal in one namespace reads another namespace's assignment, is not proposed here beyond the `colocate` goal within one namespace.
+- Machine-wide utilisation as a load metric, which would let each namespace's planner avoid machines that other namespaces load, is not proposed here.
 - Forecasting load and placing ahead of it is not proposed here.
 
 ## References
@@ -334,3 +349,8 @@ Filter the feasible nodes and pick the highest-scoring one for each shard, as a 
 | Dapr v1.18.4, placement service options | https://github.com/dapr/dapr/blob/v1.18.4/cmd/placement/options/options.go |
 | PingCAP, "Placement Rules" | https://docs.pingcap.com/tidb/stable/configure-placement-rules/ |
 | google/or-tools issue 5042, Go support | https://github.com/google/or-tools/issues/5042 |
+| Apache Helix wiki, the WAGED rebalancer | https://github.com/apache/helix/wiki/Weight-Aware-Globally-Even-Distribute-Rebalancer |
+| Apache Helix wiki, WAGED rebalance pipeline redesign | https://github.com/apache/helix/wiki/WAGED-Rebalance-Pipeline-Redesign |
+| Microsoft Learn, Service Fabric metrics | https://learn.microsoft.com/en-us/azure/service-fabric/service-fabric-cluster-resource-manager-metrics |
+| Guo and Kooburat, "Scaling services with Shard Manager", Engineering at Meta, 2020 | https://engineering.fb.com/2020/08/24/production-engineering/scaling-services-with-shard-manager/ |
+| Yu, "Twine: Efficient, reliable cluster management", Engineering at Meta, 2019 | https://engineering.fb.com/2019/06/06/data-center-engineering/twine/ |

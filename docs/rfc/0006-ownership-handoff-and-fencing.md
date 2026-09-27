@@ -99,7 +99,8 @@ type Lease struct {
  // gives the writer role to another node. The default is zero when the spec declares
  // every write fenced, and TTL otherwise.
  LockDelay time.Duration
- // OnLoss selects what writers do at the deadline. The default is Stop.
+ // OnLoss selects what writers do at the deadline. The default is ContinueFenced
+ // when the spec declares every write fenced, and Stop otherwise.
  OnLoss OnLeaseLoss
 }
 
@@ -107,13 +108,22 @@ type Lease struct {
 // the store accepts: TTL*(1-MaxDriftRate). The node arms a clock timer for Validity
 // when it sends each renewal.
 func (l Lease) Validity() time.Duration
+
+// Config configures the exclusive, overlapping and delegated modes.
+type Config struct {
+ Lease Lease
+ // Fenced declares that every write of the application goes through a fence. It
+ // selects ContinueFenced as the default of Lease.OnLoss and zero as the default of
+ // Lease.LockDelay.
+ Fenced bool
+}
 ```
 
 The node measures its deadline from the moment it sent the renewal, not the moment it received the response, and shortens it by the drift bound. Its deadline passes before the store expires the lease, for any clock error within `MaxDriftRate`. The core gives the writer role away only after the store's expiry plus `LockDelay`. `LockDelay` protects resources that cannot check a fence, as Chubby's lock-delay does. It is zero by default when every write is fenced.
 
 The deadline is a timer from core's `clock.Clock`, not a comparison of two time readings. Core's production clock returns wall time from its hybrid logical clock, and that wall time stops advancing while the system clock is stepped back. A deadline measured between two such readings would outlast the lease by the size of the step. A timer from `hlc.Clock.NewTimer` is a standard library timer, which runs on the monotonic clock, and under the simulator's `clock/fake` it fires when virtual time passes it.
 
-`OnLoss` is the choice between availability and consistency. With `Stop`, a node that loses the store stops writing within one TTL, even when nobody else has taken over, so a store outage longer than the TTL stops every writer. With `ContinueFenced`, writers keep writing through an outage, and the fence rejects them once a new writer acquires the shard.
+`OnLoss` is the choice between availability and consistency. With `Stop`, a node that loses the store stops writing within one TTL, even when nobody else has taken over, so a store outage longer than the TTL stops every writer. With `ContinueFenced`, writers keep writing through an outage, and the fence rejects them once a new writer acquires the shard. A spec declares every write fenced with `fenced` in its ownership configuration. `ContinueFenced` is then the default, because the fence then rejects every write of a replaced writer, and a store outage does not stop the writers that nobody replaced.
 
 ### Epochs
 
@@ -303,6 +313,8 @@ Both replicas serve between steps 1 and 3. Validation rejects this protocol for 
 
 After step 2, A forwards every write to B, and B accepts writes that A forwards. After step 3, B also accepts writes from clients directly. After step 4, clients route to B, and A keeps forwarding until no more requests arrive or its drain timeout passes. At every step, some node accepts the shard's writes. Steps 1 to 5 are SM's graceful migration. The `cancel-prepare` call and the abort column are additions, because SM's paper gives only the sequence that succeeds.
 
+A forwards writes over the application's own protocol, to the node that `prepare-drop` names as its peer. The library has no forwarding helper, because it does not know the application's requests.
+
 ```mermaid
 sequenceDiagram
     participant C as Core
@@ -459,7 +471,7 @@ The core applies these rules to a `delegated` namespace:
 
 1. The core assigns no writer epoch. A shard's committed epoch is the highest epoch at which an agent has reported the shard's writer.
 2. A report of a writer at an epoch above the committed one describes a change that has already happened. The core commits it as the cell's next generation, so that routers and `sharderctl` see it, and counts every other replica of the shard as a non-writer.
-3. The replicas of a shard are the replicas that agents report. The core adds and removes none, and a plan may change only which reported replica is the writer.
+3. The replicas of a shard are the replicas that agents report through `Hosted`, `Elected`, `Deposed` and `Released`. The core adds and removes none. A plan may change only which reported replica is the writer, and only to a replica whose role the model allows to become the writer.
 4. A change of writer that the core requests runs through `elect`, which asks the authority. The authority decides.
 5. Invariant 2 becomes a contract of the authority. A node's store lease still decides whether the node is live, but it no longer bounds a writer's tenure, so `LockDelay`, `OnLoss` and the `lease-lapse` wait do not apply to the namespace's writers.
 6. `Agent.Token` returns a token at the epoch of the node's latest election, and `epoch.ErrFenced` once the application reports the node deposed. A fence over the application's storage checks those epochs with core's fence laws.
@@ -542,7 +554,7 @@ Let a consensus application follow the core's choice of writer, as the other mod
 - Every application that wants exclusive ownership must route its writes through a fence that it implements for its storage. An implementation that gets locking wrong reopens the window this RFC closes. Core's conformance suite catches a write that escapes validation, but not every locking mistake.
 - Fencing costs one extra statement and one row lock per write transaction, and one acquisition per tenure. Writers of one shard serialise on the fence row. We have not measured the throughput cost.
 - The application must acquire before its first read. The agent acquires automatically when the application registers its guard, but code that writes outside the agent's tokens bypasses the fence.
-- A 10-second TTL with `Stop` stops every writer after 10 seconds of store unavailability. Shorter TTLs fail over faster and stop sooner in a store outage. Longer TTLs do the opposite.
+- A namespace whose writes are not all fenced uses `Stop`, and a 10-second TTL then stops every writer after 10 seconds of store unavailability. Shorter TTLs fail over faster and stop sooner in a store outage. Longer TTLs do the opposite.
 - The graceful protocol needs the application to forward writes from the old writer to the new one, which is application code that the library cannot supply.
 - The built-in protocols have 20 steps, and 13 of them have an abort path or a retry to implement and to cover in the simulator.
 - In the `delegated` mode, invariants 1 and 2 rest on the application's authority. An authority that grants one epoch to two writers breaks them, and the core cannot detect it. The authority's own changes of writer also bypass the disruption budget.
@@ -551,9 +563,7 @@ Let a consensus application follow the core's choice of writer, as the other mod
 
 ## Open questions
 
-1. Is 10 seconds the right default TTL, when Service Fabric fails over in 1.9 seconds on average and Slicer recalls a lease in 2.6 seconds at the median?
-2. Should `ContinueFenced` be the default when a spec declares every write fenced?
-3. Should a transport adapter offer a helper for the graceful protocol's forwarding, since every graceful application needs it?
+None.
 
 ## Unresolved and future work
 

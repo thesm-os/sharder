@@ -20,9 +20,10 @@ related: RFC-0001, RFC-0003, RFC-0005, RFC-0006, RFC-0007, RFC-0009
 An application uses the library through four components:
 
 - The agent runs inside each application process and calls the application's `Handler` to add and drop replicas. Optional interfaces enable role changes, the graceful and staged handoffs, consensus membership changes and resharding, and the agent reports which ones the application implements.
-- The router runs inside each client and maps a key to the replicas that serve it. In `lookup` mode it caches only the routes it uses, fetches missing routes from the cell's controller in coalesced batches, and corrects a route when a server replies that it no longer serves the shard.
+- The router runs inside each client and maps a key to the replicas that serve it. By default it keeps every route of the cells it uses, from a watch of the store. In `lookup` mode it caches only the routes it uses and fetches missing routes from the cell's controller in coalesced batches. In a leaderless namespace it computes each route with the namespace's function placer. It corrects a route when a server replies that it no longer serves the shard.
 - The disruption budget admits planned operations, such as a rolling restart, only when every shard keeps enough replicas.
-- A protocol defines the calls between controllers, agents and routers, as Go types and interfaces with no wire format. Transport adapters in their own modules encode the calls and run them on the embedder's servers and credentials, and the library checks each caller's identity against the state in the store.
+- A protocol defines the calls between controllers, agents and routers, as Go types and interfaces, and its message types have binary codecs that kanon generates. Transport adapters in their own modules run the calls on the embedder's servers and credentials: HTTP/2 through `net/http` by default, or gRPC. The library checks each caller's identity against the state in the store.
+- Operators and cluster managers call the controller that applies each change through the same protocol, which the transport adapter authenticates. A controller accepts an operation with its approvers' signatures, or from an identity in the process's own configuration.
 
 The library is Go-only. `sharderctl`, a set of metrics reported through core's `telemetry.Reporter`, and logs through `log/slog` cover operations.
 
@@ -180,8 +181,10 @@ func Start(ctx context.Context, cfg Config, h Handler) (*Agent, error)
 // epoch through Deposed.
 func (a *Agent) Token(id shard.ID) (fence.Token, error)
 
-// Close asks the controller to move this node's replicas away under the namespace's
-// handoff protocol. It waits until they have moved or ctx ends, then leaves the cell.
+// Close calls Disrupt on the cell's controller for this node, which does not need
+// approval.
+// It waits until the controller has moved the node's replicas away under the
+// namespace's handoff protocol, or until ctx ends, then calls Done and leaves the cell.
 func (a *Agent) Close(ctx context.Context) error
 
 // Do runs one callback of the cell's controller. It returns an error of class
@@ -211,6 +214,28 @@ func (a *Agent) Elected(e Election)
 // reports the replica out of the writer role.
 func (a *Agent) Deposed(id shard.ID, e epoch.Epoch)
 
+// Placed describes a replica that the application's authority placed on this node in a
+// role other than the writer's, such as a voter that does not lead.
+type Placed struct {
+ Shard shard.ID
+ Role  shard.Role
+ // Range and Parents describe a shard that a split or a merge by the authority
+ // created. They are empty for any other shard.
+ Range   shard.Range
+ Parents []shard.ID
+}
+
+// Hosted reports a replica that the authority placed on this node. The agent reports it
+// in p.Role from then on. It returns an error of class errs.Invalid when p.Role is the
+// model's writer role or not a role of the model, or when the namespace's ownership is
+// not delegated.
+func (a *Agent) Hosted(p Placed) error
+
+// Released reports that the authority removed this node's replica of shard id. The agent
+// stops reporting it. It returns an error of class errs.NotFound when this node has no
+// replica of the shard.
+func (a *Agent) Released(id shard.ID) error
+
 // ReportFault reports a fault in this node's replica of shard id. The agent reports
 // the replica as failed at once, with f and the first 1,024 bytes of cause's message.
 // It returns an error when this node has no replica of the shard.
@@ -233,6 +258,15 @@ func (a *Agent) Recovered(id shard.ID) error
 | `Resharder` | Nothing. Without it, resharding uses `AddShard` and `DropShard` |
 | `LoadReporter` | Nothing. Without it, every shard reports only the `count` metric |
 | `Elector` | The `delegated` ownership mode |
+
+In a `delegated` namespace, the core does not place replicas, so the application reports every replica that its authority places on the node, through these calls:
+
+- `Hosted` reports a replica in a role other than the writer's, and a later `Hosted` for the same shard changes that role, such as a learner that becomes a voter.
+- `Elected` moves a hosted replica into the writer role, or adds one.
+- `Deposed` returns the replica to the role that `Hosted` last reported, and releases a replica that `Hosted` never reported.
+- `Released` removes the replica.
+
+A ledger member calls `Hosted` for each shard in which it votes or learns, `Elected` and `Deposed` for each change that `Member.Leading` yields, and `Released` when it leaves a shard's voter set. Without `Hosted`, the core sees only the replicas that have led, and a plan chooses the writer among those alone.
 
 An application reports a replica that cannot serve, such as one on a failed disk or one whose storage rejects every write, with `ReportFault`. Service Fabric offers the same call with the same two kinds of fault. From the report on, the replica counts as unavailable, for the budget and for the model's availability rule:
 
@@ -311,12 +345,16 @@ type Source string
 
 const (
  // Watch keeps every route of each cell that the router uses, from a watch of the
- // cell's scope.
+ // cell's scope. It is the default in the embedded and service topologies.
  Watch Source = "watch"
  // Lookup caches the routes that the router uses, and fetches a missing route from
  // the cell's controller, or from the cell's scope when the controller does not
  // respond.
  Lookup Source = "lookup"
+ // Compute computes each route with the namespace's function placer, from the
+ // layout and the cell's membership, as the agents of a leaderless namespace do. It
+ // is the only source of the leaderless topology.
+ Compute Source = "compute"
 )
 
 // Do calls call with the route of key. After a *NotOwnerError, it refreshes the route
@@ -344,32 +382,49 @@ The cache structure depends on the partitioner. `fixed-slots` positions are slot
 
 A cache that changes one route at a time must publish cheaply, so the router uses core's copy-on-write B-tree. The measured B-trees give the figures it has to match: about 290 ns per lookup, about 3 µs per published change, and 36 bytes per entry. The router needs four operations from it: a clone in constant time, a seek to the largest key at or below a position, iteration in order from a key, and a lookup without an allocation. A sorted slice remains the right structure for data that is rebuilt whole, such as a layout.
 
+In `compute` mode, the router watches the cell's membership and computes each shard's nodes with the namespace's function placer, the same function that the agents run. The function's writer can be ahead of the shard's election: the node that the function selects campaigns only after it sees the same membership change. A request that arrives before the node leads the election gets `NotOwnerError`, and `router.Do` routes again.
+
 A server replies to a request for a shard it does not serve, or for a lower epoch than its own, with `NotOwnerError`. It classifies as `errs.Conflict`, the class whose remedy is to read the state again and retry. Redis Cluster's `MOVED` and CockroachDB's not-leaseholder error follow the same redirect model. In `watch` mode, the router waits for the server's generation of the cell and routes again, because one generation can move many shards, such as every shard of a failed node.
 
 The router does not buffer requests by default. A namespace can set `hold` in its routing configuration, such as `{"hold": {"max": "2s", "requests": 1000}}`. With `hold`, a request for a shard in the middle of a transition waits until the transition publishes its generation, for at most `max`. A request fails once more than `requests` requests are waiting. Pekko buffers the same way and delivers at most once. The router keeps each held request's order, and it never delivers a held request after `max`.
 
 ### The protocol
 
-Controllers, agents and routers in separate processes call each other through a transport adapter. The protocol itself is Go types and interfaces, without a wire format:
+Controllers, agents and routers in separate processes call each other through a transport adapter. The protocol itself is Go types and interfaces:
 
 - The agent implements `AgentServer`, and the controller implements `ControllerServer`.
-- A controller sends callbacks through an `AgentClient`, and agents and routers send reports and lookups through a `ControllerClient`.
-- A transport adapter implements both clients, and serves both servers on the embedder's server with the embedder's credentials. The gRPC adapter, `go.thesmos.sh/sharder/grpc`, defines the protocol as a protobuf service. A lightweight binary adapter encodes each message with a codec that kanon generates.
-- `Local` connects the servers of one process by direct calls. A controller calls the agent of its own process through it, and the simulator runs every process of a simulation on it.
+- A controller sends callbacks through an `AgentClient`. Agents and routers send reports and lookups through a `ControllerClient`, and operators and cluster managers send operations and disruptions through it.
+- The message types have binary codecs that kanon generates beside their source file, in package `protocol`. The generated code imports only the standard library, and an embedder with a transport of its own sends these encodings over it.
+- `Network` connects the servers of every process of one simulation or test by direct calls. Each process calls through its own `Local`, so every server receives the identity of the process that calls it, as over an authenticating transport. `NewLocal` gives one process a network of its own, through which a controller calls the agent of its own process.
+
+A transport adapter implements both clients, and serves both servers on the embedder's server with the embedder's credentials. sharder includes two:
+
+| Module | Wire | Dependencies |
+|---|---|---|
+| `go.thesmos.sh/sharder/httptransport` | One HTTP/2 POST per call through `net/http`, with the kanon encoding of the message as its body. It is the default, and `sharderd` uses it | The standard library |
+| `go.thesmos.sh/sharder/grpc` | A protobuf service with one method per call | gRPC and protobuf |
+
+`net/http` multiplexes calls over HTTP/2 on TLS connections, and on unencrypted connections when `http.Protocols` enables it. It also provides deadlines through the request's context, connection reuse and keepalives. The Kubernetes API serves binary Protobuf bodies over plain HTTP in the same way.
 
 Every adapter numbers the fields of its encoding, as protobuf and kanon do, so processes of two releases decode each other's messages during a rolling upgrade.
 
 ```go
 // Package protocol defines the requests, reports and lookups between controllers,
-// agents and routers, and the interfaces that transport adapters implement.
+// agents and routers, the operations of operators and cluster managers, and the
+// interfaces that transport adapters implement. Its message types have binary codecs
+// that kanon generates.
 package protocol
 
 import (
  "context"
 
  "go.thesmos.sh/core/epoch"
+ "go.thesmos.sh/sharder/budget"
+ "go.thesmos.sh/sharder/config"
  "go.thesmos.sh/sharder/shard"
 )
+
+//go:generate go tool kanon -type=Request,Report,Ack,Located,Receipt
 
 // Call names a replica callback.
 type Call string
@@ -444,13 +499,32 @@ type AgentServer interface {
  Do(ctx context.Context, caller shard.Identity, r Request) error
 }
 
-// ControllerServer receives the reports of agents and the lookups of routers.
+// ControllerServer receives the reports of agents, the lookups of routers, and the
+// operations and disruptions of operators and cluster managers.
 type ControllerServer interface {
  // Report accepts one report of an agent.
  Report(ctx context.Context, caller shard.Identity, r Report) (Ack, error)
  // Lookup returns the placements of cell that contain positions, and up to prefetch
  // placements after the last of them, in position order.
  Lookup(ctx context.Context, caller shard.Identity, cell shard.CellID, positions [][]byte, prefetch int) ([]Located, error)
+ // Submit applies a signed proposal of a kind that this controller applies, as the
+ // table of proposal kinds assigns it, and records caller with it.
+ Submit(ctx context.Context, caller shard.Identity, s config.Signed) (Receipt, error)
+ // Disrupt admits a planned disruption under the budget of its nodes' cell. Every
+ // node of d is in one cell.
+ Disrupt(ctx context.Context, caller shard.Identity, d budget.Disruption) (budget.Decision, error)
+ // Done ends the planned disruption id, whose nodes serve again.
+ Done(ctx context.Context, caller shard.Identity, id string) error
+}
+
+// Receipt is a controller's reply to a proposal that it accepted.
+type Receipt struct {
+ // Applied reports whether the controller committed the proposal. An explain
+ // proposal commits nothing.
+ Applied bool
+ // Result is JSON: the warnings of Resolve for a spec, the budget's decision for a
+ // drain, or the constraints and goal costs for an explain proposal.
+ Result []byte
 }
 
 // AgentClient sends callbacks to agents in other processes. Transport adapters
@@ -459,44 +533,81 @@ type AgentClient interface {
  Do(ctx context.Context, node shard.Node, r Request) error
 }
 
-// ControllerClient sends reports and lookups to the controller of a cell. Transport
-// adapters implement it, and check that the controller presents cell's
-// ControllerIdentity.
+// ControllerClient sends reports, lookups, operations and disruptions to the controller
+// of a cell, or to the root when the cell's ID is empty. The root's cell is the root
+// leader's record in the root scope. Transport adapters implement it, and check that
+// the controller presents cell's ControllerIdentity.
 type ControllerClient interface {
  Report(ctx context.Context, cell shard.Cell, r Report) (Ack, error)
  Lookup(ctx context.Context, cell shard.Cell, positions [][]byte, prefetch int) ([]Located, error)
+ Submit(ctx context.Context, cell shard.Cell, s config.Signed) (Receipt, error)
+ Disrupt(ctx context.Context, cell shard.Cell, d budget.Disruption) (budget.Decision, error)
+ Done(ctx context.Context, cell shard.Cell, id string) error
 }
 
-// Local connects the servers of one process by direct calls, without an encoding. It
-// implements AgentClient and ControllerClient, and passes the process's identity as
-// the caller.
+// Network connects the servers of the processes of one simulation or test by direct
+// calls, without an encoding. It is safe for concurrent use.
+type Network struct {
+ // unexported fields
+}
+
+// NewNetwork returns a network without servers.
+func NewNetwork() *Network
+
+// AddAgent makes the agent of node n reachable through every Local of the network.
+func (n *Network) AddAgent(node shard.NodeID, s AgentServer)
+
+// AddController makes the controller of cell c, or the root when c is empty,
+// reachable through every Local of the network.
+func (n *Network) AddController(c shard.CellID, s ControllerServer)
+
+// Local returns the client of the process with identity self. Every call through it
+// passes self as the caller.
+func (n *Network) Local(self shard.Identity) *Local
+
+// Local is one process's client of a Network. It implements AgentClient and
+// ControllerClient, and passes the process's identity as the caller of every call.
 type Local struct {
  // unexported fields
 }
 
-// NewLocal returns a Local for the process with identity self.
+// NewLocal returns the client of a single process with identity self, over a network
+// of its own. The process registers its own servers on l.Network(), so that a
+// controller calls the agent of its own process without an encoding.
 func NewLocal(self shard.Identity) *Local
 
-// AddAgent makes the agent of node n reachable through l.
-func (l *Local) AddAgent(n shard.NodeID, s AgentServer)
+// Network returns the network that l calls through.
+func (l *Local) Network() *Network
 
-// AddController makes the controller of cell c reachable through l.
-func (l *Local) AddController(c shard.CellID, s ControllerServer)
-
-// Do passes r to the agent that AddAgent registered for node.ID, with the process's
-// identity as the caller. Without such an agent, it returns an error of class
-// errs.Transient, as a transport does for an unreachable node.
+// Do passes r to the agent that the network registered for node.ID, with the
+// process's identity as the caller. Without such an agent, it returns an error of
+// class errs.Transient, as a transport does for an unreachable node.
 func (l *Local) Do(ctx context.Context, node shard.Node, r Request) error
 
-// Report passes r to the controller that AddController registered for cell.ID, with
+// Report passes r to the controller that the network registered for cell.ID, with
 // the process's identity as the caller. Without such a controller, it returns an error
 // of class errs.Transient.
 func (l *Local) Report(ctx context.Context, cell shard.Cell, r Report) (Ack, error)
 
-// Lookup passes the lookup to the controller that AddController registered for
+// Lookup passes the lookup to the controller that the network registered for
 // cell.ID, with the process's identity as the caller. Without such a controller, it
 // returns an error of class errs.Transient.
 func (l *Local) Lookup(ctx context.Context, cell shard.Cell, positions [][]byte, prefetch int) ([]Located, error)
+
+// Submit passes s to the controller that the network registered for cell.ID, with the
+// process's identity as the caller. Without such a controller, it returns an error of
+// class errs.Transient.
+func (l *Local) Submit(ctx context.Context, cell shard.Cell, s config.Signed) (Receipt, error)
+
+// Disrupt passes d to the controller that the network registered for cell.ID, with the
+// process's identity as the caller. Without such a controller, it returns an error of
+// class errs.Transient.
+func (l *Local) Disrupt(ctx context.Context, cell shard.Cell, d budget.Disruption) (budget.Decision, error)
+
+// Done passes id to the controller that the network registered for cell.ID, with the
+// process's identity as the caller. Without such a controller, it returns an error of
+// class errs.Transient.
+func (l *Local) Done(ctx context.Context, cell shard.Cell, id string) error
 
 var (
  _ AgentClient      = (*Local)(nil)
@@ -512,7 +623,7 @@ var (
 | The step's timeout passed | `errs.Transient` |
 | The handler returned an error | The handler error's class |
 
-A transport adapter keeps each error's class across the wire, and the gRPC adapter maps each class to a gRPC status. The transition engine retries only `errs.Transient`, so a stale epoch ends the step at once, for every call. A handler error without a class is `errs.Unspecified`, which core's `errs.Retryable` reports as not retryable. A handler whose failure a retry can fix classifies its error as `errs.Transient`.
+A transport adapter keeps each error's class across the wire. `httptransport` returns the class with the error's message in the response body, and the gRPC adapter maps each class to a gRPC status. The transition engine retries only `errs.Transient`, so a stale epoch ends the step at once, for every call. A handler error without a class is `errs.Unspecified`, which core's `errs.Retryable` reports as not retryable. A handler whose failure a retry can fix classifies its error as `errs.Transient`.
 
 ### Transport security
 
@@ -530,12 +641,13 @@ The library checks each call against its own state, with the identity that the t
 1. Each node registers its identity with its membership session, in `shard.Node.Identity`. Each cell's controller writes its identity to the cell's record in its first commit, and the root's leader campaigns under its identity.
 2. An agent accepts `Do` only from the identity that its scope names as its controller: the cell's record in a cell's scope, and the root's leader in the root scope. It also refuses a controller epoch below the highest it has seen.
 3. A cell's controller accepts a `Report` for node N only from N's registered identity.
+4. A controller accepts `Submit` in a namespace with approvals from any caller, because the signatures authorise the proposal, and records the caller's identity with it. It accepts `Submit` in a namespace without approvals, and every `Disrupt` and `Done`, only from an identity that `controller.WithOperators` lists. The one exception is a disruption of node N alone, which `Agent.Close` sends, and which the controller also accepts from N's registered identity.
 
 An adapter that authenticates no caller passes an empty identity, which turns off rules 2 and 3. Any process that can call an agent can then take or retire any shard, and a deployment relies on a network policy to limit which processes can call agents.
 
 `Lookup` returns placements and addresses without changing any state, so the embedder authorises its callers, in the transport adapter or with a mesh policy. The shard and controller epoch checks apply whatever the transport.
 
-Identities, cell records and membership sessions are in the store, so the store's access control is the root of trust for rules 2 and 3. A deployment gives each role its own store credentials: controllers write the root and cell scopes, nodes write their own membership keys, and routers only read.
+Identities, cell records and membership sessions are in the store, so the store's access control is the root of trust for rules 2 and 3. A deployment gives each role its own store credentials: controllers write the root and cell scopes, nodes write their own membership keys, and routers only read. Operators and cluster managers do not need store credentials. The identities of rule 4 come from the process's own configuration, never from the store, so a writer to the store cannot grant itself operator rights.
 
 ### Disruption budgets
 
@@ -598,25 +710,27 @@ Before it admits a disruption, the core moves the replicas in `drainRoles` off t
 
 SM's TaskController works the same way: it approves a subset of pending container operations under a global cap and a per-shard cap that count replicas already down. A non-negotiable disruption is SM's non-negotiable event, which arrives with notice and an impact class. The budget cannot delay it, so the core uses the notice to move replicas away first.
 
-Every replica of a shard is on a node of the shard's cell, so each cell's controller enforces the budget of its own cell. Cluster managers and operators submit disruptions through `sharderctl drain`, through the node's cell controller, or from a process's shutdown hook through `Agent.Close`.
+Every replica of a shard is on a node of the shard's cell, so each cell's controller enforces the budget of its own cell. A cluster manager calls `Disrupt` on the controller of the disrupted nodes' cell, and `Done` when the disruption ends. A process's shutdown hook does the same for its own node through `Agent.Close`. `Disrupt` returns the budget's `Decision`. A cluster manager whose disruption is deferred calls `Disrupt` again after `RetryAfter`, as Twine notifies SM's TaskController of its pending operations again at each period and delays the ones that the TaskController has not approved.
 
 ### Operations
+
+A command that changes a namespace sends a proposal to the controller that applies it, through `Submit`, and prints the `Receipt` or the error that `Submit` returns. `sharderctl` finds the controller in the controller's record: the cell's record for a cell, and the root leader's record for the root. `status` and `history` read the store and do not need a controller. `why` submits an `explain` proposal, and the cell's controller returns the explanation without committing anything. A proposal whose controller fails over before it replies returns `errs.Transient`, and `sharderctl` sends it again to the successor. The successor reports an ID that its scope has already applied instead of applying it twice.
 
 | Command | Does |
 |---|---|
 | `sharderctl status <ns>` | Prints the cells, the generation of each, the shards per node, the transitions in flight, and the unplaced shards |
-| `sharderctl apply <spec>` | Proposes a new spec version and prints the root's acceptance or its reasons for rejecting it |
-| `sharderctl drain <node>` / `undrain` | Moves every replica off a node under the budget, or releases it |
+| `sharderctl apply <spec>` | Proposes a new spec version and prints the root's reply: the acceptance with the warnings of `Resolve`, or the reasons for rejecting it |
+| `sharderctl drain <node>` / `undrain` | Moves every replica off a node under the budget, or releases it, and prints the budget's decision |
 | `sharderctl move <shard> <node>` | Moves one shard's writer to a node of its cell through the handoff protocol |
 | `sharderctl reshard <ns> --factor <k>` | Multiplies or divides a `fixed-slots` namespace's slot count |
 | `sharderctl cell split <ns> <cell>` | Divides a cell at the shard boundary nearest its median, and prints the nodes to relabel |
 | `sharderctl why <shard>` | Prints the constraints and goal costs that placed a shard where it is |
 | `sharderctl history <ns> <cell>` | Lists recent generations of a cell and what changed in each |
 | `sharderctl sign <proposal>` | Signs a proposal with the operator's key and prints the signature |
-| `sharderctl submit <proposal> <signature>...` | Sends a signed proposal to the controller that applies it, and prints its acceptance or its reasons for refusing it |
+| `sharderctl submit <proposal> <signature>...` | Sends a signed proposal to the controller that applies it, and prints the controller's reply |
 | `sharderctl anchor <proposal>` | Prints the digest of a namespace's first spec proposal, which each process's `config.Trust` names as its anchor |
 
-The core validates each operation as it validates a placer's plan, before the operation's controller commits anything. A manual move that breaks a hard constraint or a role bound is refused. In a namespace with approvals, `apply`, `drain`, `undrain`, `move`, `reshard` and `cell split` print a proposal instead of applying the change. `submit` applies the proposal once enough approvers have signed.
+The core validates each operation as it validates a placer's plan, before the operation's controller commits anything. A manual move that breaks a hard constraint or a role bound is refused. In a namespace with approvals, `apply`, `drain`, `undrain`, `move`, `reshard` and `cell split` print a proposal instead of sending it. `submit` sends the proposal once enough approvers have signed.
 
 The library reports these instruments through core's `telemetry.Reporter`. Each binds its attributes, such as the namespace and the cell, once with `With`, so that every emission is free of allocations, as core's telemetry contract requires.
 
@@ -653,7 +767,7 @@ Route requests through a proxy tier that knows the assignment, as Vitess routes 
 
 Keep the whole assignment of every cell in every router, as the `watch` mode does for the cells a router uses.
 
-**Why not as the only mode:** at 1,000,000 shards per cell, a sorted index costs about 40 MB per cell in every client process, and every client adds a watch connection to the store, at 17 KB of memory each in etcd. Bigtable and CockroachDB cache locations lazily for the same reason. `watch` remains for namespaces small enough that a full copy is cheaper than a lookup.
+**Why not as the only mode:** at 1,000,000 shards per cell, a sorted index costs about 40 MB per cell in every client process, and every client adds a watch connection to the store, at 17 KB of memory each in etcd. Bigtable and CockroachDB cache locations lazily for the same reason. `watch` is the default for namespaces small enough that a full copy is cheaper than a lookup, and a namespace with larger cells selects `lookup`.
 
 ### A sorted slice for the route cache
 
@@ -671,7 +785,17 @@ Reply to every misrouted request with the new owner and let the client update on
 
 Use Kubernetes' own disruption budgets, which limit how many pods of a workload an eviction may take down.
 
-**Why not:** a pod disruption budget counts pods, not replicas of a shard. It treats two pods with replicas of the same shard as independent. The shard budget reads the assignment. An eviction webhook that asks the shard budget is an open question.
+**Why not:** a pod disruption budget counts pods, not replicas of a shard. It treats two pods with replicas of the same shard as independent. The shard budget reads the assignment.
+
+### Operations through the store
+
+Let `sharderctl` and cluster managers write each operation as a pending proposal into the scope of the controller that applies it, and let the controller watch the scope and commit each outcome there. An operation then remains in the store across a controller's failover, and the protocol does not need calls for operations.
+
+**Why not:**
+
+- Operators and cluster managers would need write credentials for the store, and the store's access control would decide who may operate a namespace. A writer to the store could grant itself operator rights.
+- Every store adapter would need an unfenced write path next to its fenced commits.
+- An operation's result would arrive on a watch, one event after the commit, instead of as the reply to a call.
 
 ## Drawbacks
 
@@ -683,22 +807,20 @@ Use Kubernetes' own disruption budgets, which limit how many pods of a workload 
 - A router in `lookup` mode pays a lookup round trip for each cold route, and `batch.Loader` adds its accumulation window to that round trip. Bigtable's clients pay three round trips with an empty cache and up to six with a stale one.
 - `batch.Loader` passes the lookup function a context without any caller's values, so a lookup's trace does not join the trace of the request that missed.
 - `hold` delays requests during transitions and fails them past its limits. Applications that cannot tolerate either leave it off and handle `NotOwnerError` themselves.
-- Each transport adapter maps the protocol's Go types to its own encoding, and must keep its field numbers and the error classes stable across releases.
+- The library ships two transport adapters, and each maps the protocol's Go types to its own encoding. Both must keep their field numbers and the error classes stable across releases.
+- Operator identities are part of each controller process's configuration. Adding or removing an operator changes the configuration of every controller process of the namespace.
+- In the leaderless topology, a router's computed writer can be ahead of the shard's election, and requests in that window get `NotOwnerError`.
 - The route cache needs core's copy-on-write B-tree, which core does not contain at commit `8edf26a`.
 
 ## Open questions
 
-1. Which transport adapter should `sharderd` use by default: gRPC or the kanon binary transport?
-2. Should the library provide a Kubernetes eviction webhook that consults the shard budget?
-3. Should the router hold requests during moves by default, or leave it off?
-4. Should a transport adapter offer a forwarding helper for the graceful protocol, since every graceful application forwards writes?
-5. Are 16 prefetched placements per lookup, and 1,000,000 cached routes, the right defaults?
-6. Which protocol calls deliver `sharderctl submit`, `drain`, `move` and `status`, and a cluster manager's disruptions, to a controller? The protocol defines only `Do`, `Report` and `Lookup`.
+None.
 
 ## Unresolved and future work
 
 - Client libraries in languages other than Go are not proposed here.
 - A graphical console for operators is not proposed here.
+- A Kubernetes eviction webhook that consults the shard budget is not proposed here.
 
 ## References
 
@@ -717,6 +839,9 @@ Use Kubernetes' own disruption budgets, which limit how many pods of a workload 
 | Apache Pekko 1.7.0, cluster sharding concepts | https://pekko.apache.org/docs/pekko/current/typed/cluster-sharding-concepts.html |
 | Kubernetes v1.37.1, default termination grace period | https://github.com/kubernetes/kubernetes/blob/v1.37.1/staging/src/k8s.io/api/core/v1/types.go |
 | Microsoft Learn, Service Fabric `FaultType` | https://learn.microsoft.com/en-us/dotnet/api/system.fabric.faulttype?view=azure-dotnet |
+| Kubernetes API concepts, Protobuf encoding | https://kubernetes.io/docs/reference/using-api/api-concepts/#protobuf-encoding |
+| go.thesmos.sh/ledger RFC-0011, "Replicated storage": membership changes and `Member.Leading` | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
+| Go `net/http`, `Protocols` | https://pkg.go.dev/net/http#Protocols |
 | tidwall/btree v1.8.1 | https://github.com/tidwall/btree |
 | google/btree v1.1.3 | https://github.com/google/btree |
 | go.thesmos.sh/core at 8edf26a: request coalescing (RFC-0024), telemetry (RFC-0004), structured concurrency (RFC-0030), error classes and `resilience/retrier.go` | https://github.com/thesmos-ai/core |

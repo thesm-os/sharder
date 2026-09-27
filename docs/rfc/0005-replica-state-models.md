@@ -220,6 +220,14 @@ With `membershipUpdates` set, the core calls the writer's `UpdateMembership` cal
 
 A consensus application that elects its own leaders selects the `delegated` ownership mode instead. Its authority then chooses the replicas and the writer. The core does not call `UpdateMembership` or `ChangeRole`, and the model only declares the roles that agents report.
 
+The thesmos ledger is such an application. A member is the leader, a voter or a learner of each shard it replicates, only a voter can lead, and a learner copies the shard's state before it becomes a voter. Its model:
+
+- Roles: `leader`, the writer, `voter` and `learner`.
+- Transitions: `voter→leader`, `leader→voter` and `learner→voter`, and each role to and from `offline`.
+- Availability: `majority`.
+
+With that model, the budget's `majority` rule counts the ledger's voters, and `maxConcurrentNodes: 1` enforces the ledger's rule of upgrading one member at a time. The ledger's region copies never vote, so agents do not report them.
+
 ### Starting transitions within bounds
 
 The core compares each shard's target replicas with its current replicas and derives the role transitions that connect them. It starts a transition only if, for every role, the replicas in the role plus the replicas with a started transition into the role remain within the role's `Max` after the transition starts. It counts started transitions, not only completed ones, so that no order of completion can exceed a bound.
@@ -275,9 +283,7 @@ Treat every replica the same, and let the application elect its own leader if it
 
 ## Open questions
 
-1. Should a model allow more than one writer role, or more than one replica in a writer role, for multi-leader applications that fence writes themselves?
-2. Should scaling on load be part of the replication configuration, as proposed, or a separate axis?
-3. Is a failed callback best represented only as an observed status, or should a model be able to declare an error role with its own transitions?
+None.
 
 ## Unresolved and future work
 
@@ -293,4 +299,6 @@ Treat every replica the same, and let the application elect its own leader if it
 | Apache Helix 2.0.1, state models | https://helix.apache.org/2.0.1-docs/tutorial_state.html |
 | Apache Helix, MessageSelectionStage at 48674e6 | https://github.com/apache/helix/blob/48674e6ac2a94fb5365ce69a4b1ee1d57655da1d/helix-core/src/main/java/org/apache/helix/controller/stages/MessageSelectionStage.java |
 | Microsoft Learn, replica roles | https://learn.microsoft.com/en-us/dotnet/api/system.fabric.replicarole?view=azure-dotnet |
+| go.thesmos.sh/ledger RFC-0011, "Replicated storage": membership changes, region copies | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
+| go.thesmos.sh/ledger RFC-0014, "Operations resilience": upgrades one member at a time | `docs/rfc/0014-operations-resilience.md` in the ledger repository |
 | go.thesmos.sh/core at 8edf26a: finite state machines (RFC-0031), states that cannot finish (ADR-0024), `fsm/builder.go` | https://github.com/thesmos-ai/core |

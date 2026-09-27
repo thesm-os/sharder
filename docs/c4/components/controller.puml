@@ -3,33 +3,41 @@
 
 title Components: Controller
 
-Container(sharderctl, "sharderctl", "Go program", "Submits signed proposals and operations.")
+Container(sharderctl, "sharderctl", "Go program", "Sends proposals and prints the replies.")
+System_Ext(manager, "Cluster manager", "Admits and ends planned disruptions.")
 Container(router, "Router", "Go library", "Looks up uncached routes.")
-Container(transport, "Transport adapter", "Go module", "Sends protocol calls between processes.")
+Container(transport, "Transport adapter", "Go module", "Sends protocol calls between processes, with the caller's authenticated identity.")
 
 Container_Boundary(controller, "Controller") {
-    Component(root, "Root controller", "controller", "Campaigns for the namespace's root, keeps the cell map, and places each cell's controller on a controller process by break-before-make.")
+    Component(root, "Root controller", "controller", "Campaigns for the namespace's root, keeps the cell map, and places each cell's controller on a controller process within its cell capacity, by break-before-make.")
+    Component(proposals, "Proposal handler", "controller", "Receives proposals through Submit, checks their signatures or the caller's operator identity, has each operation validated and applied, and commits it with its caller's identity.")
     Component(spec, "Spec resolution", "config, builtin", "Resolves the spec against the strategy registry, checks it against the capabilities of the adapters, checks each change, and verifies approvals from the trust anchor.")
     Component(planner, "Planner", "placement, partition, replication", "Computes each cell's target assignment and layout, and validates every plan and manual operation against the constraints and role bounds.")
     Component(engine, "Transition engine", "handoff", "Scripts each move with the namespace's protocol, commits every step before it calls a node, retries transient failures and runs abort paths.")
-    Component(budget, "Disruption budget", "budget", "Admits transitions and planned disruptions under the per-shard and per-node caps.")
+    Component(budget, "Disruption budget", "budget", "Admits transitions and planned disruptions under the per-shard and per-node caps, and accepts Disrupt and Done only from operator identities or the disrupted node itself.")
     Component(service, "Controller service", "protocol", "Implements ControllerServer: accepts a report only from its node's registered identity, and serves lookups.")
     Component(membership, "Membership watcher", "membership", "Watches the live nodes of each cell and their identities.")
     Component(writer, "Scope writer", "store", "Commits generations to the root scope under the root's term, and to a cell's scope under the cell's epoch.")
 }
 
 Container(agent, "Agent", "Go library", "Runs callbacks and sends reports.")
-Container(adapters, "Store and membership adapters", "Go modules", "Implement store.Store and membership.Membership.")
+Container(adapters, "Store adapter", "Go module", "Implements store.Store and membership.Membership.")
 System_Ext(monitoring, "Monitoring", "Metrics and logs.")
 
-Rel(sharderctl, transport, "Submits signed proposals and operations")
+Rel(sharderctl, transport, "Sends proposals", "Submit")
+Rel(manager, transport, "Admits and ends disruptions", "Disrupt, Done")
 Rel(router, transport, "Looks up routes", "ControllerClient")
 Rel(agent, transport, "Sends reports", "ControllerClient")
 Rel(transport, service, "Delivers reports and lookups", "ControllerServer")
-Rel(transport, budget, "Delivers planned disruptions")
+Rel(transport, proposals, "Delivers proposals", "Submit")
+Rel(transport, budget, "Delivers disruptions", "Disrupt, Done")
 
+Rel(proposals, spec, "Verifies approvals, resolves proposed specs")
+Rel(proposals, planner, "Validates moves, drains and splits")
+Rel(proposals, budget, "Admits drains")
+Rel(proposals, writer, "Commits applied proposals with their callers")
 Rel(root, spec, "Resolves and verifies specs")
-Rel(root, writer, "Commits the cell map and specs")
+Rel(root, writer, "Commits the cell map, specs and the root's record")
 Rel(root, engine, "Assigns cells to controller processes", "add, drop")
 Rel(service, planner, "Passes reports, load and faults")
 Rel(membership, planner, "Passes live nodes")

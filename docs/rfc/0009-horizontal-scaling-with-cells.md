@@ -19,7 +19,7 @@ related: RFC-0001, RFC-0002, RFC-0003, RFC-0004, RFC-0006, RFC-0007, RFC-0008
 
 A namespace scales horizontally in cells. A cell is a disjoint set of nodes, the shards placed on them, one controller and one scope in the store. Each cell covers one range of positions. Adding a cell adds controller capacity, store capacity and membership capacity at the same time, because each of them is per cell.
 
-The root of a namespace keeps the cell map and places each cell's controller on a controller process. It uses the library's own placement, handoff and fencing to do so: a cell is a shard of the root, the cell's controller is that shard's writer, and the controller's epoch fences its commits to the cell's scope. A node joins the cell that its `cell` label names. A deployment places each scope on an etcd cluster of its choice. A router resolves a key in two levels, the cell map and then the cell's routes.
+The root of a namespace keeps the cell map and places each cell's controller on a controller process. It uses the library's own placement, handoff and fencing to do so: a cell is a shard of the root, the cell's controller is that shard's writer, and the controller's epoch fences its commits to the cell's scope. A node joins the cell that its `cell` label names. The store adapter places each scope on a backend cluster of the deployment's choice. A router resolves a key in two levels, the cell map and then the cell's routes.
 
 By default a cell holds at most 5,000 nodes and 1,000,000 shards. An operator splits a cell above either bound with `sharderctl cell split`.
 
@@ -60,7 +60,7 @@ The root's assignment follows the rules of every assignment, with these meanings
 | The shard's epoch | The controller's fence epoch for the cell's scope |
 | A node | A controller process: a `sharderd` process in the `service` topology, or an application process in the `embedded` topology |
 
-The root uses the `primary-only` model, `exclusive` ownership, `break-before-make` handoff and the `planner`, whose count goal balances cells across controller processes. In the `embedded` topology, a label constraint places each cell's controller on a node of that cell. The root publishes the cell map, `shard.CellMap`, from its placements: each cell's range, its controller's address, its controller's identity and its controller's epoch.
+The root uses the `primary-only` model, `exclusive` ownership, `break-before-make` handoff and the `planner`, whose count goal balances cells across controller processes. Each controller process declares how many cells it can host, as its `cells` capacity in the root, and the `capacity` constraint keeps the root from placing more on it. `controller.WithCellCapacity` sets the capacity, and the default is one cell. In the `embedded` topology, a label constraint places each cell's controller on a node of that cell. The root publishes the cell map, `shard.CellMap`, from its placements: each cell's range, its controller's address, its controller's identity and its controller's epoch.
 
 A controller process joins the root as a node, with a membership session in the root scope that registers its identity. The root assigns a cell to it with the `add` callback, and the process starts the cell's controller with the cell's epoch. The `drop` callback stops it. The root elects its own leader through `store.Store.Campaign`, the only election in a namespace.
 
@@ -87,7 +87,7 @@ flowchart TB
 
 ### Store scopes on more than one cluster
 
-A store adapter can place each scope on a backend cluster of its own, so a deployment adds clusters as its cells grow. The etcd adapter maps scopes to clusters through a table in its configuration, and by our estimate one etcd cluster within its suggested 8 GiB fits about seven cells of 1,000,000 shards with three replicas. The root scope is small and can share a cluster with any cell. A cell's scope never spans clusters, so every commit remains one transaction on one cluster.
+A store adapter can place each scope on a backend cluster of its own, so a deployment adds clusters as its cells grow. The mapping of scopes to clusters is the adapter's own configuration, and the core does not see it. The root scope is small and can share a cluster with any cell. A cell's scope never spans clusters, so every commit remains one transaction on one cluster.
 
 ### Routing across cells
 
@@ -104,7 +104,7 @@ Every component that grows with the namespace is per cell, and only the root and
 
 | Component | Load per cell, at the default bounds | How it scales |
 |---|---|---|
-| Controller | One planner, one transition engine, and lookups for up to 5,000 nodes and 1,000,000 shards | The root spreads cells over controller processes |
+| Controller | One planner, one transition engine, and lookups for up to 5,000 nodes and 1,000,000 shards | The root spreads cells over controller processes, within each process's cell capacity |
 | Store | About 1 GB of placements and about 1,500 lease renewals per second, by our estimate | The store adapter spreads scopes over backend clusters |
 | Membership | One session per node in the cell's scope | Per cell |
 | Routers | One watch of the root scope, and lookups at the controllers of the cells used | Per cell used |
@@ -176,10 +176,7 @@ Split a cell as soon as it exceeds a bound, without an operator.
 
 ## Open questions
 
-1. Should the root split cells automatically when they exceed a bound?
-2. Should one controller process host more than one cell, as proposed, and up to how many?
-3. Are 5,000 nodes and 1,000,000 shards the right default bounds of a cell?
-4. Should the root assign a cell to a node without a `cell` label, instead of refusing it?
+None.
 
 ## Unresolved and future work
 

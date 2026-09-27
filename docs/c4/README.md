@@ -6,9 +6,9 @@ The C4 model describes sharder at three levels of zoom, and deploys it once per 
 |---|---|---|---|
 | System context | [sharder](#system-context) | sharder, the people who operate it, and the systems it depends on | [RFC-0001](../rfc/0001-architecture-and-core-model.md) |
 | Containers | [sharder](#containers) | the libraries, the adapters, the programs and the store | [RFC-0001](../rfc/0001-architecture-and-core-model.md), [RFC-0007](../rfc/0007-membership-store-and-distribution.md), [RFC-0008](../rfc/0008-agent-router-and-budgets.md) |
-| Components | [Controller](#controller) | planning, transitions, the budget and the root | [RFC-0004](../rfc/0004-placement-and-rebalancing.md), [RFC-0006](../rfc/0006-ownership-handoff-and-fencing.md), [RFC-0009](../rfc/0009-horizontal-scaling-with-cells.md) |
+| Components | [Controller](#controller) | planning, transitions, proposals, the budget and the root | [RFC-0004](../rfc/0004-placement-and-rebalancing.md), [RFC-0006](../rfc/0006-ownership-handoff-and-fencing.md), [RFC-0009](../rfc/0009-horizontal-scaling-with-cells.md) |
 | Components | [Agent](#agent) | callbacks, leases, tokens and reports | [RFC-0008](../rfc/0008-agent-router-and-budgets.md) |
-| Components | [Router](#router) | positions, the cell map and the route cache | [RFC-0003](../rfc/0003-partitioning-strategies.md), [RFC-0008](../rfc/0008-agent-router-and-budgets.md) |
+| Components | [Router](#router) | positions, the cell map, the route cache and computed routes | [RFC-0003](../rfc/0003-partitioning-strategies.md), [RFC-0008](../rfc/0008-agent-router-and-budgets.md) |
 | Deployment | [Embedded](#embedded-topology), [Service](#service-topology), [Leaderless](#leaderless-topology) | where the containers run in each topology | [RFC-0001](../rfc/0001-architecture-and-core-model.md), [RFC-0009](../rfc/0009-horizontal-scaling-with-cells.md) |
 
 ## Layout
@@ -31,9 +31,9 @@ The C4 model describes sharder at three levels of zoom, and deploys it once per 
 ![Containers of sharder](containers/sharder.svg)
 
 - The controller, the agent and the router are packages of the root module, which imports only core and the standard library.
-- Every call between processes goes through a transport adapter, such as the gRPC adapter or the kanon binary transport. Calls within one process go through `protocol.Local`.
-- The store and membership adapters implement `store.Store` and `membership.Membership` over clients that the embedder built. The store is one root scope per namespace and one scope per cell, and the store adapter maps each scope to a store cluster.
-- `sharderctl` writes spec proposals to the root scope, and submits signed proposals and operations to controllers.
+- Every call between processes goes through a transport adapter: `httptransport` by default, which sends kanon-encoded bodies over HTTP/2, or `grpc`. Calls within one process go through `protocol.Local`.
+- The store adapter implements `store.Store` and `membership.Membership` over a client that the embedder built. The store is one root scope per namespace and one scope per cell, and the store adapter maps each scope to a store cluster.
+- `sharderctl` sends every operation to the controller that applies it through `Submit`, and a cluster manager calls `Disrupt` and `Done`. The transport adapter authenticates each caller, and operators do not need store credentials.
 
 ## Components
 
@@ -43,19 +43,20 @@ The C4 model describes sharder at three levels of zoom, and deploys it once per 
 
 - The controller process that `Campaign` elects leads the namespace's root. Any controller process runs the cell controllers that a root places on it.
 - The transition engine commits each step before it calls a node, so a replacement controller continues each transition at its committed step.
+- The proposal handler accepts a proposal with its approvers' signatures, or from an operator identity in the process's own configuration, and commits it with its caller's identity. The budget accepts `Disrupt` and `Done` from operator identities, and from a node that disrupts only itself.
 
 ### Agent
 
 ![Components of the agent](components/agent.svg)
 
 - The callback service refuses a callback from any identity other than the controller that the cell record names, and a callback at a lower shard or controller epoch.
-- In the `delegated` mode, handler dispatch also calls the application's `Elector`, and the application reports elections and depositions to the reporter.
+- In the `delegated` mode, handler dispatch also calls the application's `Elector`. The application reports its authority's replicas to the reporter through `Hosted` and `Released`, and its elections and depositions through `Elected` and `Deposed`.
 
 ### Router
 
 ![Components of the router](components/router.svg)
 
-- In `lookup` mode the route cache contains only the routes that the router has used. In `watch` mode it contains every route of each cell the router uses.
+- In `watch` mode, the default, the route cache contains every route of each cell the router uses. In `lookup` mode it contains only the routes that the router has used. In `compute` mode, the only mode of the leaderless topology, the route function computes each route and nothing is cached.
 - A `fixed-slots` namespace caches routes in an array indexed by slot, and every other partitioner in core's copy-on-write B-tree.
 
 ## Deployment

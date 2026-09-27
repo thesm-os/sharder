@@ -17,9 +17,9 @@ related: RFC-0002, RFC-0003, RFC-0004, RFC-0005, RFC-0006, RFC-0007, RFC-0008, R
 
 ## Summary
 
-We propose `sharder`, a Go library that a sharded application embeds to map keys to shards, place shards on nodes and move them safely. The library separates what differs between applications from what must not differ. Each of seven axes has pluggable strategies: partitioning, placement, replication, ownership, handoff, topology and routing. An application selects one strategy per axis in a declarative namespace spec, or starts from a preset and overrides single fields. A fixed core applies every strategy's decisions. It assigns epochs, sequences transitions, enforces the disruption budget and checks each strategy's output against eight invariants. A strategy computes where shards go. It cannot weaken fencing, exceed the budget or skip a step of a transition. An application with its own election, such as a consensus protocol, selects the `delegated` ownership mode, in which its election grants each writer's epoch and the core follows it.
+We propose `sharder`, a Go library that a sharded application embeds to map keys to shards, place shards on nodes and move them safely. The library separates what differs between applications from what must not differ. Each of seven axes has pluggable strategies: partitioning, placement, replication, ownership, handoff, topology and routing. An application names a preset in a declarative namespace spec, and selects its own strategy on any axis where it differs from the preset. A fixed core applies every strategy's decisions. It assigns epochs, sequences transitions, enforces the disruption budget and checks each strategy's output against eight invariants. A strategy computes where shards go. It cannot weaken fencing, exceed the budget or skip a step of a transition. An application with its own election, such as a consensus protocol, selects the `delegated` ownership mode, in which its election grants each writer's epoch and the core follows it.
 
-A namespace scales horizontally in cells. A cell is a disjoint set of nodes, the shards placed on them and one controller, with its own keyspace in the store. The library builds on `go.thesmos.sh/core` for time, randomness, epochs and fencing, conditional writes, errors, state machines, structured concurrency, retries and telemetry, and defines only what core does not. Its root module imports only core and the standard library. The store, the membership and the transport are interfaces. Adapter modules implement them over etcd, Kubernetes, gRPC, and binary codecs that kanon generates.
+A namespace scales horizontally in cells. A cell is a disjoint set of nodes, the shards placed on them and one controller, with its own keyspace in the store. The library builds on `go.thesmos.sh/core` for time, randomness, epochs and fencing, conditional writes, errors, state machines, structured concurrency, retries and telemetry, and defines only what core does not. Its root module imports only core and the standard library. The store, the membership and the transport are interfaces. Adapter modules implement the store and the membership over etcd, and the transport over HTTP/2 or gRPC. The protocol's messages have binary codecs that kanon generates.
 
 ## Motivation
 
@@ -234,7 +234,7 @@ Each axis is an interface with built-in strategies. A strategy has a registered 
 | Ownership | What a replica may assume about exclusivity, and who elects the writers | `ownership.Mode` | `affinity`, `exclusive`, `overlapping`, `delegated` |
 | Handoff | The order of callbacks that moves a replica | `handoff.Protocol` | `break-before-make`, `make-before-break`, `graceful`, `staged`, `elect` |
 | Topology | Where the controllers run | `controller.Topology` | `embedded`, `service`, `leaderless` |
-| Routing | How clients find a shard's replicas | `router.Source` | `watch`, `lookup` |
+| Routing | How clients find a shard's replicas | `router.Source` | `watch`, `lookup`, `compute` |
 
 The disruption budget, the load model and the cell bounds are typed sections of the spec, not strategies. Every namespace has all three, and none has a credible alternative implementation.
 
@@ -267,7 +267,7 @@ The library takes every mechanism below from core and defines none of them itsel
 
 The fence laws come from core: a write whose epoch is at or above the scope's watermark is admitted, a greater epoch advances the watermark, a zero epoch is unfenced, and validation runs in the same atomic step as the write, against durable state. Logs go through `log/slog`, as in core.
 
-The root module takes nothing from outside core and the standard library. The adapters take what their backends need: the etcd client, client-go, gRPC, and codecs that kanon generates.
+The root module takes nothing from outside core and the standard library. The adapters take what their backends need: the etcd client, and gRPC with protobuf. The HTTP transport needs only the standard library. The root module's `go.mod` also lists kanon as a tool, which generates the protocol's codecs, and no package of the module imports it.
 
 ### The fixed core
 
@@ -314,7 +314,7 @@ flowchart LR
 
 ### Cells and the root
 
-A cell is a disjoint set of nodes, the shards placed on them and one controller. Each cell covers one contiguous range of positions, and every replica of a shard is on a node of the shard's cell. A node's cell is the value of its `cell` label. A namespace starts with one cell that covers every position.
+A cell is a disjoint set of nodes, the shards placed on them and one controller. Each cell covers one contiguous range of positions, and every replica of a shard is on a node of the shard's cell. A node's cell is the value of its `cell` label. A namespace starts with one cell that covers every position, and a node without the label joins it. In a namespace of more than one cell, a node without the label is refused.
 
 The root is a small controller per namespace. It keeps the cell map and places each cell's controller on a controller process, with the same planner and handoff protocols that place shards: a cell is a shard of the root, and the cell's controller is that shard's writer. The controller's epoch fences its commits to the cell's keyspace in the store, so a controller that the root has replaced cannot commit. The root's own leader is elected through the store.
 
@@ -344,7 +344,7 @@ A preset fills every axis for one use case. The application still overrides any 
 | `leader-election` | One active instance of a component | `singleton` | `planner` | `primary-only` | `exclusive` | `break-before-make` | `embedded` |
 | `leaderless-hash` | Client-side routing without a coordinator | `fixed-slots`, 1024 | `rendezvous` | `secondary-only`, 1 replica | `affinity` | `make-before-break` | `leaderless` |
 
-`exclusive-worker` is the default preset. A spec without a preset starts from it. Exclusive ownership is the safer contract to relax than to add.
+A spec names its preset, and `Resolve` rejects a spec without one. Every strategy of a namespace is then one that its spec or its preset selected.
 
 ### Packages and modules
 
@@ -361,7 +361,7 @@ The root module, `go.thesmos.sh/sharder`, contains these packages. They import p
 | `ownership` | Ownership modes and lease parameters | `shard` |
 | `handoff` | Handoff protocols, their abort paths and the transition lifecycle | `shard`, `ownership`, `protocol` |
 | `fence` | Fencing tokens and the guard interface | `shard` |
-| `protocol` | The protocol's messages, its server and client interfaces, and `Local`, which connects the servers of one process | `shard` |
+| `protocol` | The protocol's messages with their kanon codecs, its server and client interfaces, and `Network` and `Local`, which connect servers by direct calls | `shard`, `config`, `budget` |
 | `store` | The store interface | `shard` |
 | `store/memory` | The in-memory store, the conformance suite's first subject | `store` |
 | `store/storetest` | The conformance suite for store adapters | `store` |
@@ -378,16 +378,15 @@ Each adapter is a module of its own, so an application's build contains only the
 | Module | Implements | Depends on |
 |---|---|---|
 | `go.thesmos.sh/sharder/etcd` | `store.Store` and `membership.Membership` | The etcd v3 client |
-| `go.thesmos.sh/sharder/kubernetes` | `membership.Membership` through Kubernetes Lease objects | client-go |
+| `go.thesmos.sh/sharder/httptransport` | The protocol's clients, and an HTTP/2 handler that calls its servers, with kanon-encoded bodies. The default transport | The standard library |
 | `go.thesmos.sh/sharder/grpc` | The protocol's clients, and a gRPC service that calls its servers | gRPC and protobuf |
-| A binary transport, path not chosen | The protocol's clients, and a server that calls its servers | Codecs that kanon generates |
 | `go.thesmos.sh/sharder/cmd` | `sharderd` and `sharderctl` | The adapters that each program selects |
 
 ### Verification
 
 The simulator and the conformance suites check that a combination of strategies keeps the invariants.
 
-The simulator in package `sim` runs the root, the controllers, the agents, the store and the membership in one goroutine against core's virtual clock, `clock/fake`, and draws every random choice from `rand/pcg` with the run's seed. It injects node crashes, process pauses, message loss, clock drift and store unavailability, and it checks all eight invariants after every event. A failing seed reproduces the run exactly.
+The simulator in package `sim` runs the root, the controllers, the agents, the store and the membership in one goroutine against core's virtual clock, `clock/fake`, and takes every random choice from `rand/pcg` with the run's seed. Every simulated process has its own identity and calls the others through its own `protocol.Local` of one `protocol.Network`, so every server receives each call with its caller's identity, as over an authenticating transport. The simulator injects node crashes, process pauses, message loss, clock drift, store unavailability, and callbacks that a process sends under another process's identity or at a replaced controller's epoch. It checks all eight invariants after every event, and each must remain true under every fault. A failing seed reproduces the run exactly. CI runs the simulator over every preset and every built-in strategy with a fixed set of seeds, and a release is not published while any seed violates an invariant.
 
 Each axis has a conformance suite that every strategy, built-in or external, must pass. A partitioner must map every key to exactly one position and every position to exactly one shard, and a placer must return the same plan for the same input. Every store adapter passes `store/storetest`. Every fenced writer, the application's fence and the store's writers alike, passes core's `coretest/epochtest`.
 
@@ -410,6 +409,9 @@ type Faults struct {
  DropRate      float64       // fraction of messages lost
  MaxClockDrift float64       // largest clock-rate error, as a fraction
  StoreOutages  float64       // store outages per simulated hour
+ // ForgeRate is the fraction of callbacks that a process repeats under another
+ // process's identity, or at the epoch of a controller that the root has replaced.
+ ForgeRate float64
 }
 
 // Run simulates spec on nodes for the simulated duration d from seed. It checks every
@@ -462,9 +464,9 @@ Splitter, Cadence's shard-manager and Apache Helix each cover part of this desig
 
 ### Adapters as packages of the root module
 
-Put the etcd store, the Kubernetes membership and the gRPC transport in the root module, as packages. One module has one version, so a root interface and its adapters change in the same release.
+Put the etcd store and the gRPC transport in the root module, as packages. One module has one version, so a root interface and its adapters change in the same release.
 
-**Why not:** the requirements in the root module's `go.mod` enter the module graph of an application that imports the module. Minimal version selection applies them even when the application does not import an adapter package. An application that uses gRPC or client-go at an older version would move to the version that sharder requires.
+**Why not:** the requirements in the root module's `go.mod` enter the module graph of an application that imports the module. Minimal version selection applies them even when the application does not import an adapter package. An application that uses gRPC or the etcd client at an older version would move to the version that sharder requires.
 
 ### sharder's own clock, epochs and retries
 
@@ -474,8 +476,8 @@ Define the time seam, the epoch type, the fence rules and the retry loop inside 
 
 ## Drawbacks
 
-- The root module has 20 packages and 32 exported interfaces, counted from the code in these RFCs. The built-in strategies number 29 across the seven axes. The counts exclude the five adapter modules.
-- The axes multiply. Counting built-ins only, partitioning (5) × placement (7) × replication (3) × ownership (4) × handoff (5) × topology (3) × routing (2) gives 12,600 combinations. The capability checks reject many of them, but the remainder is still too large to test one by one. Coverage comes from per-axis conformance suites, the simulator over random combinations, and end-to-end tests of the seven presets.
+- The root module has 20 packages and 32 exported interfaces, counted from the code in these RFCs. The built-in strategies number 30 across the seven axes. The counts exclude the four adapter modules.
+- The axes multiply. Counting built-ins only, partitioning (5) × placement (7) × replication (3) × ownership (4) × handoff (5) × topology (3) × routing (3) gives 18,900 combinations. The capability checks reject many of them, but the remainder is still too large to test one by one. Coverage comes from per-axis conformance suites, the simulator over random combinations, and end-to-end tests of the seven presets.
 - Every axis adds configuration that a user can get wrong. The spec has 14 top-level fields, and 7 of them select a strategy with its own configuration schema. Presets fill most of them, and validation reports every problem at once, but a misconfigured namespace is a failure mode that a fixed framework does not have.
 - Generality costs speed on the hot path. A router lookup maps a key to a position and searches a cache instead of computing an inlined hash. We measured the cache at 241 to 292 ns per lookup at 1,000,000 cached ranges, against a few nanoseconds for a hash.
 - Cells add a root controller and a second level of lookup, and a cell's nodes cannot help another cell's load until an operator moves them.
@@ -485,10 +487,7 @@ Define the time seam, the epoch type, the fence rules and the retry loop inside 
 
 ## Open questions
 
-1. Is `go.thesmos.sh/sharder` the module path?
-2. Is `exclusive-worker` the right default preset, or should a spec have to name its preset?
-3. Should the simulator be a release gate, so that every strategy needs a clean run over a fixed set of seeds before a release?
-4. What is the module path of the binary transport, whose codecs kanon generates?
+None.
 
 ## Unresolved and future work
 
@@ -496,6 +495,7 @@ Define the time seam, the epoch type, the fence rules and the retry loop inside 
 - Automatic shard scaling across namespaces, where one namespace lends capacity to another, is not proposed here.
 - A graphical console for operators is not proposed here. Operators use the `sharderctl` command and the metrics.
 - Cost-based placement across cloud providers is not proposed here.
+- Kubernetes adapters, for membership, specs or evictions, are not proposed here.
 
 ## References
 
