@@ -1,0 +1,36 @@
+@startuml router
+!include ../c4.iuml
+
+title Components: Router
+
+System_Ext(client, "Application client", "Sends requests to the replicas of a key's shard.")
+
+Container_Boundary(router, "Router") {
+    Component(route, "Route", "router", "Maps a key to its route: the position, then the cell, then the cached route. A cached route costs one position and one search and does not allocate.")
+    Component(partitioner, "Partitioner", "partition", "Computes the key's position with the namespace's partitioner.")
+    Component(cellmap, "Cell map", "router, shard", "Keeps the namespace's cell map from a watch of the root scope, and finds a position's cell by binary search.")
+    Component(cache, "Route cache", "router, core's B-tree", "Keeps each cell's routes in a copy-on-write B-tree, or an array of slots for fixed-slots, published through an atomic pointer. Keeps at most 1,000,000 routes by default.")
+    Component(loader, "Lookup loader", "router, core's batch", "Coalesces the misses of one cell into one lookup, with 16 placements prefetched, and reads the cell's scope when the controller does not respond.")
+    Component(retry, "Redirects", "router.Do", "Evicts the route that a NotOwnerError names, refreshes it and routes again.")
+}
+
+Container(transport, "Transport adapter", "Go module", "Sends lookups to the cell's controller.")
+Container(adapters, "Store adapter", "Go module", "Implements store.Store.")
+System_Ext(server, "Application server", "Serves the shard, or replies NotOwnerError.")
+
+Rel(client, route, "Routes each key", "Router.Route")
+Rel(client, retry, "Calls with retries", "router.Do")
+Rel(route, partitioner, "Computes the position")
+Rel(route, cellmap, "Finds the cell")
+Rel(route, cache, "Finds the route")
+Rel(cache, loader, "Fetches missing routes, in lookup mode")
+Rel(retry, cache, "Evicts and refreshes routes")
+Rel(retry, server, "Sends the request", "the application's protocol")
+
+Rel(loader, transport, "Looks up routes", "ControllerClient")
+Rel(loader, adapters, "Reads routes when the controller does not respond", "store.Store")
+Rel(cellmap, adapters, "Watches the cell map", "store.Store")
+Rel(cache, adapters, "Watches each cell's routes, in watch mode", "store.Store")
+
+SHOW_LEGEND()
+@enduml

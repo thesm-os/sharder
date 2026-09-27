@@ -1,0 +1,31 @@
+@startuml leaderless
+!include ../c4.iuml
+!include <C4/C4_Deployment>
+
+title Deployment: leaderless topology
+
+Deployment_Node(servers, "Application server process", "one per node, one cell of up to 5,000 nodes") {
+    Container(agent, "Agent", "Go library", "Computes placement with the namespace's function placer from the layout and the membership view, and campaigns in the election of each shard it writes.")
+}
+
+Deployment_Node(clients, "Application client process", "one per client") {
+    Container(router, "Router", "Go library", "Computes each route with the namespace's function placer.")
+}
+
+Deployment_Node(storecluster, "Store cluster", "a store backend, such as etcd") {
+    ContainerDb(root, "Root scope", "store scope", "The spec.")
+    ContainerDb(cell, "Scope of the single cell", "store scope", "One election per written shard, whose term is the shard's epoch, and node leases when the store provides membership.")
+}
+
+Deployment_Node(database, "Application database", "the application's storage") {
+    ContainerDb(fences, "Fence records", "the application's schema", "One watermark per shard, advanced to each new term.")
+}
+
+Rel(agent, root, "Reads the spec", "store adapter")
+Rel(agent, cell, "Watches membership, campaigns for its shards, renews its lease", "store adapter")
+Rel(router, root, "Reads the spec", "store adapter")
+Rel(router, cell, "Watches membership", "store adapter")
+Rel(agent, fences, "Acquires fences", "the application's fence.Guard")
+
+SHOW_LEGEND()
+@enduml

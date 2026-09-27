@@ -1,0 +1,8 @@
+' The C4-PlantUML library and the settings that every diagram of the C4 model
+' includes. Deployment diagrams also include <C4/C4_Deployment>.
+!include <C4/C4_Component>
+
+' PlantUML measures text with this font and writes the name into the SVG as
+' font-family. Liberation Sans has the advance widths of Arial and Helvetica,
+' so a browser renders each string at the width that PlantUML measured.
+skinparam defaultFontName Arial, Helvetica, sans-serif

@@ -1,0 +1,61 @@
+@startuml sharder
+!include ../c4.iuml
+
+title Containers: sharder
+
+Person(operator, "Operator", "Applies specs, drains nodes, moves shards and splits cells.")
+Person(approver, "Approver", "Signs proposals in namespaces that require approvals.")
+System_Ext(servers, "Application servers", "Host replicas, implement the replica callbacks and the fence, and construct the adapters.")
+System_Ext(clients, "Application clients", "Send requests to the replicas of a key's shard.")
+System_Ext(manager, "Cluster manager", "Restarts and moves processes.")
+
+System_Boundary(sharder, "sharder") {
+    Container(sharderctl, "sharderctl", "Go program, module sharder/cmd", "Applies specs, signs and submits proposals, drains nodes, moves shards and splits cells.")
+    Container(sharderd, "sharderd", "Go program, module sharder/cmd", "Hosts the controllers of many namespaces in the service topology, with the adapters that its main package selects.")
+    Container(controller, "Controller", "Go library, package controller, in application servers or sharderd", "Runs the root of each namespace and the cells assigned to it: planning, transitions and the disruption budget.")
+    Container(agent, "Agent", "Go library, package replica, in each application server", "Adds and drops replicas through the application's Handler, keeps shard and controller epochs, renews the node's lease, and reports replicas, load and faults.")
+    Container(router, "Router", "Go library, package router, in each application client", "Maps a key to its cell and route, caches routes, and routes again after a NotOwnerError.")
+    Container(transport, "Transport adapter", "Go module, such as sharder/grpc or the kanon binary transport", "Implements the protocol's clients, and serves the agent and the controller on the embedder's server with the embedder's credentials.")
+    Container(adapters, "Store and membership adapters", "Go modules, such as sharder/etcd and sharder/kubernetes", "Implement store.Store and membership.Membership over clients that the embedder built.")
+    ContainerDb(store, "Store", "a store backend, such as etcd, with one root scope and one scope per cell", "Root scope: the spec, the approvals chain, the cell map and the root's election. Cell scope: placements, the per-node index, transitions and the cell record.")
+}
+
+System_Ext(membership, "Membership backend", "Node leases, such as Kubernetes Lease objects.")
+System_Ext(storage, "Application storage", "The application's database and its fence records.")
+System_Ext(monitoring, "Monitoring", "Metrics and logs.")
+
+Lay_R(approver, operator)
+Lay_R(operator, manager)
+Lay_R(manager, clients)
+Lay_R(clients, servers)
+Lay_R(controller, router)
+Lay_R(router, agent)
+Lay_R(membership, storage)
+Lay_R(storage, monitoring)
+
+Rel(operator, sharderctl, "Runs")
+Rel(approver, sharderctl, "Signs proposals", "sharderctl sign")
+Rel(manager, sharderctl, "Submits planned disruptions", "sharderctl drain")
+BiRel(servers, agent, "Start and close the agent, report faults; receive replica callbacks", "Go API, Handler")
+Rel(clients, router, "Route each key", "Go API")
+
+Rel(sharderd, controller, "Runs", "in process")
+BiRel(controller, transport, "Sends callbacks; serves reports and lookups", "AgentClient, ControllerServer")
+BiRel(agent, transport, "Serves callbacks; sends reports", "AgentServer, ControllerClient")
+Rel(router, transport, "Looks up routes", "ControllerClient")
+Rel(sharderctl, transport, "Submits signed proposals and operations")
+
+Rel(controller, adapters, "Campaigns, commits cell maps, specs and assignments, watches membership", "store.Store, membership.Membership")
+Rel(agent, adapters, "Watches its index and the cell record, renews its lease", "store.Store, membership.Membership")
+Rel(router, adapters, "Watches the cell map and routes, reads routes when the controller does not respond", "store.Store")
+Rel(sharderctl, adapters, "Writes spec proposals", "store.Store")
+Rel(adapters, store, "Reads, writes and watches scopes", "the backend's API")
+Rel(adapters, membership, "Renews and watches node leases", "the backend's API")
+
+Rel(agent, storage, "Acquires each writer's fence", "the application's fence.Guard")
+Rel(servers, storage, "Write shard data, checked against the fence", "the application's fence.Guard")
+Rel(controller, monitoring, "Reports metrics and logs", "telemetry.Reporter, slog")
+Rel(agent, monitoring, "Reports metrics and logs", "telemetry.Reporter, slog")
+
+SHOW_LEGEND()
+@enduml

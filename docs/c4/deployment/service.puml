@@ -1,0 +1,44 @@
+@startuml service
+!include ../c4.iuml
+!include <C4/C4_Deployment>
+
+title Deployment: service topology
+
+Deployment_Node(controllers, "sharderd process", "one per controller process, registered in each root scope") {
+    Container(sharderd, "sharderd", "Go program", "Hosts the controllers of many namespaces, with the adapters that its main package selects.")
+    Container(controller, "Controller", "Go library", "Leads the roots that elect it, and runs the cell controllers that the roots place on this process.")
+}
+
+Deployment_Node(servers, "Application server process", "one per node, up to 5,000 per cell") {
+    Container(agent, "Agent", "Go library", "Hosts the node's replicas.")
+}
+
+Deployment_Node(clients, "Application client process", "one per client") {
+    Container(router, "Router", "Go library", "Routes each key.")
+}
+
+Deployment_Node(storea, "Store cluster A", "a store backend, such as etcd") {
+    ContainerDb(root, "Root scope", "store scope", "The spec, the cell map and the root's election.")
+    ContainerDb(cell1, "Scope of cell c1", "store scope", "Placements, transitions, the cell record, and node leases when the store provides membership.")
+}
+
+Deployment_Node(storeb, "Store cluster B", "a store backend, such as etcd") {
+    ContainerDb(cell2, "Scope of cell c2", "store scope", "Placements, transitions, the cell record, and node leases when the store provides membership.")
+}
+
+Deployment_Node(database, "Application database", "the application's storage") {
+    ContainerDb(fences, "Fence records", "the application's schema", "One watermark per shard.")
+}
+
+Rel(sharderd, controller, "Runs", "in process")
+BiRel(controller, agent, "Callbacks and reports", "Do, Report, through the transport adapter")
+Rel(router, controller, "Looks up routes", "Lookup, through the transport adapter")
+Rel(controller, root, "Campaigns, commits the cell map", "store adapter")
+Rel(controller, cell1, "Commits assignments of c1", "store adapter")
+Rel(controller, cell2, "Commits assignments of c2", "store adapter")
+Rel(agent, cell1, "Watches its index, renews its lease, for a node of c1", "store adapter")
+Rel(router, root, "Watches the cell map", "store adapter")
+Rel(agent, fences, "Acquires fences", "the application's fence.Guard")
+
+SHOW_LEGEND()
+@enduml
