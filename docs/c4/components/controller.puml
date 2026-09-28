@@ -9,15 +9,16 @@ Container(router, "Router", "Go library", "Looks up uncached routes in lookup mo
 Container(transport, "Transport adapter", "Go module", "Sends protocol calls between processes, with the caller's authenticated identity, version and features.")
 
 Container_Boundary(controller, "Controller") {
-    Component(root, "Root controller", "controller", "Campaigns for the namespace's root, creates the namespace with its incarnation and mapping, keeps the cell map, and places each cell's controller on a controller process by break-before-make.")
+    Component(root, "Root controller", "controller", "Campaigns for the namespace's root, creates the namespace from the process's initial spec in one conditional commit, keeps the cell map, and places each cell's controller on a controller process by break-before-make.")
+    Component(host, "Cell host", "controller", "Implements AgentServer for the root's callbacks: add starts a cell's controller at the granted epoch and returns once that controller has acquired the cell's scope, and drop returns once it has stopped.")
     Component(proposals, "Proposal handler", "controller", "Receives proposals through Submit, authorises the caller by the proposal's kind, has each operation validated and applied, and commits it with its caller's identity.")
     Component(spec, "Spec resolution", "config, builtin", "Resolves the spec against the strategy registry and its support matrix, checks it against the capabilities of the adapters, and checks each change.")
     Component(planner, "Planner", "placement, partition, replication", "Computes each cell's target assignment within its work limits, and validates every plan and manual operation against the constraints and role bounds.")
-    Component(engine, "Transition engine", "handoff", "Scripts each move with the namespace's protocol, commits the transition's record before its first callback and each step before it calls a node, retries with the same keys, and runs abort paths.")
-    Component(budget, "Disruption budget", "budget", "Admits transitions and planned disruptions under the per-shard and per-node caps, and commits each admitted disruption as a reservation before it replies.")
+    Component(engine, "Transition engine", "handoff", "Scripts each move with the namespace's protocol, commits the transition's record before its first callback and each step before it calls a node, retries with the same keys and digests, runs abort paths, and starts transitions within the budget's bounds on work in flight.")
+    Component(budget, "Disruption budget", "budget", "Admits transitions and planned disruptions under the per-shard and per-node caps, and commits each deferred or admitted disruption as a reservation before it replies.")
     Component(service, "Controller service", "protocol", "Implements ControllerServer: accepts a report only from its node's registered identity at the node's live incarnation, and discards a report older than the last one it accepted.")
     Component(membership, "Membership watcher", "membership", "Watches the live nodes of each cell and their identities.")
-    Component(writer, "Scope writer", "store", "Acquires each scope with a conditional commit before the controller reads it, and commits generations with a commit ID and a receipt, under the root's term or the cell's epoch.")
+    Component(writer, "Scope writer", "store", "Acquires each scope with a conditional commit, after it checks the scope's schema and before the controller reads the scope, and commits generations with a commit ID and a receipt, under the root's term or the cell's epoch.")
 }
 
 Container(agent, "Agent", "Go library", "Runs callbacks and sends reports.")
@@ -31,6 +32,9 @@ Rel(agent, transport, "Sends reports", "ControllerClient")
 Rel(transport, service, "Delivers reports and lookups", "ControllerServer")
 Rel(transport, proposals, "Delivers proposals", "Submit")
 Rel(transport, budget, "Delivers disruptions", "Disrupt, Done")
+Rel(transport, host, "Delivers the root's add and drop", "AgentServer, through Dispatch")
+Rel(host, engine, "Starts and stops each hosted cell's controller")
+Rel(host, writer, "Acquires the scope of each cell that it starts")
 
 Rel(proposals, spec, "Resolves proposed specs")
 Rel(proposals, planner, "Validates moves and drains")

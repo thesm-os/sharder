@@ -45,7 +45,7 @@ The diagrams show the whole design. The first release supports a subset of it, t
 - The controller, the agent and the router are packages of the root module, which imports only core, kanon's runtime, `github.com/cespare/xxhash/v2` and the standard library.
 - Every call between processes goes through a transport adapter, `httptransport`, which sends kanon-encoded bodies over HTTP/2 and the call's version and features in headers. Calls within one process go through `protocol.Local`, which checks the same metadata.
 - The store adapter implements `store.Store` and `membership.Membership` over an etcd client that the embedder built. The store has one root scope per namespace and one scope per cell.
-- `sharderctl` sends every operation to the controller that applies it through `Submit`, and a cluster manager calls `Disrupt` and `Done`. The transport adapter authenticates each caller, the controller authorises it by the kind of the operation, and operators do not need store credentials.
+- `sharderctl` sends every operation to the controller that applies it through `Submit`, and a cluster manager calls `Disrupt` and `Done`. The transport adapter authenticates each caller, and the controller authorises it by the kind of the operation. Operators need store read credentials for `sharderctl status` and `history`, and no write credentials.
 
 ## Components
 
@@ -53,23 +53,25 @@ The diagrams show the whole design. The first release supports a subset of it, t
 
 ![Components of the controller](components/controller.svg)
 
-- The controller process that `Campaign` elects leads the namespace's root. Any controller process runs the cell controllers that a root places on it.
+- The controller process that `Campaign` elects leads the namespace's root. Any controller process runs the cell controllers that a root places on it. Its cell host receives the root's `add` and `drop` on the process's callback endpoint, which `protocol.Dispatch` shares with the process's agents.
 - The scope writer acquires a scope with one conditional commit before the controller reads the scope, and gives every commit an ID and a receipt.
 - The transition engine commits each transition's full record before its first callback, and each step before it calls a node, so a replacement controller continues each transition from its record.
-- The proposal handler authorises each proposal by its kind, against the operators in the process's own configuration, and commits it with its caller's identity. The budget commits each admitted disruption as a reservation before it replies.
+- The proposal handler authorises each proposal by its kind, against the operators in the process's own configuration, and commits it with its caller's identity. The budget commits each deferred or admitted disruption as a reservation before it replies.
 
 ### Agent
 
 ![Components of the agent](components/agent.svg)
 
-- The callback service refuses a callback from any identity other than the controller that the cell record names. It also refuses a callback for another namespace incarnation or node incarnation, at a lower shard or controller epoch, or of a superseded operation, before it calls the handler.
+- The callback service refuses a callback from any identity other than the controller that the cell record names. It also refuses a callback for another namespace incarnation or node incarnation, at a lower shard or controller epoch, or of a superseded or ended operation, before it calls the handler.
+- A callback whose controller epoch is above the cell record that the index watcher has delivered gets a transient error, and the controller retries it once the newer record has arrived.
+- The callback service starts a tenure only once the index watcher lists it. The index watcher cleans up a tenure that its watched state stops listing, after an event or a replacement snapshot, only while that exact tenure is still active. Neither a delayed removal nor an older snapshot can therefore stop a newer tenure.
 - In the `delegated` mode, outside the support matrix, handler dispatch also calls the application's `Elector`. The application reports its authority's replicas to the reporter through `Hosted` and `Released`, and its elections and depositions through `Elected` and `Deposed`.
 
 ### Router
 
 ![Components of the router](components/router.svg)
 
-- In `watch` mode, the only mode of the support matrix, the route cache contains every route of each cell the router uses, and replaces a route only with one from a newer generation. The `lookup` and `compute` modes are outside the support matrix.
+- In `watch` mode, the only mode of the support matrix, the route cache contains every route of each cell the router uses, and replaces a route only with one from a newer generation of the same incarnation. A new incarnation replaces the mapping and every cache at once. The `lookup` and `compute` modes are outside the support matrix.
 - A `fixed-slots` namespace caches routes in an array indexed by slot. The range partitioners, outside the support matrix, would cache them in core's copy-on-write B-tree.
 
 ## Deployment

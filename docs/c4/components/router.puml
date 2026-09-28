@@ -8,11 +8,11 @@ System_Ext(client, "Application client", "Sends requests to the replicas of a ke
 Container_Boundary(router, "Router") {
     Component(route, "Route", "router", "Maps a key to its route: the position, then the cell, then the cached route. A cached route costs one position and one lookup and does not allocate.")
     Component(partitioner, "Partitioner", "partition", "Computes the key's position with the namespace's partitioner, after it checks the partitioner's mapping against the namespace's.")
-    Component(cellmap, "Cell map", "router, shard", "Keeps the namespace's cell map from a watch of the root scope, and finds a position's cell by binary search.")
-    Component(cache, "Route cache", "router", "Keeps each cell's routes from a watch of the cell's scope: an array of slots for fixed-slots, with each route's generation, published through atomic pointers. Range partitioners, outside the support matrix, would use core's copy-on-write B-tree.")
+    Component(cellmap, "Cell map", "router, shard", "Keeps the namespace's cell map from a watch of the root scope, and finds a position's cell by binary search. On a new namespace incarnation, it installs the new mapping and caches in one step.")
+    Component(cache, "Route cache", "router", "Keeps each cell's routes from a watch of the cell's scope: an array of slots for fixed-slots, with each route's incarnation and generation, published through atomic pointers. Range partitioners, outside the support matrix, would use core's copy-on-write B-tree.")
     Component(loader, "Lookup loader", "router, core's batch", "In lookup mode, outside the support matrix, coalesces the misses of one cell into one lookup, with 16 placements prefetched.")
     Component(compute, "Route function", "router, placement", "In the leaderless topology, outside the support matrix, computes each route with the namespace's function placer.")
-    Component(retry, "Redirects", "router.Do", "Retries only after a NotOwnerError, which a server returns before it starts a request: refreshes the route and routes again.")
+    Component(retry, "Redirects", "router.Do", "Retries only after a NotOwnerError, which a server returns before it starts a request: refreshes the route in the error's incarnation and routes again.")
 }
 
 Container(transport, "Transport adapter", "Go module", "Sends lookups to the cell's controller.")
@@ -26,7 +26,7 @@ Rel(route, cellmap, "Finds the cell")
 Rel(route, cache, "Finds the route, in watch mode")
 Rel(route, compute, "Computes the route, in compute mode")
 Rel(cache, loader, "Fetches missing routes, in lookup mode")
-Rel(retry, cache, "Refreshes routes")
+Rel(retry, cache, "Refreshes routes, or triggers rediscovery on another incarnation")
 Rel(retry, server, "Sends the request", "the application's protocol")
 
 Rel(loader, transport, "Looks up routes", "ControllerClient")
