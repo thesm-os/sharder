@@ -3,17 +3,17 @@
 
 title System context: sharder
 
-Person(operator, "Operator", "Applies specs, drains nodes, moves shards and splits cells.")
-Person(approver, "Approver", "Signs proposals in namespaces that require approvals.")
+Person(operator, "Operator", "Applies specs, drains nodes and moves shards.")
+Person(approver, "Approver", "Signs proposals in namespaces that require approvals. Outside the support matrix.")
 System_Ext(servers, "Application servers", "Processes that host replicas, implement the replica callbacks and the fence, and choose sharder's adapters.")
 System_Ext(clients, "Application clients", "Processes that send requests to the replicas of a key's shard.")
 System_Ext(manager, "Cluster manager", "Restarts and moves processes, such as Kubernetes.")
 
 System(sharder, "sharder", "Maps keys to shards, places shards on nodes, and moves them under fencing and a disruption budget.")
 
-System_Ext(store, "Store", "A consistent store with leases and elections, such as etcd. Contains the root scope and the cell scopes of each namespace, the node leases, and the proposals that controllers applied.")
+System_Ext(store, "Store", "etcd. Contains the root scope and the cell scopes of each namespace, the node leases, the reservations of planned disruptions, and the proposals that controllers applied.")
 System_Ext(storage, "Application storage", "The application's database. The application's fence checks every write against the shard's watermark in it.")
-System_Ext(authority, "Application authority", "Elects each shard's writer in the delegated ownership mode, such as the thesmos ledger.")
+System_Ext(authority, "Application authority", "Elects each shard's writer in the delegated ownership mode, such as the thesmos ledger. Outside the support matrix.")
 System_Ext(monitoring, "Monitoring", "Stores the operator's metrics and logs.")
 
 Rel(servers, sharder, "Embed the agent, the controller in the embedded topology, and the chosen adapters", "Go API, in process")
@@ -22,7 +22,7 @@ Rel(operator, sharder, "Operates namespaces", "sharderctl")
 Rel(approver, sharder, "Signs proposals", "sharderctl sign")
 Rel(manager, sharder, "Admits and ends planned disruptions", "Disrupt, Done")
 
-Rel(sharder, store, "Campaigns, commits assignments and applied proposals, watches scopes, renews node leases", "a store adapter")
+Rel(sharder, store, "Acquires scopes, commits assignments, reservations and applied proposals, watches scopes, renews node leases", "the etcd adapter")
 Rel(sharder, storage, "Acquires each writer's fence", "the application's fence.Guard")
 Rel(sharder, authority, "Requests elections and abdications", "the application's Elector")
 Rel(sharder, monitoring, "Reports metrics and logs", "telemetry.Reporter, slog")

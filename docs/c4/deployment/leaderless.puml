@@ -2,7 +2,7 @@
 !include ../c4.iuml
 !include <C4/C4_Deployment>
 
-title Deployment: leaderless topology
+title Deployment: leaderless topology, outside the support matrix
 
 Deployment_Node(servers, "Application server process", "one per node, one cell of up to 5,000 nodes") {
     Container(agent, "Agent", "Go library", "Computes placement with the namespace's function placer from the layout and the membership view, and campaigns in the election of each shard it writes.")
@@ -18,7 +18,7 @@ Deployment_Node(storecluster, "Store cluster", "a store backend, such as etcd") 
 }
 
 Deployment_Node(database, "Application database", "the application's storage") {
-    ContainerDb(fences, "Fence records", "the application's schema", "One watermark per shard, advanced to each new term.")
+    ContainerDb(fences, "Fence records", "the application's schema", "One watermark per namespace incarnation and shard, advanced to each new term.")
 }
 
 Rel(agent, root, "Reads the spec", "store adapter")

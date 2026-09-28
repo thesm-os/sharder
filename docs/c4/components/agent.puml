@@ -7,12 +7,12 @@ Container(transport, "Transport adapter", "Go module", "Sends protocol calls bet
 System_Ext(app, "Application server", "Implements Handler, the optional interfaces and the fence, and writes shard data.")
 
 Container_Boundary(agent, "Agent") {
-    Component(service, "Callback service", "replica, protocol", "Implements AgentServer: checks the caller's identity against the cell record, refuses a lower shard or controller epoch, and returns the first result of a repeated idempotency key.")
+    Component(service, "Callback service", "replica, protocol", "Implements AgentServer: checks the caller against the cell record, refuses another namespace or node incarnation, a lower shard or controller epoch and a superseded operation, and returns the kept result of a repeated key. Runs one callback at a time per shard.")
     Component(dispatch, "Handler dispatch", "replica", "Calls Handler and the optional interfaces that the application implements, and lists them as capabilities.")
     Component(tokens, "Token issuer", "replica, fence", "Issues fencing tokens to writers, and acquires each tenure's fence before the writer reads.")
-    Component(session, "Lease session", "membership, protocol", "Joins the node's cell with its identity, renews the lease, and stops writers at the lease deadline unless OnLoss is ContinueFenced. On Agent.Close, disrupts its own node and leaves once its replicas have moved.")
+    Component(session, "Lease session", "membership, protocol", "Joins the node's cell with its identity, renews the lease, and stops writers at the lease deadline unless OnLoss is ContinueFenced. On Agent.Close, disrupts its own node, and leaves once its replicas have moved or its context ends.")
     Component(index, "Index watcher", "store", "Reads and watches the node's placements and the cell record, and restores non-writer replicas at start-up.")
-    Component(reporter, "Reporter", "replica, protocol", "Sends replicas, load, capabilities, faults and elections, and in the delegated mode the replicas that the application reports through Hosted and Released. Records the controller epoch of each reply.")
+    Component(reporter, "Reporter", "replica, protocol", "Sends sequenced full snapshots of the node's replicas, load, capabilities and faults, and records the controller epoch of each reply. In the delegated mode, outside the support matrix, also sends the replicas and elections that the application reports.")
 }
 
 Container(adapters, "Store adapter", "Go module", "Implements store.Store and membership.Membership.")
@@ -21,12 +21,12 @@ Lay_R(transport, index)
 
 Rel(transport, service, "Delivers callbacks", "AgentServer")
 Rel(service, dispatch, "Runs each accepted callback")
-Rel(dispatch, app, "Adds, drops and re-roles replicas; asks the authority to elect or abdicate", "Handler, Elector")
+Rel(dispatch, app, "Adds, drops and re-roles replicas; in the delegated mode, asks the authority to elect or abdicate", "Handler, Elector")
 Rel(app, tokens, "Takes a token before writing", "Agent.Token")
-Rel(app, reporter, "Reports faults, the authority's replicas, elections and depositions", "ReportFault, Hosted, Released, Elected, Deposed")
+Rel(app, reporter, "Reports faults, and in the delegated mode the authority's replicas, elections and depositions", "ReportFault, Hosted, Released, Elected, Deposed")
 Rel(tokens, app, "Acquires fences", "the application's fence.Guard")
 Rel(reporter, transport, "Sends reports", "ControllerClient")
-Rel(session, tokens, "Revokes tokens when the lease is lost")
+Rel(session, tokens, "Revokes tokens when the lease is lost under Stop")
 Rel(index, service, "Provides the controller's identity")
 Rel(index, dispatch, "Restores non-writer replicas")
 

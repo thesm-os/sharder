@@ -2,7 +2,7 @@
 !include ../c4.iuml
 !include <C4/C4_Deployment>
 
-title Deployment: service topology
+title Deployment: service topology, outside the support matrix
 
 Deployment_Node(controllers, "sharderd process", "one per controller process, registered in each root scope") {
     Container(sharderd, "sharderd", "Go program", "Hosts the controllers of many namespaces, with the adapters that its main package selects.")
@@ -27,7 +27,7 @@ Deployment_Node(storeb, "Store cluster B", "a store backend, such as etcd") {
 }
 
 Deployment_Node(database, "Application database", "the application's storage") {
-    ContainerDb(fences, "Fence records", "the application's schema", "One watermark per shard.")
+    ContainerDb(fences, "Fence records", "the application's schema", "One watermark per namespace incarnation and shard.")
 }
 
 Rel(sharderd, controller, "Runs", "in process")

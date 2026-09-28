@@ -6,29 +6,29 @@ title Deployment: embedded topology
 
 Deployment_Node(servers, "Application server process", "one per node, up to 5,000 per cell") {
     Container(agent, "Agent", "Go library", "Hosts the node's replicas.")
-    Container(controller, "Controller", "Go library", "Leads the namespace's root when elected, and runs each cell controller that the root places on this node.")
+    Container(controller, "Controller", "Go library", "Leads the namespace's root when elected, and runs the cell controller that the root places on this node.")
 }
 
 Deployment_Node(clients, "Application client process", "one per client") {
     Container(router, "Router", "Go library", "Routes each key.")
 }
 
-Deployment_Node(storecluster, "Store cluster", "a store backend, such as etcd") {
-    ContainerDb(root, "Root scope", "store scope", "The spec, the cell map and the root's election.")
-    ContainerDb(cells, "Cell scopes", "store scopes", "Placements, transitions, cell records, and node leases when the store provides membership.")
+Deployment_Node(storecluster, "Store cluster", "etcd") {
+    ContainerDb(root, "Root scope", "store scope", "The namespace incarnation, the mapping, the spec, the cell map and the root's election.")
+    ContainerDb(cells, "Cell scope", "store scope, one per cell, and one cell in the support matrix", "Placements, transitions, reservations, the cell record and node leases.")
 }
 
 Deployment_Node(database, "Application database", "the application's storage") {
-    ContainerDb(fences, "Fence records", "the application's schema", "One watermark per shard.")
+    ContainerDb(fences, "Fence records", "the application's schema", "One watermark per namespace incarnation and shard.")
 }
 
-Rel(controller, agent, "Sends callbacks to the agents of its cell", "Do, through the transport adapter, or protocol.Local for its own node")
-Rel(agent, controller, "Reports", "Report, through the transport adapter")
-Rel(router, controller, "Looks up routes", "Lookup, through the transport adapter")
-Rel(controller, root, "Campaigns, commits the cell map", "store adapter")
-Rel(controller, cells, "Commits assignments", "store adapter")
-Rel(agent, cells, "Watches its index, renews its lease", "store adapter")
-Rel(router, root, "Watches the cell map", "store adapter")
+Rel(controller, agent, "Sends callbacks to the agents of its cell", "Do, through httptransport, or protocol.Local for its own node")
+Rel(agent, controller, "Reports", "Report, through httptransport")
+Rel(controller, root, "Campaigns, commits the cell map", "etcd adapter")
+Rel(controller, cells, "Acquires the scope, commits assignments", "etcd adapter")
+Rel(agent, cells, "Watches its index, renews its lease", "etcd adapter")
+Rel(router, root, "Watches the cell map", "etcd adapter")
+Rel(router, cells, "Watches the cell's routes", "etcd adapter")
 Rel(agent, fences, "Acquires fences", "the application's fence.Guard")
 
 SHOW_LEGEND()

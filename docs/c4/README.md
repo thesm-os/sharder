@@ -11,6 +11,18 @@ The C4 model describes sharder at three levels of zoom, and deploys it once per 
 | Components | [Router](#router) | positions, the cell map, the route cache and computed routes | [RFC-0003](../rfc/0003-partitioning-strategies.md), [RFC-0008](../rfc/0008-agent-router-and-budgets.md) |
 | Deployment | [Embedded](#embedded-topology), [Service](#service-topology), [Leaderless](#leaderless-topology) | where the containers run in each topology | [RFC-0001](../rfc/0001-architecture-and-core-model.md), [RFC-0009](../rfc/0009-horizontal-scaling-with-cells.md) |
 
+## The support matrix
+
+The diagrams show the whole design. The first release supports a subset of it, the support matrix of [RFC-0001](../rfc/0001-architecture-and-core-model.md), and each diagram marks the elements outside it:
+
+| In the diagrams | In the support matrix | Outside it |
+|---|---|---|
+| Topology | `embedded`, with one cell per namespace | `service` with `sharderd`, `leaderless`, more than one cell |
+| Store | etcd, through `go.thesmos.sh/sharder/etcd`. `store/memory` in tests and simulations | Every other backend |
+| Transport | `httptransport` | `grpc` |
+| Routing | `watch` | `lookup`, `compute` |
+| Ownership | `exclusive`, fenced by the application's fence | `delegated`, with the application authority, and approvals, with the approver |
+
 ## Layout
 
 - Each kind of diagram has its own directory: `context/`, `containers/`, `components/` and `deployment/`.
@@ -22,18 +34,18 @@ The C4 model describes sharder at three levels of zoom, and deploys it once per 
 
 ![System context of sharder](context/sharder.svg)
 
-- Application servers embed the agent, and embed the controller in the `embedded` topology. Application clients embed the router.
-- The application authority takes part only in the `delegated` ownership mode.
-- The application implements the fence over its own storage. sharder calls it to acquire each writer's tenure.
+- Application servers embed the agent, and the controller in the `embedded` topology. Application clients embed the router.
+- The application authority takes part only in the `delegated` ownership mode, and the approver only in a namespace with approvals. Both are outside the support matrix.
+- The application implements the fence over its own storage. sharder calls it to acquire each writer's tenure, and every write of the application's shard data checks it.
 
 ## Containers
 
 ![Containers of sharder](containers/sharder.svg)
 
-- The controller, the agent and the router are packages of the root module, which imports only core and the standard library.
-- Every call between processes goes through a transport adapter: `httptransport` by default, which sends kanon-encoded bodies over HTTP/2, or `grpc`. Calls within one process go through `protocol.Local`.
-- The store adapter implements `store.Store` and `membership.Membership` over a client that the embedder built. The store is one root scope per namespace and one scope per cell, and the store adapter maps each scope to a store cluster.
-- `sharderctl` sends every operation to the controller that applies it through `Submit`, and a cluster manager calls `Disrupt` and `Done`. The transport adapter authenticates each caller, and operators do not need store credentials.
+- The controller, the agent and the router are packages of the root module, which imports only core, kanon's runtime and the standard library.
+- Every call between processes goes through a transport adapter, `httptransport`, which sends kanon-encoded bodies over HTTP/2 and the call's version and features in headers. Calls within one process go through `protocol.Local`, which checks the same metadata.
+- The store adapter implements `store.Store` and `membership.Membership` over an etcd client that the embedder built. The store has one root scope per namespace and one scope per cell.
+- `sharderctl` sends every operation to the controller that applies it through `Submit`, and a cluster manager calls `Disrupt` and `Done`. The transport adapter authenticates each caller, the controller authorises it by the kind of the operation, and operators do not need store credentials.
 
 ## Components
 
@@ -42,22 +54,23 @@ The C4 model describes sharder at three levels of zoom, and deploys it once per 
 ![Components of the controller](components/controller.svg)
 
 - The controller process that `Campaign` elects leads the namespace's root. Any controller process runs the cell controllers that a root places on it.
-- The transition engine commits each step before it calls a node, so a replacement controller continues each transition at its committed step.
-- The proposal handler accepts a proposal with its approvers' signatures, or from an operator identity in the process's own configuration, and commits it with its caller's identity. The budget accepts `Disrupt` and `Done` from operator identities, and from a node that disrupts only itself.
+- The scope writer acquires a scope with one conditional commit before the controller reads the scope, and gives every commit an ID and a receipt.
+- The transition engine commits each transition's full record before its first callback, and each step before it calls a node, so a replacement controller continues each transition from its record.
+- The proposal handler authorises each proposal by its kind, against the operators in the process's own configuration, and commits it with its caller's identity. The budget commits each admitted disruption as a reservation before it replies.
 
 ### Agent
 
 ![Components of the agent](components/agent.svg)
 
-- The callback service refuses a callback from any identity other than the controller that the cell record names, and a callback at a lower shard or controller epoch.
-- In the `delegated` mode, handler dispatch also calls the application's `Elector`. The application reports its authority's replicas to the reporter through `Hosted` and `Released`, and its elections and depositions through `Elected` and `Deposed`.
+- The callback service refuses a callback from any identity other than the controller that the cell record names. It also refuses a callback for another namespace incarnation or node incarnation, at a lower shard or controller epoch, or of a superseded operation, before it calls the handler.
+- In the `delegated` mode, outside the support matrix, handler dispatch also calls the application's `Elector`. The application reports its authority's replicas to the reporter through `Hosted` and `Released`, and its elections and depositions through `Elected` and `Deposed`.
 
 ### Router
 
 ![Components of the router](components/router.svg)
 
-- In `watch` mode, the default, the route cache contains every route of each cell the router uses. In `lookup` mode it contains only the routes that the router has used. In `compute` mode, the only mode of the leaderless topology, the route function computes each route and nothing is cached.
-- A `fixed-slots` namespace caches routes in an array indexed by slot, and every other partitioner in core's copy-on-write B-tree.
+- In `watch` mode, the only mode of the support matrix, the route cache contains every route of each cell the router uses, and replaces a route only with one from a newer generation. The `lookup` and `compute` modes are outside the support matrix.
+- A `fixed-slots` namespace caches routes in an array indexed by slot. The range partitioners, outside the support matrix, would cache them in core's copy-on-write B-tree.
 
 ## Deployment
 
@@ -65,9 +78,11 @@ The C4 model describes sharder at three levels of zoom, and deploys it once per 
 
 ![Deployment of the embedded topology](deployment/embedded.svg)
 
-- The root is elected among the application server processes, and each cell's controller runs on a node of its cell.
+- The root is elected among the application server processes, and each cell's controller runs on a node of its cell. In the support matrix, a namespace has one cell.
 
 ### Service topology
+
+The service topology is outside the support matrix.
 
 ![Deployment of the service topology](deployment/service.svg)
 
@@ -76,9 +91,11 @@ The C4 model describes sharder at three levels of zoom, and deploys it once per 
 
 ### Leaderless topology
 
+The leaderless topology is outside the support matrix.
+
 ![Deployment of the leaderless topology](deployment/leaderless.svg)
 
-- A leaderless namespace has one cell and no controller. Each agent computes placement with the namespace's function placer. The agent that the placer selects as a shard's writer campaigns in the store's election for that shard, and the term of the election is the shard's epoch.
+- A leaderless namespace has one cell and no controller. Each agent computes placement with the namespace's function placer. Exclusive ownership in it would need routers that read each shard's election, which the store does not offer, so the topology suits affinity only.
 
 ## Rendering
 
