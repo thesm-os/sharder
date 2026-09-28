@@ -117,7 +117,6 @@ This milestone is the first code of the library, and every other milestone exten
 It needs these from outside this repository:
 
 - A core release that contains `fsm`, `task`, `coretest/epochtest`, the fence laws and the `Policy`, `Signature` and `Resolver` of `crypto/sign`, as core does at commit `8edf26a`. The latest release, v0.6.1, predates all five.
-- XXH64 in core, which `fixed-slots` hashes with.
 - `version.ErrOutcomeUnknown` in core, which the store returns for a commit whose outcome is unknown.
 - Binary encoding methods on core's `id.ID`, through which every message encodes its namespace incarnation.
 - kanon's generator, and its runtime packages `go.thesmos.sh/kanon` and `go.thesmos.sh/kanon/wire`, which the generated codecs import.
@@ -144,7 +143,7 @@ The scope is the support matrix of the first release and its enforcement: `Resol
 
 | Risk | What it delays | What we would do |
 |---|---|---|
-| Core releases XXH64, `version.ErrOutcomeUnknown` and the encoding of `id.ID` after the library's own work is done | This milestone, and milestones 0002 to 0005 | Develop against core through a replace directive, as the ledger does, and release once a core release contains the three |
+| Core releases `version.ErrOutcomeUnknown` and the encoding of `id.ID` after the library's own work is done | This milestone, and milestones 0002 to 0005 | Develop against core through a replace directive, as the ledger does, and release once a core release contains both |
 | kanon's generator is not released when the library needs its codecs | This milestone, and milestones 0002 to 0005 | Keep the `go:generate` directives, and generate the codecs from kanon's development tree until it releases |
 | The etcd feasibility check shows that a supported transaction shape does not fit etcd's default limits | This milestone, and milestones 0002 to 0005 | Split the shape into smaller commits, or publish lower limits for a cell |
 
@@ -152,6 +151,7 @@ The scope is the support matrix of the first release and its enforcement: `Resol
 
 | Date | What changed | Why |
 |---|---|---|
+| 2026-09-28 | Dropped XXH64 in core from the prerequisites | sharder takes XXH64 from `github.com/cespare/xxhash/v2`, which exists today |
 | 2026-09-28 | Created, with the support matrix as its scope and the review's acceptance plan as its exit criteria | The design review of 2026-09-28 found the full design not ready to build at once. The first release supports the subset whose contracts the RFC revision completed |
 
 ## References
@@ -159,5 +159,5 @@ The scope is the support matrix of the first release and its enforcement: `Resol
 | What | Where |
 |---|---|
 | Design review of the sharder RFCs, 2026-09-28: 35 findings and 24 acceptance scenarios | `.scratch/rfc-review.md` and the four reviews beside it, which are not under version control |
-| Feature requests to core for XXH64, `version.ErrOutcomeUnknown` and the encoding of `id.ID` | `feat-xxh64-hash.md`, `feat-version-outcome-unknown.md` and `feat-id-binary-encoding.md` at the root of the core repository |
+| Feature requests to core for `version.ErrOutcomeUnknown` and the encoding of `id.ID` | `feat-version-outcome-unknown.md` and `feat-id-binary-encoding.md` at the root of the core repository |
 | etcd v3.6 API guarantees, operation completion | https://etcd.io/docs/v3.6/learning/api_guarantees/ |

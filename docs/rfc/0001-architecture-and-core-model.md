@@ -21,7 +21,7 @@ We propose `sharder`, a Go library that a sharded application embeds to map keys
 
 The first release supports a subset of this design, which a support matrix lists as data: one cell per namespace, a key-to-slot mapping that never changes, exclusive ownership with a transactional fence, break-before-make handoff, the primary-only model, the embedded topology, and routes that routers watch in the store. `Resolve` rejects every spec outside the matrix before it takes effect. The rest of the design is recorded here with the changes that each part needs before the matrix can include it. One such part is the `delegated` ownership mode, in which an application's own election, such as a consensus protocol, grants each writer's epoch and the core follows it.
 
-A namespace scales horizontally in cells. A cell is a disjoint set of nodes, the shards placed on them and one controller, with its own keyspace in the store. The library builds on `go.thesmos.sh/core` for time, randomness, identifiers, epochs and fencing, conditional writes, errors, state machines, structured concurrency, retries and telemetry, and defines only what core does not. Its root module imports only core, kanon's small runtime and the standard library. The store, the membership and the transport are interfaces. Adapter modules implement the store and the membership over etcd, and the transport over HTTP/2 or gRPC. The protocol's messages have binary codecs that kanon generates.
+A namespace scales horizontally in cells. A cell is a disjoint set of nodes, the shards placed on them and one controller, with its own keyspace in the store. The library builds on `go.thesmos.sh/core` for time, randomness, identifiers, epochs and fencing, conditional writes, errors, state machines, structured concurrency, retries and telemetry, and defines only what core does not. Its root module imports only core, kanon's small runtime, one module for XXH64 and the standard library. The store, the membership and the transport are interfaces. Adapter modules implement the store and the membership over etcd, and the transport over HTTP/2 or gRPC. The protocol's messages have binary codecs that kanon generates.
 
 ## Motivation
 
@@ -342,7 +342,7 @@ The first release supports the strategies, presets and adapters in the following
 
 Each section of these RFCs that designs a strategy outside the matrix marks it as outside, and lists the changes the strategy needs before the matrix can include it.
 
-The matrix decides two dependencies on core. `fixed-slots` hashes with XXH64, so the first release needs core's XXH64. The first release does not need core's copy-on-write B-tree, because a `fixed-slots` route cache is an array indexed by slot, and a namespace of one cell needs no search over a cell map.
+The first release does not need core's copy-on-write B-tree, because a `fixed-slots` route cache is an array indexed by slot, and a namespace of one cell needs no search over a cell map.
 
 ### What core provides
 
@@ -367,13 +367,12 @@ The library takes every mechanism below from core and defines none of them itsel
 | Labels | `tag.Tags` | Node labels and shard labels |
 | Digests | `crypto.Digest`, `crypto/sha256` | Commit receipts, callback fingerprints, disruption reservations, and the anchor of approvals |
 | Signature thresholds | `sign.Policy`, `sign.Resolver`, `crypto.NewFramer` | Approvals of specs and operations, outside the support matrix |
-| Non-cryptographic hashing | XXH64, none at commit `8edf26a` | Key positions in `fixed-slots` |
 | Ordered maps with copy-on-write clones | A B-tree, none at commit `8edf26a` | Route caches of range partitioners, outside the support matrix |
 | Metrics and traces | `telemetry.Reporter` | Every metric of the library |
 
 The fence laws come from core: a write whose epoch is at or above the scope's watermark is admitted, a greater epoch advances the watermark, a zero epoch is unfenced, and validation runs in the same atomic step as the write, against durable state. Logs go through `log/slog`, as in core.
 
-The root module takes nothing from outside core, kanon and the standard library. The adapters take what their backends need: the etcd client, and gRPC with protobuf. The HTTP transport needs nothing beyond the root module and the standard library. The root module's `go.mod` lists kanon as a tool, which generates the codecs of the protocol's messages, of the store's records and of the types they contain, in `shard`, `config`, `budget`, `store` and `protocol`. The generated code imports kanon's runtime: `go.thesmos.sh/kanon` for the message interface, the decode options, the typed errors and the version constants, and `go.thesmos.sh/kanon/wire` for the varint, time and skip functions. The `tool` directive keeps the generator and the runtime at one version.
+The root module takes one mechanism from outside core, kanon and the standard library: XXH64, the hash of `fixed-slots`, from `github.com/cespare/xxhash/v2` v2.3.0, a module without dependencies of its own. The adapters take what their backends need: the etcd client, and gRPC with protobuf. The HTTP transport needs nothing beyond the root module and the standard library. The root module's `go.mod` lists kanon as a tool, which generates the codecs of the protocol's messages, of the store's records and of the types they contain, in `shard`, `config`, `budget`, `store` and `protocol`. The generated code imports kanon's runtime: `go.thesmos.sh/kanon` for the message interface, the decode options, the typed errors and the version constants, and `go.thesmos.sh/kanon/wire` for the varint, time and skip functions. The `tool` directive keeps the generator and the runtime at one version.
 
 ### The fixed core
 
@@ -465,7 +464,7 @@ The four supported presets also select `watch` routing and a budget that allows 
 
 ### Packages and modules
 
-The root module, `go.thesmos.sh/sharder`, contains these packages. They import packages of core, of kanon's runtime, of the standard library and of the module itself.
+The root module, `go.thesmos.sh/sharder`, contains these packages. They import packages of core, of kanon's runtime, of `github.com/cespare/xxhash/v2`, of the standard library and of the module itself.
 
 | Package | Contains | Imports from the library |
 |---|---|---|
@@ -655,8 +654,8 @@ Define the time seam, the epoch type, the fence rules and the retry loop inside 
 - The controller and the agent are state machines that a runtime drives, so that the simulator can drive them on one goroutine. That structure takes more code than goroutines that call each other directly.
 - Cells add a root controller and a second level of lookup, even in a namespace of one cell, which every namespace in the support matrix is. A cell's nodes cannot help another cell's load until an operator moves them.
 - The library depends on core's `fsm`, `task`, `coretest/epochtest`, fence laws, and the `Policy`, `Signature` and `Resolver` of `crypto/sign`, which core contains at commit `8edf26a` and which no core release contains. The latest release, v0.6.1, predates all five.
-- The root module needs three mechanisms that core does not contain at commit `8edf26a`: an XXH64 hash, an error beside `version.ErrMismatch` for a write whose outcome is unknown, and binary encoding methods on `id.ID`. The ledger defines the same error as `storage.ErrOutcomeUnknown`. The route caches of range partitioners, outside the matrix, also need a copy-on-write B-tree.
-- The root module depends on kanon's runtime as well as on core, and every application's binary links it. A kanon release that stops supporting a generator version is a breaking change of sharder's codecs.
+- The root module needs an error beside `version.ErrMismatch` for a write whose outcome is unknown, and binary encoding methods on `id.ID`. Core does not contain either at commit `8edf26a`, and the ledger defines the same error as `storage.ErrOutcomeUnknown`. The route caches of range partitioners, outside the matrix, also need a copy-on-write B-tree.
+- The root module depends on kanon's runtime and on `github.com/cespare/xxhash/v2` as well as on core, and every application's binary links both. A kanon release that stops supporting a generator version is a breaking change of sharder's codecs. An application that requires an older version of `cespare/xxhash` moves to v2.3.0.
 - An adapter module has its own version and its own release. A change to a root interface requires a new release of the adapter modules that implement it.
 
 ## Open questions

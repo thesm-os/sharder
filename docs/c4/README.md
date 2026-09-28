@@ -42,7 +42,7 @@ The diagrams show the whole design. The first release supports a subset of it, t
 
 ![Containers of sharder](containers/sharder.svg)
 
-- The controller, the agent and the router are packages of the root module, which imports only core, kanon's runtime and the standard library.
+- The controller, the agent and the router are packages of the root module, which imports only core, kanon's runtime, `github.com/cespare/xxhash/v2` and the standard library.
 - Every call between processes goes through a transport adapter, `httptransport`, which sends kanon-encoded bodies over HTTP/2 and the call's version and features in headers. Calls within one process go through `protocol.Local`, which checks the same metadata.
 - The store adapter implements `store.Store` and `membership.Membership` over an etcd client that the embedder built. The store has one root scope per namespace and one scope per cell.
 - `sharderctl` sends every operation to the controller that applies it through `Submit`, and a cluster manager calls `Disrupt` and `Done`. The transport adapter authenticates each caller, the controller authorises it by the kind of the operation, and operators do not need store credentials.

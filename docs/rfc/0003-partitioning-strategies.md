@@ -223,7 +223,7 @@ Each shard has either a key prefix or a key range. Prefixes and ranges must not 
 
 ### Hash functions
 
-A hash function is part of the mapping, because two processes that disagree on it route the same key to different shards. The one built-in, `xxhash64`, is XXH64 with seed 0 over the key bytes, from core, at version 1.
+A hash function is part of the mapping, because two processes that disagree on it route the same key to different shards. The one built-in, `xxhash64`, is XXH64 with seed 0 over the key bytes, at version 1. It calls `Sum64` of `github.com/cespare/xxhash/v2` v2.3.0, which computes the digest with a zero seed, in assembly on amd64 and arm64. The module has no dependencies of its own.
 
 The namespace's mapping records the hash function's registered name and its version. Every controller and every router compares both with the hash function it runs when it starts, and refuses the namespace with an error of class `errs.Unsupported` when either differs. A process of a release whose hash function returns other values therefore refuses the namespace instead of routing keys to other shards. A registered hash function whose values change for any key increments its version, and a namespace cannot move to the new version by a spec edit.
 
@@ -231,7 +231,7 @@ In its conformance test, `xxhash64` passes the XXH64 vectors of xxHash's referen
 
 An application that migrates with an existing key-to-slot mapping registers that mapping's hash as a `partition.Hash` of its own. With Redis Cluster's CRC16 and 16,384 slots, `fixed-slots` with hash tags on reproduces Redis Cluster's slot of every key. With Kafka's murmur2, masked to 31 bits, and one slot per partition, it reproduces Kafka's default partition of every keyed record.
 
-We measured four candidates over 1,048,576 keys in 1,024 buckets. The balance columns give chi-square per degree of freedom: 1.0 is uniform, and the 99.9% bound is about 1.14. The speed column is one core of a Ryzen 9 9950X3D, with Go 1.27.1:
+We measured four candidates over 1,048,576 keys in 1,024 buckets: XXH64 through `cespare/xxhash` v2.3.0, XXH3 through `zeebo/xxh3` v1.1.0, and FNV-1a and CRC-32C from the standard library. The balance columns give chi-square per degree of freedom: 1.0 is uniform, and the 99.9% bound is about 1.14. The speed column is one core of a Ryzen 9 9950X3D, with Go 1.27.1:
 
 | Hash | Top 10 bits, keys `user:<n>` | Top 10 bits, 8-byte counters | ns per key of 16, 64 and 256 bytes |
 |---|---|---|---|
@@ -240,7 +240,7 @@ We measured four candidates over 1,048,576 keys in 1,024 buckets. The balance co
 | FNV-1a, 64-bit | 73.3 | 3,680 | 4.8, 27.6, 163 |
 | CRC-32C | 0.05 | 0.00 | 4.0, 5.3, 11.2 |
 
-`hash-range` splits the 64-bit space by its top bits, so FNV-1a would put most sequential keys into a few shards. CRC-32C is linear, and its 32 bits cannot address the 64-bit space of `hash-range`. XXH64 and XXH3 are both uniform. The 3 ns between them is about 1% of a route lookup, so the library uses XXH64, the simpler algorithm.
+`hash-range` splits the 64-bit space by its top bits, so FNV-1a would put most sequential keys into a few shards. CRC-32C is linear, and its 32 bits cannot address the 64-bit space of `hash-range`. XXH64 and XXH3 are both uniform. The 3 ns between them is about 1% of a route lookup, so the library uses XXH64, the simpler algorithm. `zeebo/xxh3` v1.1.0 also requires `klauspost/cpuid/v2` and `golang.org/x/sys`, and `cespare/xxhash` requires nothing.
 
 The Go runtime's `hash/maphash` is excluded because its seed differs between processes. Core's `crypto.Hasher` implementations are cryptographic hashes, and the routing path needs neither their collision resistance nor their cost.
 
@@ -347,5 +347,6 @@ None.
 | CockroachDB range size and splits | https://www.cockroachlabs.com/docs/stable/architecture/distribution-layer |
 | Annamalai et al., "Sharding the Shards: Managing Datastore Locality at Scale with Akkio", OSDI '18 | https://www.usenix.org/conference/osdi18/presentation/annamalai |
 | xxHash specification, XXH64, version 0.2.0 | https://github.com/Cyan4973/xxHash/blob/dev/doc/xxhash_spec.md |
+| cespare/xxhash v2.3.0, `Sum64` | https://github.com/cespare/xxhash |
 | xxHash reference implementation, `XSUM_XXH64_testdata` in `cli/xsum_sanity_check.c` | https://github.com/Cyan4973/xxHash/blob/dev/cli/xsum_sanity_check.c |
 | Our measurement of sorted slices and B-trees, 2026-09-27 | Research-0003 |
