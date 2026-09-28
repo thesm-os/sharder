@@ -4,7 +4,7 @@ title: Replica state models and replica counts
 author: Roy Klopper
 status: Draft
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-28
 discussion: none
 supersedes: none
 superseded-by: none
@@ -25,6 +25,8 @@ A state model declares:
 - when a shard counts as available
 
 We propose declaring models as data, compiling each into a validated state machine from core's `fsm` package when a spec resolves, and three built-in models: `primary-only`, `secondary-only` and `primary-secondary`. Applications define other models, such as a consensus group with a leader, followers and learners. The core starts a transition only when every role remains within its bound in every order in which the pending transitions can complete. Replica counts are part of the same configuration: a default, per-shard overrides, and optional scaling on load within limits.
+
+The support matrix contains `primary-only`, whose one replica is the writer. The other models, custom models and scaling on load are designs outside the matrix. Two of them need changes that this RFC records as requirements: `secondary-only` needs a temporary allowance above its bound during a move, and consensus models need an availability rule that counts only the voters of the authority's current configuration.
 
 ## Motivation
 
@@ -103,7 +105,9 @@ const (
  AnyReplica Availability = "any"
  // WriterServes counts a shard as available while its writer role is served.
  WriterServes Availability = "writer"
- // Majority counts a shard as available while more than half of its replicas serve.
+ // Majority counts a shard as available while more than half of its replicas serve,
+ // whatever their roles. It does not count votes, so it cannot state the
+ // availability of a consensus group whose learners serve.
  Majority Availability = "majority"
  // AllReplicas counts a shard as available only while every replica serves.
  AllReplicas Availability = "all"
@@ -159,13 +163,17 @@ The core compiles every model when a spec resolves, so an invalid model fails `R
 
 ### Built-in models
 
-| Model | Roles and bounds | Transitions in priority order | Available when |
-|---|---|---|---|
-| `primary-only` | `primary`: max 1, writer | `primary→offline`, `offline→primary` | The primary serves |
-| `secondary-only` | `secondary`: max R | `offline→secondary`, `secondary→offline` | Any secondary serves |
-| `primary-secondary` | `primary`: max 1, writer. `secondary`: max R | `primary→secondary`, `secondary→primary`, `offline→secondary`, `secondary→offline` | The primary serves |
+| Model | Roles and bounds | Transitions in priority order | Available when | In the support matrix |
+|---|---|---|---|---|
+| `primary-only` | `primary`: max 1, writer | `primary→offline`, `offline→primary` | The primary serves | Yes |
+| `secondary-only` | `secondary`: max R | `offline→secondary`, `secondary→offline` | Any secondary serves | No |
+| `primary-secondary` | `primary`: max 1, writer. `secondary`: max R | `primary→secondary`, `secondary→primary`, `offline→secondary`, `secondary→offline` | The primary serves | No |
 
-R is the shard's replica count. Every model also has the transition `offline→dropped`, which `Compile` adds. The priorities put demotion of a writer before promotion of a new one in `primary-secondary`, and removal before addition in `primary-only`. They match the order in Helix's built-in master-slave model. `secondary-only` adds before it removes, and its bound of R lets a new secondary start while the old one still serves.
+R is the shard's replica count. Every model also has the transition `offline→dropped`, which `Compile` adds. The priorities put demotion of a writer before promotion of a new one in `primary-secondary`, and removal before addition in `primary-only`. They match the order in Helix's built-in master-slave model.
+
+`primary-only` has one replica per shard, its writer. In the support matrix, a shard's replica count is therefore one: `Resolve` rejects a replica count other than one, per-shard overrides and `scale`. The budget's default `maxUnavailable` for `primary-only` is 1 under planned interruption, so a move may take the one replica down for the handoff's writer gap. Under no interruption it is 0, which no move of `break-before-make` can meet, and `Resolve` rejects that combination.
+
+`secondary-only` adds a new secondary before it removes the old one, and its bound of R blocks that order. When all R secondaries of a shard serve, the new secondary's started transition counts as an R+1st one, and the core cannot start the move. Before the support matrix can include the model, it needs a temporary allowance, which is the number of replicas above the desired count that a move may add for its duration. The core would reserve the allowance before the move starts, count it against the node's capacity, and release it when the old replica is dropped. The allowance would never raise the bound of a writer role.
 
 `primary-secondary` in Go:
 
@@ -189,6 +197,8 @@ var PrimarySecondary = Model{
  Available: WriterServes,
 }
 ```
+
+### Consensus models, outside the support matrix
 
 A consensus group whose learners catch up before they vote, declared in the spec:
 
@@ -224,23 +234,32 @@ The thesmos ledger is such an application. A member is the leader, a voter or a 
 
 - Roles: `leader`, the writer, `voter` and `learner`.
 - Transitions: `voter→leader`, `leader→voter` and `learner→voter`, and each role to and from `offline`.
-- Availability: `majority`.
+- Availability: a majority of the voters serves.
 
-With that model, the budget's `majority` rule counts the ledger's voters, and `maxConcurrentNodes: 1` enforces the ledger's rule of upgrading one member at a time. The ledger's region copies never vote, so agents do not report them.
+The `majority` rule cannot express the last line. It counts every serving replica, learners included. Take a shard with voters A, B and C and learners D and E, where A has failed. A planned disruption of B leaves C, D and E serving: three of five replicas, and one of three voters. The rule counts the shard as available, and the budget admits the disruption that costs the shard its quorum. `maxConcurrentNodes: 1` does not prevent it, because A's failure was not planned. The ledger's rule of upgrading one member at a time also needs `maxConcurrentNodes: 1`. Agents do not report the ledger's region copies, because the copies do not vote.
+
+Consensus models need three changes before the support matrix can include them, and the ledger's integration through delegated ownership depends on all three:
+
+- **A voter-aware rule.** A role declares whether its replicas vote, and the availability rule counts only the serving voters against a majority of the voters.
+- **The authority's effective quorum.** The voters that count are those of the configuration that the authority applies, which can be newer than its committed configuration. During a joint configuration, a quorum needs a majority of each of the two voter sets. Agents report the authority's effective configuration with a version. The core does not infer the configuration from the replicas that have reported.
+- **Deferral without a current configuration.** The budget defers every planned disruption of a shard while it lacks a current report of the shard's effective configuration, and while a reconfiguration of the shard is in progress. A missing report never shrinks the number of voters that a quorum needs.
 
 ### Starting transitions within bounds
 
-The core compares each shard's target replicas with its current replicas and derives the role transitions that connect them. It starts a transition only if, for every role, the replicas in the role plus the replicas with a started transition into the role remain within the role's `Max` after the transition starts. It counts started transitions, not only completed ones, so that no order of completion can exceed a bound.
+The core compares each shard's target replicas with its current replicas and derives the role transitions that connect them. It starts a transition only if, for every role, the replicas in the role plus the replicas with a started transition into the role remain within the role's `Max` after the transition starts. It counts started transitions, not only completed ones, so that no order of completion can exceed a bound. A fault or a change of the replica count can leave a role above its bound, and the core then admits a transition that lowers that role, so that repair is never blocked by the excess it repairs.
 
 Every transition is also subject to these rules:
 
-- A transition into a writer role waits until the transition out of the old writer has completed, or until the old writer's lease has expired and the clock-drift bound has passed. The handoff protocol selects which of the two applies.
+- A transition into a writer role at a new epoch is safe under fenced ownership whatever the old writer does. The new writer acquires the shard's fence before its first read, and from then on the fence rejects every write of the old tenure. The handoff protocol decides whether the new writer also waits for the old one: `break-before-make` waits on its forward path, for the old writer's drop or for its lease to lapse, and does not wait on its abort path.
+- Outside fenced ownership, a transition into a writer role waits until the transition out of the old writer has completed, or until the old writer's lease has expired and the clock-drift bound has passed.
 - A transition that makes a replica unavailable starts only when the disruption budget admits it.
 - A transition not listed in the model is never started. The core checks `Compiled.Allows` before it commits a role change, as core's `fsm` prescribes for a status that a compare-and-swap updates. The core moves a replica to its target through listed transitions, for example `secondary→offline` then `offline→secondary` on another node.
 
 Helix's controller selects its state-transition messages the same way: it counts current and pending states against each state's upper bound, from the highest-priority transition to the lowest.
 
 ### Replica counts
+
+Replica counts other than one are outside the support matrix.
 
 ```json
 {
@@ -251,6 +270,8 @@ Helix's controller selects its state-transition messages the same way: it counts
 ```
 
 `replicas` is the default count, and `overrides` sets it per shard. With `scale`, the core sets each shard's count to its load on `metric` divided by `perReplica`, rounded up and clamped to `min` and `max`. It changes a shard's count at most once per `cooldown`. SM scales replicas the same way, adding replicas when the average load per replica leaves a configured range, with a limit on how many replicas it adds or drops in a period.
+
+A lower count leaves a role above its bound until the planner removes the excess replicas, and the rule for repair above admits each removal.
 
 ## Alternatives considered
 
@@ -278,8 +299,9 @@ Treat every replica the same, and let the application elect its own leader if it
 - The bound counts started transitions, so a slow transition blocks others. A secondary that takes an hour to catch up occupies its slot in the role's bound for that hour.
 - `Priority` values interact with bounds in ways that are hard to predict for a user who writes a custom model. `Compile` checks structure, not whether the priorities produce the intended order.
 - `fsm` limits a model to 256 states, so a model has at most 254 roles besides `offline` and `dropped`. Errors from `fsm` name states by index, and `Compile` adds each index's role name to them.
-- Scaling on load moves replicas when load moves, which adds churn. The cooldown limits it and adds delay.
+- Scaling on load, outside the matrix, moves replicas when load moves, which adds churn. The cooldown limits it and adds delay.
 - A model allows one writer role with one replica. Multi-leader applications, where more than one replica accepts writes, cannot express their writers, and the core fences none of them.
+- The `majority` rule counts replicas, not votes. It remains in the design only for models without learners, and consensus models need the voter-aware rule.
 
 ## Open questions
 
@@ -287,6 +309,8 @@ None.
 
 ## Unresolved and future work
 
+- `secondary-only`, `primary-secondary`, custom models, replica counts other than one, and scaling on load are outside the support matrix. `secondary-only` needs a temporary allowance above its bound during a move.
+- Consensus models need a voter-aware availability rule, the authority's effective quorum, and deferral without a current configuration. Delegated ownership and the ledger's integration depend on them.
 - Weighted voting and witness replicas, which vote but do not store data, are not proposed here.
 - Moving the writer role to the replica with the most recent data is not proposed here. Service Fabric's 2018 open-source code picks the first live replica with the highest log sequence number. The application's `ChangeRole` handler can refuse a promotion, and the placer then tries another replica.
 
@@ -299,6 +323,7 @@ None.
 | Apache Helix 2.0.1, state models | https://helix.apache.org/2.0.1-docs/tutorial_state.html |
 | Apache Helix, MessageSelectionStage at 48674e6 | https://github.com/apache/helix/blob/48674e6ac2a94fb5365ce69a4b1ee1d57655da1d/helix-core/src/main/java/org/apache/helix/controller/stages/MessageSelectionStage.java |
 | Microsoft Learn, replica roles | https://learn.microsoft.com/en-us/dotnet/api/system.fabric.replicarole?view=azure-dotnet |
+| Ongaro and Ousterhout, "In Search of an Understandable Consensus Algorithm (Extended Version)", 2014, §6: joint consensus, and non-voting members | https://raft.github.io/raft.pdf |
 | go.thesmos.sh/ledger RFC-0011, "Replicated storage": membership changes, region copies | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
 | go.thesmos.sh/ledger RFC-0014, "Operations resilience": upgrades one member at a time | `docs/rfc/0014-operations-resilience.md` in the ledger repository |
 | go.thesmos.sh/core at 8edf26a: finite state machines (RFC-0031), states that cannot finish (ADR-0024), `fsm/builder.go` | https://github.com/thesmos-ai/core |

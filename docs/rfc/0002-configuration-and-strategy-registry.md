@@ -4,7 +4,7 @@ title: Namespace specs, the strategy registry and validation
 author: Roy Klopper
 status: Draft
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-28
 discussion: none
 supersedes: none
 superseded-by: none
@@ -17,7 +17,11 @@ related: RFC-0001, RFC-0003, RFC-0004, RFC-0005, RFC-0006, RFC-0007, RFC-0008, R
 
 ## Summary
 
-A namespace has one declarative spec, which selects a preset and, per axis, a registered strategy with its own JSON configuration. Strategies register in an explicit `Registry` through a typed factory that parses and validates the strategy's configuration. Before a spec takes effect, `Resolve` applies the preset and defaults, parses every strategy configuration, and checks every cross-axis requirement, including the capabilities of the process's store and membership adapters. `Resolve` reports all problems at once, each with its spec path, and warns about combinations that are valid but probably a mistake. A running namespace accepts a new spec version only after `Change` confirms that the move from the old spec is possible by an edit alone. The controller records a rejected version with its reasons, and the namespace continues on the last accepted spec. A namespace can also require signatures from a threshold of approvers on every spec change and every operator's operation, checked against an anchor in each process's own configuration.
+A namespace has one declarative spec, which selects a preset and, per axis, a registered strategy with its own JSON configuration. Strategies register in an explicit `Registry` through a typed factory. The factory parses and validates the strategy's configuration, and declares the capabilities that the parsed configuration provides.
+
+Each registry has a support matrix, and `Resolve` checks a spec against it first: a selection outside the matrix fails with an error of class `errs.Unsupported`. `Resolve` then applies the preset and defaults, parses every strategy configuration, and checks every cross-axis requirement, including the capabilities of the process's store and membership adapters. It reports all problems at once, each with its spec path, and warns about combinations that are valid but probably a mistake.
+
+A running namespace accepts a new spec version only after `Change` confirms that the move from the old spec is possible by an edit alone. The mapping from keys to positions is not editable, because the root fixes it when it creates the namespace. `Submit` returns a rejected version's reasons, and the namespace continues on the last accepted spec. A controller authorises every operation by its kind, against the operators in its process's own configuration. The design also lets a namespace require signatures from a threshold of approvers, which is outside the support matrix.
 
 ## Motivation
 
@@ -27,7 +31,7 @@ A library that accepts any combination of strategies accepts combinations that c
 - a leaderless topology with a placer that needs a controller
 - a partitioner that splits and merges shards, in a topology without a controller to compute the splits
 
-Each of these combinations fails at runtime as a correctness bug, not at start-up. Misconfiguration is the main cost of configurability, and this RFC specifies validation together with the spec for that reason.
+Each of these combinations fails at runtime as a correctness bug, not at start-up. Misconfiguration is the main cost of configurability, and this RFC specifies validation together with the spec for that reason. Validation is also where a release refuses the strategies whose design is not complete, so that no spec can select them.
 
 In projects that make behaviour pluggable at this scale, a strategy is selected by name and parses its own typed configuration. Invalid input is rejected before anything runs.
 
@@ -48,7 +52,8 @@ An application builds a spec in Go or decodes it from JSON. The namespace's root
 The spec selects strategies, not infrastructure. The store and membership adapters are process wiring: the embedder builds them and passes them to the controller and the agent. The spec could not select its own store, because the store contains the spec.
 
 ```go
-// Package config declares namespace specs, the strategy registry, presets and validation.
+// Package config declares namespace specs, the strategy registry, the support matrix,
+// presets and validation.
 package config
 
 import (
@@ -84,7 +89,7 @@ type Spec struct {
 }
 
 // CellPolicy bounds the size of each cell of the namespace. The root reports a cell
-// above either bound, and an operator splits it.
+// above either bound.
 type CellPolicy struct {
  // MaxNodes is the most nodes of one cell. Zero selects 5,000.
  MaxNodes int `json:"maxNodes,omitempty"`
@@ -100,20 +105,41 @@ type Selection struct {
 }
 
 // Budget bounds how many replicas of a shard may be unavailable at once, and how many
-// nodes planned disruptions may take out at once.
+// nodes planned disruptions may take out at once. A nil field takes its value from the
+// preset, then from the default that its comment names, so an explicit zero differs
+// from an absent field.
 type Budget struct {
  // MaxUnavailable is the most replicas of one shard that may be unavailable at once,
- // counting failures, maintenance and transitions. Zero selects the replication
- // model's default, which keeps the shard available under the model's rule.
- MaxUnavailable int `json:"maxUnavailable,omitempty"`
+ // counting failures, maintenance and transitions. Nil selects the replication
+ // model's default for Interruption. An explicit zero admits no planned
+ // unavailability.
+ MaxUnavailable *int `json:"maxUnavailable,omitempty"`
  // MaxConcurrentNodes is the most nodes that planned disruptions may take out at once.
- // Zero selects one.
- MaxConcurrentNodes int `json:"maxConcurrentNodes,omitempty"`
+ // Nil selects one.
+ MaxConcurrentNodes *int `json:"maxConcurrentNodes,omitempty"`
+ // Interruption states whether planned work may leave a shard without a serving
+ // writer for the handoff protocol's writer gap. Empty takes the preset's value, and
+ // a preset without one selects NoInterruption.
+ Interruption Interruption `json:"interruption,omitempty"`
  // DrainRoles lists the roles moved off a node before a planned disruption starts.
  // Replicas in other roles remain on the node and count as unavailable until the
  // node returns.
  DrainRoles []shard.Role `json:"drainRoles,omitempty"`
 }
+
+// Interruption states whether planned work may interrupt a shard's writer.
+type Interruption string
+
+const (
+ // PlannedInterruption lets a planned move or disruption leave a shard without a
+ // serving writer for the handoff protocol's writer gap. Every preset in the support
+ // matrix selects it.
+ PlannedInterruption Interruption = "planned"
+ // NoInterruption admits no planned move or disruption that leaves a shard without a
+ // serving writer. Resolve rejects it together with break-before-make, because every
+ // move of break-before-make has a writer gap.
+ NoInterruption Interruption = "none"
+)
 
 // LoadModel lists the load metrics that placers balance, and the window over which
 // agents average the load they report.
@@ -147,8 +173,8 @@ A spec that relies on its preset for everything but two fields:
 {
   "namespace": "orders",
   "version": 3,
-  "preset": "replicated-store",
-  "replication": {"name": "primary-secondary", "config": {"replicas": 5}},
+  "preset": "exclusive-worker",
+  "partitioning": {"name": "fixed-slots", "config": {"slots": 4096}},
   "placement": {
     "name": "planner",
     "config": {
@@ -168,12 +194,15 @@ The planner's constraints and goals register the same way, under the kinds `cons
 
 Hash functions register under the kind `hash`, as factories of `partition.Hash`, and a partitioner's configuration names one. The one built-in is `xxhash64`. An application that migrates with an existing key-to-slot mapping registers that mapping's hash under a name of its own, such as Redis Cluster's CRC16 or Kafka's murmur2.
 
+A factory declares its capabilities for a parsed configuration, because a configuration can change them. `exclusive` provides `fenced` only when its configuration sets `fenced: true`.
+
 ```go
 package config
 
 import (
  "encoding/json"
  "errors"
+ "fmt"
 
  "go.thesmos.sh/core/errs"
 )
@@ -228,17 +257,35 @@ type Parsed interface {
 type Factory[T any] interface {
  // Name is the name that a spec uses to select the strategy. It is unique per axis.
  Name() string
- // Capabilities declares the strategy's provided and required capabilities.
- Capabilities() Capabilities
  // Parse decodes raw into the strategy's configuration type and applies defaults.
  // An empty raw yields the default configuration, and an unknown field is an error.
  Parse(raw json.RawMessage) (Parsed, error)
+ // Capabilities declares the capabilities that the strategy provides and requires
+ // with the configuration cfg, which Parse returned and Validate accepted.
+ Capabilities(cfg Parsed) Capabilities
  // New builds a strategy from a configuration that Parse returned and Validate accepted.
  New(cfg Parsed) (T, error)
 }
 
-// Registry contains registered strategies and presets. It is safe for concurrent use.
-// There is no global registry.
+// Support is a registry's support matrix: the strategies that a spec may select, the
+// axes on which every registered name is supported, and the capabilities that every
+// namespace must have. Resolve checks a spec against it before anything else.
+type Support struct {
+ // Strategies maps each axis to the names that a spec may select on it. A name that
+ // it does not list fails Resolve with ErrUnsupported, even when it is registered.
+ Strategies map[Axis][]string
+ // Open lists the axes on which every registered name is supported, including the
+ // names that an application registers.
+ Open []Axis
+ // Requires lists the capabilities that every resolved namespace must have.
+ Requires []Capability
+ // Approvals reports whether a spec may contain an approvals section, and a process a
+ // trust anchor.
+ Approvals bool
+}
+
+// Registry contains registered strategies and presets, and the support matrix that
+// Resolve checks. It is safe for concurrent use. There is no global registry.
 type Registry struct {
  // unexported fields
 }
@@ -251,8 +298,13 @@ var ErrDuplicate = errs.WithClass(errors.New("config: duplicate registration"), 
 // axis. It classifies as errs.Invalid.
 var ErrUnknown = errs.WithClass(errors.New("config: unknown strategy"), errs.Invalid)
 
-// NewRegistry returns an empty registry.
-func NewRegistry() *Registry
+// ErrUnsupported is returned for a selection or a preset outside a registry's
+// Support. The error that wraps it names the axis and the value. It classifies as
+// errs.Unsupported and matches errors.ErrUnsupported.
+var ErrUnsupported = errs.WithClass(fmt.Errorf("config: outside the support matrix: %w", errors.ErrUnsupported), errs.Unsupported)
+
+// NewRegistry returns an empty registry whose support matrix is s.
+func NewRegistry(s Support) *Registry
 
 // Register adds f to r on axis. It returns ErrDuplicate if axis already has f.Name().
 func Register[T any](r *Registry, axis Axis, f Factory[T]) error
@@ -267,20 +319,29 @@ func Build[T any](r *Registry, res *Resolved, axis Axis) (T, error)
 func BuildNamed[T any](r *Registry, axis Axis, name string, raw json.RawMessage) (T, error)
 ```
 
-The factories of the built-in strategies are in package `builtin`, which imports `config` and every strategy package. The strategy packages do not import `config`, so an application can use a partitioner or a function placer without a registry.
+The factories of the built-in strategies are in package `builtin`, which imports `config` and every strategy package. The strategy packages do not import `config`, so an application can use a partitioner or a function placer without a registry. `builtin` also declares the support matrix of the first release.
 
 ```go
-// Package builtin registers the library's built-in strategies and presets.
+// Package builtin registers the library's built-in strategies and presets, and
+// declares the support matrix of the first release.
 package builtin
 
 import "go.thesmos.sh/sharder/config"
 
-// Registry returns a new registry that contains every built-in strategy and preset.
-// Each call returns a separate registry, which the caller can extend.
+// Support returns the support matrix of the first release: fixed-slots and singleton
+// partitioning, the planner, primary-only replication, exclusive ownership with a
+// fence, break-before-make handoff, the embedded topology and watch routing. On the
+// constraint, goal and hash axes, it supports every registered name. It requires the
+// capability "fenced", and it has no approvals.
+func Support() config.Support
+
+// Registry returns a new registry whose support matrix is Support(). It contains every
+// built-in strategy, and the built-in presets inside the matrix. Each call returns a
+// separate registry, which the caller can extend.
 func Registry() *config.Registry
 ```
 
-An application adds its own strategy the same way the built-ins are added:
+An application adds its own strategy the same way the built-ins are added. The support matrix lists the constraint, goal and hash axes as open, so a constraint, a goal or a hash function that an application registers is supported. On every other axis, the matrix lists names, and `Resolve` rejects a spec that selects a name outside the list, even when an application has registered it.
 
 ```go
 package example
@@ -288,21 +349,21 @@ package example
 import (
  "go.thesmos.sh/sharder/builtin"
  "go.thesmos.sh/sharder/config"
- "go.thesmos.sh/sharder/partition"
+ "go.thesmos.sh/sharder/placement"
 )
 
-// Setup returns a registry with every built-in and the application's tenant partitioner,
-// which maps each tenant ID to its own shard.
-func Setup(tenant config.Factory[partition.Partitioner]) (*config.Registry, error) {
+// Setup returns a registry with every built-in and the application's residency
+// constraint, which keeps each tenant's shards on nodes in the tenant's country.
+func Setup(residency config.Factory[placement.Constraint]) (*config.Registry, error) {
  reg := builtin.Registry()
- if err := config.Register(reg, config.Partitioning, tenant); err != nil {
+ if err := config.Register(reg, config.Constraint, residency); err != nil {
   return nil, err
  }
  return reg, nil
 }
 ```
 
-Each `Registry` is a value that the application creates and passes to the controller. Separate registries in one process do not share names, and a test can build a registry that contains only fakes. No package registers anything from `init`.
+Each `Registry` is a value that the application creates and passes to the controller. Separate registries in one process do not share names, and a test can build a registry that contains only fakes, with a support matrix that lists them. No package registers anything from `init`.
 
 ### Presets and defaults
 
@@ -316,11 +377,14 @@ type Preset struct {
  Spec        Spec
 }
 
-// RegisterPreset adds p to r. It returns ErrDuplicate if the name is taken.
+// RegisterPreset adds p to r. It returns ErrDuplicate if the name is taken, and
+// ErrUnsupported if p selects a strategy outside r's support matrix.
 func RegisterPreset(r *Registry, p Preset) error
 ```
 
-Resolution fills a field from three sources in order: the spec, the preset, and the strategy's own default. A preset selects strategies and may contain their configurations. A strategy's `Parse` fills every field that the resulting configuration leaves empty. A field is empty when it has its zero value, so a spec that needs a field set to zero states it through the strategy's explicit option, such as `"replicas": 1`.
+Resolution fills a field from three sources in order: the spec, the preset, and the strategy's own default. A preset selects strategies and may contain their configurations. A strategy's `Parse` fills every field that the resulting configuration leaves empty. The budget's numeric fields are pointers, so a spec that sets one to zero gets zero. Every other field is empty when it has its zero value, so a spec that needs such a field set to zero states it through the strategy's explicit option, such as `"replicas": 1`.
+
+Every preset in the support matrix selects `fenced: true` in its ownership configuration, `watch` routing and `PlannedInterruption`, and resolves completely: no field of it takes a value that fails a check.
 
 ### Capabilities and cross-axis requirements
 
@@ -338,10 +402,11 @@ A factory declares the capabilities its strategy provides and the capabilities i
 | `delegated-safe` | handoff `elect` | ownership `delegated` |
 | `overlap` | handoffs `make-before-break`, `staged` | ownership `overlapping` |
 | `writer-epochs` | ownership `exclusive`, `overlapping`, `delegated` | none. Handoff `graceful` prefers it |
+| `fenced` | ownership `exclusive`, `overlapping` and `delegated`, when their configuration sets `fenced: true` | the support matrix of the first release |
 | `leases` | store and membership adapters that end a node's session within a bounded time after the node stops renewing it | ownership `exclusive` and `overlapping` |
-| `durable` | store adapters that persist every commit | topology `service` |
+| `durable` | store adapters that persist every commit | topology `service`, and `controller.New` unless the process selects a volatile store |
 
-Validation rejects these combinations, among others:
+The capability checks reject these combinations, among others, whatever the support matrix contains:
 
 - `exclusive` ownership with `make-before-break` handoff fails validation, because `make-before-break` does not provide `exclusive-safe`. The check prevents two writers at once.
 - A `leaderless` topology with `planner` placement fails validation twice. The planner requires `controller`, and the leaderless topology requires `function`.
@@ -350,15 +415,22 @@ Validation rejects these combinations, among others:
 
 Validation accepts `affinity` ownership with `graceful` handoff and warns about it. `graceful` prefers `writer-epochs`, and under `affinity` it runs a coordinated primary handoff for a writer that the core does not fence.
 
+A namespace on `membership/static` fails the capability checks inside the support matrix as well, because `exclusive` requires `leases`, and the static membership does not provide them. An `exclusive` ownership configuration without `fenced: true` fails the matrix, which requires `fenced`.
+
 ### Resolution
 
 ```go
 package config
 
+import "go.thesmos.sh/sharder/shard"
+
 // Resolved is a spec after presets, defaults, parsing and cross-axis checks.
 type Resolved struct {
  Spec    Spec
  Configs map[Axis]Parsed
+ // Mapping is the mapping of the resolved partitioner, which Resolve reads from the
+ // partitioner that it builds.
+ Mapping shard.Mapping
  // Warnings lists the preferences that the selections do not meet. sharderctl apply
  // prints them, and the spec takes effect regardless.
  Warnings []Warning
@@ -378,46 +450,62 @@ type Provider interface {
  Provides() []Capability
 }
 
-// Resolve applies the preset and defaults to spec, parses and validates every
-// selection with its factory, including the constraints, goals and hash functions
-// that configurations name, and checks every cross-axis requirement against the
-// selections and the capabilities in provided. A spec without a preset is a problem.
-// The returned error joins every problem found, and each problem classifies as
-// errs.Invalid. Each problem names its spec path, such as
+// Resolve applies the preset to spec, and parses and validates every selection with
+// its factory, the constraints, goals and hash functions that configurations name
+// included. It parses no selection whose name r's support matrix does not list. It
+// checks the result against the support matrix, every cross-axis requirement, and the
+// budget's interruption against the handoff protocol, with the capabilities in
+// provided. A problem with the support matrix is a selection outside it, an approvals
+// section, or a capability that the matrix requires and the resolved namespace lacks.
+// When there is any such problem, Resolve returns every one of them joined with
+// ErrUnsupported. Otherwise it returns every other problem, a missing preset included,
+// joined in one error of class errs.Invalid. Each problem names its spec path, such as
 // "placement.config.goals[1].weight". A preference that the selections do not meet
 // becomes a Warning in the result.
 func Resolve(r *Registry, spec Spec, provided []Capability) (*Resolved, error)
 ```
 
-`Resolve` reports every problem in one error, so a user fixes a spec in one round instead of one round per problem. Every error of the package classifies as `errs.Invalid` under core's `errs.Classify`, so a generic retry loop never retries a spec that cannot succeed.
+`Resolve` reports every problem of one class in one error, so a user fixes a spec in at most two rounds instead of one round per problem. Every error of the package classifies as `errs.Invalid` or `errs.Unsupported` under core's `errs.Classify`, so a generic retry loop never retries a spec that cannot succeed.
 
 ### Changing a running namespace
 
 The root of a running namespace reads the spec from the root scope, and the cell controllers read it from there. A new version takes effect in these steps:
 
-1. `sharderctl apply` sends the new spec as a proposal with the next version number to the root, through the protocol's `Submit` call. In a namespace with approvals, `apply` prints the proposal instead, and `sharderctl submit` sends it with its approvers' signatures.
-2. The root checks the proposal's approvals, or the caller's identity in a namespace without approvals, resolves the proposal, and calls `Change` with the current resolved spec.
-3. On success, the root commits the new spec together with the proposal and its caller's identity, and each cell controller verifies the spec and applies it at its next planning pass. `Submit` returns the warnings of `Resolve`.
+1. `sharderctl apply` sends the new spec as a proposal with the next version number to the root, through the protocol's `Submit` call.
+2. The root authorises the caller for the kind `spec`, resolves the proposal, and calls `Change` with the current resolved spec.
+3. On success, the root commits the new spec together with the proposal and its caller's identity, and records the new version as the accepted one. `Submit` returns the warnings of `Resolve`.
 4. On failure, `Submit` returns the reasons, and the root continues with the current spec.
+5. Each cell's controller reads the accepted spec, verifies it, and applies it at its next planning pass. The commit that starts applying it records its version as `shard.Cell.SpecVersion` in the cell's record.
 
-`sharderctl` prints what `Submit` returns. Operators do not need credentials for the store.
+`sharderctl status` prints the accepted version and each cell's applied version, so an operator sees a cell that has not applied the latest spec. `sharderctl` prints what `Submit` returns. Operators do not need credentials for the store.
 
 ```go
 package config
 
 // Change reports whether a namespace may move from old to new by a spec edit alone.
-// When an edit is not enough, the error classifies as errs.Invalid and describes the
-// required operation, such as a resharding.
+// When an edit is not enough, the error classifies as errs.Invalid and names the
+// operation that the change needs, such as a migration to a new namespace.
 func Change(r *Registry, old, new *Resolved) error
 ```
+
+In the support matrix, `Change` allows these edits and no others:
 
 | Change | Allowed as an edit | Otherwise |
 |---|---|---|
 | Placement goals, weights, constraints, limits | Yes | |
-| Replica count | Yes. The planner adds or removes replicas under the budget | |
 | Budget and load model | Yes | |
-| Partitioning configuration within one strategy, such as split thresholds | Yes | |
-| Partitioning strategy, hash function or slot count | No | A resharding operation |
+| Cell bounds | Yes. The root reports the cells above the new bounds | |
+| The mapping: the partitioner, the slot count, the hash function or its version, hash tags, or any other field of the partitioner's configuration | No | A migration to a new namespace |
+| Every other field | No | A new namespace |
+
+The mapping row compares the new spec's `Resolved.Mapping` with the mapping that the root recorded when it created the namespace. A spec edit cannot change it, because a key whose position changes moves to another shard without its data. A change of `hashTags` alone moves a key such as `user:{42}:cart` to another slot.
+
+The design beyond the support matrix allows more edits. `Resolve` rejects the strategies that these rows need, so no namespace inside the matrix can make them:
+
+| Change | Allowed as an edit | Otherwise |
+|---|---|---|
+| Replica count | Yes. The planner adds or removes replicas under the budget | |
+| Configuration of a reshaping partitioner that leaves the mapping unchanged, such as split thresholds | Yes | |
 | Ownership from `exclusive` to `affinity` | Yes | |
 | Ownership from `affinity` to `exclusive` | No | An ownership barrier: the core drops every overlapping replica and assigns every shard a new epoch |
 | Ownership to or from `delegated` | No | Recreating the namespace, because the core's epochs and the authority's epochs cannot share one fence |
@@ -425,16 +513,13 @@ func Change(r *Registry, old, new *Resolved) error
 | Replication model | No | Recreating the namespace |
 | Topology between `embedded` and `service` | Yes. The root moves each cell controller through the handoff protocol | |
 | Topology to or from `leaderless` | No | Recreating the namespace |
-| Cell bounds | Yes. The root reports the cells above the new bounds | |
 | Routing source | Yes. Routers switch at their next refresh | |
 
 The store and the membership adapters are not in the spec, so no spec change replaces them. Moving a namespace to another store is a migration to a new namespace.
 
-### Approvals
+### Proposals
 
-A namespace can require that a threshold of approvers sign each change by an operator, as dual control requires. Without approvals, anyone who can write the root scope decides how every shard is placed. A spec that drops the constraint that keeps a regulated tenant in one jurisdiction moves the tenant's replicas out of it, and a change from `exclusive` to `affinity` is an edit that removes fencing tokens.
-
-A change is a proposal. The controller that applies it checks the proposal's signatures against the namespace's approvals section, with core's signature threshold, `sign.Policy`, and its table of verifiers, `sign.Resolver`. Approvers sign the bytes that core's `crypto.NewFramer` frames.
+Every change that an operator requests is a proposal, which `Submit` sends to the controller that applies it. A proposal names its scope and the namespace incarnation that it changes, so a controller that serves many namespaces applies it to the right one, and refuses a delayed proposal of a deleted namespace.
 
 ```go
 package config
@@ -442,11 +527,12 @@ package config
 import (
  "time"
 
- "go.thesmos.sh/core/crypto"
  "go.thesmos.sh/core/crypto/sign"
  "go.thesmos.sh/core/epoch"
  "go.thesmos.sh/sharder/shard"
 )
+
+//go:generate go tool kanon -type=Proposal,Signed
 
 // OperationKind names a change that an operator proposes.
 type OperationKind string
@@ -463,8 +549,87 @@ const (
  Explain OperationKind = "explain"
 )
 
-// Approvals maps each operation kind to the approvers of its proposals. A kind without
-// a policy does not need approval.
+// Proposal is one change that an operator requests.
+type Proposal struct {
+ // Scope is the scope whose controller applies the proposal: the root scope for a
+ // spec, and a cell's scope for an operation on the cell's shards or nodes.
+ Scope shard.Scope
+ // Incarnation is the namespace incarnation that the proposal changes. It is zero
+ // only in the spec proposal that creates the namespace. A controller refuses a
+ // proposal for another incarnation.
+ Incarnation shard.NamespaceIncarnation
+ // ID is unique within the namespace. A controller refuses an ID that its scope has
+ // already applied.
+ ID   string
+ Kind OperationKind
+ // Base is the version of the state that the proposal changes. A controller applies
+ // the proposal only while that state is at Base.
+ Base epoch.Epoch
+ // Body is the new spec, or the operation's arguments, as JSON.
+ Body []byte
+ // Expires is the last instant at which a controller may apply the proposal.
+ Expires time.Time
+}
+
+// Message appends to dst the bytes that approvers sign: every field of p, framed with
+// crypto.NewFramer under the domain "sharder.proposal", version 1.
+func (p Proposal) Message(dst []byte) []byte
+
+// Signed is a proposal with its approvers' signatures. Signatures is empty in the
+// support matrix, which has no approvals.
+type Signed struct {
+ Proposal   Proposal
+ Signatures []sign.Signature
+}
+```
+
+### Authorization
+
+Each operation arrives at the controller that applies it through the protocol, which the transport adapter authenticates. The controller authorises every call by the kind of the operation, never by a setting of the whole namespace:
+
+| Call | Authorised when |
+|---|---|
+| `Submit` of a kind with an approval policy | The proposal has signatures that meet the kind's policy. Approvals are outside the support matrix |
+| `Submit` of a kind without an approval policy | The caller is an operator of the namespace |
+| `Disrupt` of one node | The caller is that node's registered identity and names the node's current incarnation, or the caller is an operator |
+| `Disrupt` of more than one node | The caller is an operator |
+| `Done` | The caller is the reservation's owner, the identity that `Disrupt` admitted it for, or an operator |
+| A call without an identity | Never, unless the process selects unauthenticated mode |
+
+The operators of a namespace are the identities that `controller.WithOperators` lists. The list comes from the process's own configuration, never from the store, so a writer to the store cannot grant itself operator rights. A process behind a transport that authenticates no caller selects unauthenticated mode explicitly, with `controller.WithUnauthenticated` and the agent's `Config.Unauthenticated`. That mode skips every identity check, and the epoch checks still apply.
+
+Each kind of proposal has a base and a controller that applies it:
+
+| Kind | Base | Applied by | In the support matrix |
+|---|---|---|---|
+| `spec` | The version of the spec that the proposal replaces | The root | Yes |
+| `move` | The shard's epoch | The cell's controller | Yes |
+| `drain`, `undrain` | The node's incarnation | The cell's controller | Yes |
+| `explain` | The cell's generation | The cell's controller | Yes |
+| `reshard` | The version of the spec whose slot count it changes | The root | No. `Submit` returns an error of class `errs.Unsupported` |
+| `cell-split` | The version of the cell map | The root | No. `Submit` returns an error of class `errs.Unsupported` |
+
+A controller refuses a proposal when its `Expires` has passed, when its scope has applied its ID, or when the state has moved from its `Base`. It commits the proposal, the identity of the caller that submitted it, and the change in one generation of its scope. The scope keeps the proposal under its ID until `Expires` passes, which bounds replays to the proposal's own lifetime.
+
+### Approvals
+
+Approvals are outside the support matrix. `Resolve` rejects a spec whose approvals section is not empty, `controller.New` rejects `WithTrust` with an error of class `errs.Unsupported`, and `sharderctl` has no `sign`, `submit` or `anchor` command. This section records the design.
+
+A namespace can require that a threshold of approvers sign each change by an operator, as dual control requires. Without approvals, the operators decide how every shard is placed. A spec that drops the constraint that keeps a regulated tenant in one jurisdiction moves the tenant's replicas out of it, and a change from `exclusive` to `affinity` is an edit that removes fencing tokens.
+
+A change is a proposal. The controller that applies it checks the proposal's signatures against the namespace's approvals section, with core's signature threshold, `sign.Policy`, and its table of verifiers, `sign.Resolver`. Approvers sign the bytes that core's `crypto.NewFramer` frames.
+
+```go
+package config
+
+import (
+ "go.thesmos.sh/core/crypto"
+ "go.thesmos.sh/core/crypto/sign"
+ "go.thesmos.sh/core/epoch"
+)
+
+// Approvals maps each operation kind to the approvers of its proposals, and a proposal
+// of a kind without a policy needs an operator instead of signatures.
 type Approvals struct {
  // Version increases by one with every accepted change of the section.
  Version  epoch.Epoch                      `json:"version"`
@@ -492,32 +657,6 @@ type PublicKey struct {
  Key       []byte           `json:"key"`
 }
 
-// Proposal is one change that an operator requests.
-type Proposal struct {
- Namespace shard.Namespace
- // ID is unique within the namespace. A controller refuses an ID that its scope has
- // already applied.
- ID   string
- Kind OperationKind
- // Base is the version of the state that the proposal changes. A controller applies
- // the proposal only while that state is at Base.
- Base epoch.Epoch
- // Body is the new spec, or the operation's arguments, as JSON.
- Body []byte
- // Expires is the last instant at which a controller may apply the proposal.
- Expires time.Time
-}
-
-// Message appends to dst the bytes that approvers sign: every field of p, framed with
-// crypto.NewFramer under the domain "sharder.proposal", version 1.
-func (p Proposal) Message(dst []byte) []byte
-
-// Signed is a proposal with its approvers' signatures.
-type Signed struct {
- Proposal   Proposal
- Signatures []sign.Signature
-}
-
 // Trust is a process's anchor for the approvals of one namespace. It comes from the
 // process's own configuration, never from the store, so that a writer to the store
 // cannot replace it.
@@ -538,29 +677,18 @@ type Trust struct {
 func (t Trust) Verify(spec Signed, chain []Signed) error
 ```
 
-Each kind of proposal has a base and a controller that applies it:
-
-| Kind | Base | Applied by |
-|---|---|---|
-| `spec` | The version of the spec that the proposal replaces | The root |
-| `reshard` | The version of the spec whose slot count it changes | The root |
-| `cell-split` | The version of the cell map | The root |
-| `move` | The shard's epoch | The cell's controller |
-| `drain`, `undrain` | The node's incarnation | The cell's controller |
-| `explain` | The cell's generation | The cell's controller |
-
 These rules apply to every namespace whose processes have a `Trust`:
 
 1. A process accepts a spec only when the spec's approvals chain starts at the anchor. The namespace's first spec is approved under the `spec` policy of its own approvals section. Every later version of the section is exactly one above the version before it, and is approved under the `spec` policies of both, as TUF requires of a new root.
-2. The controller that applies a proposal refuses it when its `Expires` has passed, when its scope has applied its ID, when the state has moved from its `Base`, or when the kind's policy is not met.
+2. The controller that applies a proposal refuses it when the kind's policy is not met, in addition to the refusals that every proposal gets.
 3. The controller checks each policy with `sign.Policy.Check` and excludes no requester. A proposal's requester is not authenticated, so a party that proposed a change could name another key as the requester and approve its own proposal. The ledger's strict profiles count approvers the same way, with three distinct approvers so that at least two of them are not the requester.
-4. The controller commits the signed proposal, the identity of the caller that submitted it, and the change in one generation of its scope. The scope keeps the proposal under its ID until `Expires` passes, which bounds replays to the proposal's own lifetime. The root scope keeps the signed proposal of the current spec, and of every version of the approvals section, for as long as the namespace exists.
+4. The root scope keeps the signed proposal of the current spec, and of every version of the approvals section, for as long as the namespace exists.
 5. Every controller and every agent verifies each spec it reads, and refuses a spec whose version is below the highest version it has verified. A restarted process has no such floor.
 6. Automatic actions do not need approval: failover, emergency placement, periodic rebalancing, resharding by the partitioner, and `Agent.Close`. They act within the spec that the approvers signed.
 
-Each proposal arrives at the controller that applies it through the protocol's `Submit` call, which the transport adapter authenticates. In a namespace with approvals, the signatures authorise the proposal. Without approvals, a controller accepts a proposal only from an identity that `controller.WithOperators` lists. The list comes from the process's own configuration, next to its `Trust`, never from the store, so a writer to the store cannot grant itself operator rights.
-
 A process without a `Trust` accepts every spec, as a namespace without approvals does. `Resolve` checks that each policy's threshold is between one and its number of parties, and that no key appears twice. `Trust.Verify` builds each policy with `sign.NewPolicy` and the process's `Resolver`. Operators sign proposals with `sharderctl`, outside the store.
+
+Approvals need one more decision before the support matrix can include them. A signature proves that a spec was approved, not that it is the latest approved spec: rule 5 gives a restarted process no floor, so a writer to the store can return it to an earlier approved spec. Approvals need either a trusted checkpoint outside the store, or a threat model that excludes rollback by a writer to the store.
 
 ## Alternatives considered
 
@@ -594,6 +722,18 @@ Register built-in and third-party strategies into one package-level registry fro
 
 `database/sql` and gRPC also disagree on duplicates: `database/sql` panics on a second registration of a name, and gRPC keeps the last registration. The Go wiki's code review guidance keeps side-effect imports to main packages and tests. `builtin.Registry` gives the same convenience with an explicit value. `Register` returns `ErrDuplicate`, as the Kubernetes scheduler's plugin registry returns an error for a duplicate name.
 
+### Zero values as defaults in the budget
+
+Treat a zero `MaxUnavailable` as absent, as every other numeric field of the spec does. The budget then needs no pointers.
+
+**Why not:** a user could not ask for zero planned unavailability when the model's default is higher. Zero and the default are the two values of the budget that matter most, and a spec has to be able to state either one.
+
+### Editable fields of the mapping
+
+Let an edit change the partitioner's fields that look harmless, such as hash tags or the hash function, and freeze only the slot count.
+
+**Why not:** every one of these fields changes positions. Hash tags change which bytes of a key are hashed, and a new hash function or a new version of one moves nearly every key. Freezing the whole mapping removes the need to classify each field, and a migration to a new namespace handles every change the same way.
+
 ### Access control on the store instead of approvals
 
 Restrict writes to the root scope with the store's own access control, such as role-based access control, or with a change-management workflow in front of `sharderctl`.
@@ -607,13 +747,14 @@ Restrict writes to the root scope with the store's own access control, such as r
 ## Drawbacks
 
 - The spec has 14 top-level fields and seven axes, and the built-in strategies add their own configuration schemas. A user reads one schema per selected strategy.
-- Capability names are a second vocabulary next to strategy names. The table has 12 capabilities, and every new strategy must declare its capabilities correctly. A wrong declaration lets an invalid combination through validation. The simulator catches some of these. A missing requirement on an unusual combination can pass validation and fail in production.
+- Capability names are a second vocabulary next to strategy names. The table has 13 capabilities, and every new strategy must declare its capabilities correctly. A wrong declaration lets an invalid combination through validation. The simulator catches some of these. A missing requirement on an unusual combination can pass validation and fail in production.
+- The support matrix is a third check next to the registry and the capabilities. A registered strategy outside it fails `Resolve`, so an application that registers its own partitioner cannot use it until the matrix admits the partitioning axis.
 - An application rule that no built-in constraint covers is Go code, so changing it requires a deploy of the application.
-- `Change` rejects some edits that users expect to work, such as changing the slot count. Each rejected edit needs an operation, which is more code to write and test.
+- In the support matrix, a spec edit can change only placement, the budget, the load model and the cell bounds. Every other change needs a new namespace, including a change of the lease TTL.
 - A factory registered on the wrong axis fails when the controller starts, not when the application compiles. `Register` takes the axis as a value, so the compiler cannot match it to the factory's type parameter.
 - Strict parsing conflicts with rolling upgrades. A spec that uses a field added in a newer release is rejected by controllers that still run the older release. gRPC ignores unknown fields for this reason. Here, a spec may use a new field only after every controller runs a release that supports it, and the controller that rejects such a spec reports the unknown field by name.
-- Approvals need a signing key for each approver and the anchor in each process's configuration. A change of approvers needs signatures under both the old and the new policy.
-- A restarted process has no floor on the spec versions it accepts, so a writer to the store can return a restarted process to an earlier approved spec. Approvals stop unapproved specs, not rollbacks to approved ones.
+- Operator identities are part of each controller process's configuration. Adding or removing an operator changes the configuration of every controller process of the namespace.
+- Approvals, outside the matrix, need a signing key for each approver and the anchor in each process's configuration. A change of approvers needs signatures under both the old and the new policy.
 
 ## Open questions
 
@@ -621,6 +762,8 @@ None.
 
 ## Unresolved and future work
 
+- Approvals are outside the support matrix. Before the matrix includes them, they need a decision on freshness after a restart: a trusted checkpoint outside the store, or a threat model without rollback by a writer to the store.
+- Strategies that applications register on axes other than constraints, goals and hash functions are outside the support matrix.
 - Per-shard spec overrides beyond replica counts and placement preferences are not proposed here.
 - Specs as Kubernetes custom resources are not proposed here. The root reads specs only from the store.
 - A JSON Schema of the spec, generated from the registry for editors, is not proposed here.
@@ -642,6 +785,7 @@ None.
 | Kubernetes CRD validation rules with CEL | https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definitions/#validation-rules |
 | Go plugin package | https://pkg.go.dev/plugin |
 | HashiCorp go-plugin | https://github.com/hashicorp/go-plugin |
+| Redis Cluster specification, hash tags | https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/ |
 | The Update Framework specification, §5.2 and §5.3, the trusted root and its rotation | https://theupdateframework.github.io/specification/latest/ |
-| go.thesmos.sh/core at 8edf26a: `crypto/sign/policy.go`, `crypto/sign/resolver.go`, `crypto/framer.go` | https://github.com/thesmos-ai/core |
+| go.thesmos.sh/core at 8edf26a: `crypto/sign/policy.go`, `crypto/sign/resolver.go`, `crypto/framer.go`, `errs/class.go` | https://github.com/thesmos-ai/core |
 | go.thesmos.sh/ledger RFC-0016, "Configurable integrity": approvers in the strict profiles | `docs/rfc/0016-configurable-integrity.md` in the ledger repository |

@@ -4,7 +4,7 @@ title: Ownership modes, handoff protocols and fencing
 author: Roy Klopper
 status: Draft
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-28
 discussion: none
 supersedes: none
 superseded-by: none
@@ -17,9 +17,11 @@ related: RFC-0001, RFC-0002, RFC-0003, RFC-0005, RFC-0007, RFC-0008, RFC-0009
 
 ## Summary
 
-A namespace selects one of four ownership modes: `affinity`, `exclusive`, `overlapping` and `delegated`. The last three give each shard at most one writer per epoch. In `delegated`, the application's own authority, such as a consensus protocol, elects each writer and grants its epoch, and the core follows it. The handoff protocols `break-before-make`, `make-before-break`, `graceful` and `staged` move a replica between nodes, and `elect` asks a delegated namespace's authority to move the writer role. Each protocol is a script of callbacks with a defined abort path for every step, and the core persists each step before it runs it. Every transition follows one lifecycle, declared as a state machine in core's `fsm` package.
+A namespace selects one of four ownership modes: `affinity`, `exclusive`, `overlapping` and `delegated`. The support matrix contains `exclusive` with a transactional fence. Every write of a shard's data goes through a fence that the application implements over its own storage and checks in the same transaction as the write, under core's fence laws. Its guarantee, writer safety, is that a transaction of an older tenure fails once a newer tenure has acquired the shard's fence. A node's lease sets how soon a stale writer stops trying and how soon a failed writer is replaced, and has no effect on whether a stale write commits.
 
-Writers are protected at two levels. A node stops writing when its lease deadline passes. The deadline is a timer on the node's monotonic clock, shortened by a bound on clock drift. The application's storage applies core's fence laws: it admits a write whose epoch is at or above the shard's watermark, rejects a lower one with `epoch.ErrFenced`, and checks in the same transaction as the write. The library defines the fence as an interface. Each application implements it over its own storage and checks the implementation with core's conformance suite for fenced writers.
+The handoff protocols `break-before-make`, `make-before-break`, `graceful` and `staged` move a replica between nodes, and `elect` asks a delegated namespace's authority to move the writer role. The support matrix contains `break-before-make`, whose writer gap is explicit and has a duration target under stated conditions. Each protocol is a script of callbacks with a defined abort path for every step. The core commits a transition's full record, with every epoch it may use, before the first callback, and every callback has an idempotency key and a digest of its payload. Every transition follows one lifecycle, declared as a state machine in core's `fsm` package.
+
+The fence key is the namespace incarnation and the shard ID. A namespace that is created again over existing data therefore needs a fresh application-data namespace, or an administrative barrier that stops every writer of the old incarnation. The `delegated` mode, in which the application's own authority elects each writer and grants its epoch, is outside the support matrix.
 
 ## Motivation
 
@@ -32,6 +34,8 @@ Exclusive ownership fails in ways that a controller cannot see:
 
 Handoff has its own failure: SM measured that moving primaries without its graceful protocol drops the request success rate of an application under a rolling upgrade from about 100% to about 98%, and to below 90% without coordination of container restarts as well. SM's paper lists the five steps of its graceful protocol but not what happens when one of them fails.
 
+A controller that treats a callback's timeout as a failure can undo a move on a node that has already applied it, because a callback can take effect and lose its reply. The protocols have to be correct when the controller does not know whether a step happened.
+
 Not every application wants exclusivity. A cache needs affinity without the cost of fencing, and SM's post notes that applications choose between availability and consistency when the network partitions. The library makes the mode a choice. It makes the exclusive modes correct under pauses, partitions and controller failure.
 
 Consensus applications elect their own writers, as the thesmos ledger's voters elect each shard's leader and grant its epoch. The ledger replaces a crashed leader in about 3 seconds, where a store lease with the default TTL takes about 10. A core that also elected a writer for the same shard would create two authorities over one role. When their choices differ, the core's writer forwards every write to the application's writer, and the core fences with an epoch that the application never granted.
@@ -42,12 +46,12 @@ Core already states the rules a fence must apply, and every thesmos library that
 
 ### Ownership modes
 
-| Mode | Writers per shard | Replicas during a move | Fencing tokens | Allowed handoffs |
-|---|---|---|---|---|
-| `affinity` | Not tracked | Old and new overlap | None | All four |
-| `exclusive` | At most one per epoch | Never two writers | Issued to the writer | `break-before-make`, `graceful`, `staged` |
-| `overlapping` | At most one per epoch | The old owner may serve reads while the new owner loads | Issued to the writer | `staged` |
-| `delegated` | At most one per epoch | The application's authority moves the writer role | Issued to the writer at the authority's epoch | `elect` |
+| Mode | Writers per shard | Replicas during a move | Fencing tokens | Allowed handoffs | In the support matrix |
+|---|---|---|---|---|---|
+| `affinity` | Not tracked | Old and new overlap | None | All four | No |
+| `exclusive` | At most one tenure per epoch | Never two writers that both commit | Issued to the writer | `break-before-make`, `graceful`, `staged` | With `fenced: true` and `break-before-make` |
+| `overlapping` | At most one tenure per epoch | The old owner may serve reads while the new owner loads | Issued to the writer | `staged` | No |
+| `delegated` | At most one tenure per epoch | The application's authority moves the writer role | Issued to the writer at the authority's epoch | `elect` | No |
 
 ```go
 // Package ownership declares what a replica may assume about exclusive ownership.
@@ -62,13 +66,14 @@ const (
  // Affinity routes each key to its assigned replicas and lets replicas overlap during
  // moves. It does not provide exclusivity or issue fencing tokens.
  Affinity Mode = "affinity"
- // Exclusive gives each shard at most one writer per epoch. A move never runs two
- // writers, and fenced storage rejects writes from superseded epochs.
+ // Exclusive gives each shard at most one writer tenure per epoch. With a fence, the
+ // writes of a superseded tenure fail at the fence. Without one, exclusivity rests on
+ // lease timing alone and is best effort.
  Exclusive Mode = "exclusive"
- // Overlapping gives each shard at most one writer per epoch, and lets the old owner
- // keep serving reads while the new owner loads state during a move.
+ // Overlapping gives each shard at most one writer tenure per epoch, and lets the old
+ // owner keep serving reads while the new owner loads state during a move.
  Overlapping Mode = "overlapping"
- // Delegated gives each shard at most one writer per epoch. The application's
+ // Delegated gives each shard at most one writer tenure per epoch. The application's
  // authority elects every writer and grants its epoch, and the core follows the
  // writers that agents report.
  Delegated Mode = "delegated"
@@ -96,8 +101,10 @@ type Lease struct {
  // clock, as a fraction. The default is 0.01.
  MaxDriftRate float64
  // LockDelay is how long the core waits after the store expires a lease before it
- // gives the writer role to another node. The default is zero when the spec declares
- // every write fenced, and TTL otherwise.
+ // gives the writer role to another node. It lowers the chance that a resource
+ // without a fence sees two writers, and it delays failover by the same time. It is
+ // not a safety bound. The default is zero when the spec declares every write
+ // fenced, and TTL otherwise.
  LockDelay time.Duration
  // OnLoss selects what writers do at the deadline. The default is ContinueFenced
  // when the spec declares every write fenced, and Stop otherwise.
@@ -112,33 +119,50 @@ func (l Lease) Validity() time.Duration
 // Config configures the exclusive, overlapping and delegated modes.
 type Config struct {
  Lease Lease
- // Fenced declares that every write of the application goes through a fence. It
- // selects ContinueFenced as the default of Lease.OnLoss and zero as the default of
- // Lease.LockDelay.
+ // Fenced declares that every write of the application's shard data goes through a
+ // fence. The configuration then provides the capability "fenced", which the support
+ // matrix requires, and selects ContinueFenced as the default of Lease.OnLoss and
+ // zero as the default of Lease.LockDelay.
  Fenced bool
 }
 ```
 
-The node measures its deadline from the moment it sent the renewal, not the moment it received the response, and shortens it by the drift bound. Its deadline passes before the store expires the lease, for any clock error within `MaxDriftRate`. The core gives the writer role away only after the store's expiry plus `LockDelay`. `LockDelay` protects resources that cannot check a fence, as Chubby's lock-delay does. It is zero by default when every write is fenced.
+The node measures its deadline from the moment it sent the renewal, not the moment it received the response, and shortens it by the drift bound. Its deadline passes before the store expires the lease, for any clock error within `MaxDriftRate`. The core gives the writer role away only after the store's expiry plus `LockDelay`.
 
 The deadline is a timer from core's `clock.Clock`, not a comparison of two time readings. Core's production clock returns wall time from its hybrid logical clock, and that wall time stops advancing while the system clock is stepped back. A deadline measured between two such readings would outlast the lease by the size of the step. A timer from `hlc.Clock.NewTimer` is a standard library timer, which runs on the monotonic clock, and under the simulator's `clock/fake` it fires when virtual time passes it.
 
-`OnLoss` is the choice between availability and consistency. With `Stop`, a node that loses the store stops writing within one TTL, even when nobody else has taken over, so a store outage longer than the TTL stops every writer. With `ContinueFenced`, writers keep writing through an outage, and the fence rejects them once a new writer acquires the shard. A spec declares every write fenced with `fenced` in its ownership configuration. `ContinueFenced` is then the default, because the fence then rejects every write of a replaced writer, and a store outage does not stop the writers that nobody replaced.
+`OnLoss` is the choice between availability and consistency. With `Stop`, a node that loses the store stops writing within one TTL, even when nobody else has taken over, so a store outage longer than the TTL stops every writer. With `ContinueFenced`, writers keep writing through an outage, and the fence rejects them once a new writer acquires the shard. A spec declares every write fenced with `fenced` in its ownership configuration. `ContinueFenced` is then the default, because the fence rejects every write of a replaced writer, and a store outage does not stop the writers that nobody replaced.
+
+### Writer safety
+
+Writer safety is the property of fenced exclusive ownership: once a tenure has acquired a shard's fence, no transaction of an older tenure commits a fenced write. It rests on three requirements of the application:
+
+- Every write of the shard's data runs in a transaction that checks the fence, through a `fence.Writer` bound to the tenure's token.
+- A new writer acquires the fence before its first read of the shard's data. The agent makes the acquisition through its fence guard before it calls `AddShard`.
+- The fence's check and the write commit together, in one transaction of the application's storage.
+
+The property is about commits, not about processes. Two processes can both act as the writer for a while. An old writer that is paused, or cut off from the store, keeps running until its lease deadline, or longer under `ContinueFenced`. From the moment the new tenure acquires, the old writer's writes fail at the fence.
+
+The lease and `LockDelay` decide how soon a stale writer stops trying, and how soon the core replaces a failed writer. They affect availability and the cleanup of state, not safety. A write that a paused writer sent before its deadline can arrive at a resource after any finite delay, so no lease and no `LockDelay` make a resource without a fence safe. Chubby's authors call their lock-delay "imperfect" for the same reason: it protects servers that do not check sequencers from everyday message delays and restarts. `exclusive` without a fence is therefore best effort. It is outside the support matrix, and `sharderctl status` reports such a namespace as best effort.
+
+The agent enforces what it can. `replica.Start` refuses an `exclusive` namespace without a fence guard. The application remains responsible for routing every write through the fence, and a write outside the fence has no guarantee.
 
 ### Epochs
 
 Outside the `delegated` mode, the core assigns every epoch by these rules:
 
 - A shard's first writer gets epoch 1.
-- Each change of writer increments the epoch by one. In the leaderless topology, which has no core, the epoch is the term that the store's election for the shard granted, which increases but not necessarily by one.
-- A shard created by a split or merge starts at one more than the highest epoch among its parents.
-- An abort that returns the writer role to the old node assigns a new epoch, because the new node may already have written under the epoch it was given.
+- Before a transition's first callback, the core reserves the epochs that the transition may use: the new writer's epoch, one above the highest epoch the shard has reserved before, and the abort path's epoch, one above that. It records both in the transition, and raises the placement's `Reserved` to the higher one, in one commit.
+- A change of writer gives the new writer the transition's new epoch. An abort that returns the writer role to a fallback node gives it the abort epoch, because the new node may already have written under its epoch.
+- An epoch that an abort path reserved and never used is never granted, because every later reservation starts above `Reserved`.
+- In the leaderless topology, outside the support matrix, the epoch is the term that the store's election for the shard granted, which increases but not necessarily by one.
+- A shard created by a split or merge, outside the support matrix, starts at one more than the highest epoch among its parents.
 
-The core grants each epoch to one writer, because it commits every epoch to the store with a compare-and-set on the cell's generation. Core's admit-equal law is sound only under that condition: two holders of one epoch would both pass a fence. A term from the store's election meets the same condition in the leaderless topology.
+The core grants each epoch to one writer, because it reserves every epoch in the shard's placement with a compare-and-set on the cell's generation before any callback names the epoch. Core's admit-equal law is sound only under that condition: two holders of one epoch would both pass a fence.
 
 A cell's controller receives its epoch from the root by the same rules, because the root treats the cell as a shard and the controller as its writer.
 
-A node receives two epochs with every callback: the shard's epoch and the epoch of the cell's controller. It keeps the highest shard epoch it has seen per shard and the highest controller epoch per cell, and it refuses a callback with a lower one. The refusal classifies as `errs.Conflict`, because the state that the caller acted on has moved. The controller also returns its epoch in each reply to a node's reports, so a node refuses a replaced controller's callbacks as soon as it has heard from the replacement.
+A node receives four values with every callback that it checks before anything else: the namespace incarnation, its own node incarnation, the shard's epoch and the epoch of the cell's controller. It refuses a callback for another namespace incarnation or for another incarnation of itself. It keeps the highest shard epoch it has seen per shard and the highest controller epoch per cell, and it refuses a callback with a lower one. Each refusal classifies as `errs.Conflict`, because the state that the caller acted on has moved. The controller also returns its epoch in each reply to a node's reports, so a node refuses a replaced controller's callbacks as soon as it has heard from the replacement.
 
 ### Handoff protocols
 
@@ -204,10 +228,23 @@ type Transfer struct {
  ToRole   shard.Role
  Writer   bool        // true when ToRole or FromRole is the model's writer role
  OldEpoch epoch.Epoch // the shard's epoch before the move
+ // NewEpoch and AbortEpoch are the epochs that the core reserved for the move: the new
+ // writer's, and the one that the abort path gives Fallback. A script names no other
+ // epoch above OldEpoch.
+ NewEpoch   epoch.Epoch
+ AbortEpoch epoch.Epoch
+ // Fallback is the node that the abort path makes the writer: From, unless From is
+ // draining or has a fault, in which case the planner chooses another node.
+ Fallback shard.NodeID
 }
 
 // Protocol scripts transfers. Implementations are deterministic and must not perform I/O.
 type Protocol interface {
+ // Version identifies the scripts that the protocol returns. It increases whenever
+ // Script returns another script for any transfer. A transition records it, and a
+ // controller resumes the transition only with a protocol of the same name and
+ // version.
+ Version() uint32
  Script(t Transfer, mode ownership.Mode, lease ownership.Lease) (Script, error)
 }
 
@@ -279,7 +316,9 @@ var Lifecycle, errLifecycle = fsm.NewBuilder[Phase, Event, struct{}](Running).
  Build()
 ```
 
-The following tables give each built-in protocol for a writer move from node A to node B at epoch e. Steps without a node commit the assignment.
+Before the core commits a transition, it checks that every step of the script names the transfer's `From`, `To` or `Fallback`, or no node for a commit, and that every epoch is `OldEpoch`, `NewEpoch`, `AbortEpoch` or zero. A protocol therefore cannot hand out an epoch that the core did not reserve.
+
+The following tables give each built-in protocol for a writer move from node A to node B at epoch e. Steps without a node commit the assignment. e+1 and e+2 denote the transfer's `NewEpoch` and `AbortEpoch`, and F denotes its `Fallback`.
 
 #### break-before-make
 
@@ -287,11 +326,36 @@ The following tables give each built-in protocol for a writer move from node A t
 |---|---|---|---|---|
 | 1 | A | `drop`, or `change-role` to a non-writer role, at e | Ack, or lease lapse if A does not respond | none needed |
 | 2 | | Commit B as writer at e+1 | Published | none needed |
-| 3 | B | `add` as writer at e+1 | Serving | `add` on A as writer at e+2, or a new placement |
+| 3 | B | `add` as writer at e+1 | Serving | 1. Commit F as writer at e+2. 2. `add` on F as writer at e+2. 3. `drop` on B |
 
-The shard has no writer from step 1 until step 3 completes. SM's basic move protocol has this order, and its post states that it provides "an at-most-one-primary guarantee".
+The shard has no writer from step 1 until step 3 completes: the writer gap. SM's basic move protocol has this order, and its post states that it provides "an at-most-one-primary guarantee". The gap is explicit in the spec: every namespace in the support matrix selects planned interruption, and the budget counts the shard's replica as unavailable for the gap.
+
+The gap has a duration target of 2 seconds at p99, under three conditions:
+
+- Both nodes are live.
+- Their handlers return `drop` and `add` within 500 ms at p99.
+- The store commits within 100 ms at p99.
+
+Under those conditions the gap consists of the drop, one commit, the add with its fence acquisition, and two network round trips. The metric `sharder.writer.gap` measures every gap.
+
+The target assumes working components, and nothing bounds the gap without them:
+
+- A store outage after step 1 keeps the shard without a writer until the store returns, because step 2 cannot commit.
+- A node that does not respond to `drop` extends step 1 by its lease: TTL plus `LockDelay`.
+- A handler that never returns keeps the shard without a writer until the abort path's `add` succeeds on the fallback, and that `add` can hang as well.
+
+A step's timeout bounds how long the core waits before it retries the step or starts the abort path. It does not bound how long the shard is without a writer.
+
+The abort path of step 3 does not wait for B. B's `add` may have taken effect with its reply lost, so B may serve and write at e+1. The abort path is safe because the fence decides which writes commit, and it rests on four requirements:
+
+1. The core reserves e+2 and commits it in the transition's record before step 1, so the abort epoch is durable before any callback of the transition.
+2. F's `add` at e+2 acquires the fence before F reads the shard's data. From that acquisition on, every write of B's tenure at e+1 fails at the fence.
+3. F discards every state it derived from an earlier tenure of the shard, such as a cache that A built at e, and reads the shard's data again after it acquires, because B may have committed writes at e+1.
+4. A late callback cannot restore a superseded state. The agent refuses a forward callback of an operation once it has seen that operation's abort path, and a callback of an older operation once it has seen a newer one. A `drop` that B receives before its delayed `add` therefore remains in effect, and the `add` is refused.
 
 #### make-before-break
+
+`make-before-break` is outside the support matrix.
 
 | Step | Node | Call | Waits for | Abort |
 |---|---|---|---|---|
@@ -303,6 +367,8 @@ Both replicas serve between steps 1 and 3. Validation rejects this protocol for 
 
 #### graceful
 
+`graceful` is outside the support matrix.
+
 | Step | Node | Call | Waits for | Abort |
 |---|---|---|---|---|
 | 1 | B | `prepare-add`, peer A, at e+1 | Ack | `cancel-prepare` on B |
@@ -311,9 +377,11 @@ Both replicas serve between steps 1 and 3. Validation rejects this protocol for 
 | 4 | | Commit B as writer at e+1 | Published | retry |
 | 5 | A | `drop` | Ack, or lease lapse | none needed |
 
-After step 2, A forwards every write to B, and B accepts writes that A forwards. After step 3, B also accepts writes from clients directly. After step 4, clients route to B, and A keeps forwarding until no more requests arrive or its drain timeout passes. At every step, some node accepts the shard's writes. Steps 1 to 5 are SM's graceful migration. The `cancel-prepare` call and the abort column are additions, because SM's paper gives only the sequence that succeeds.
+After step 2, A forwards every write to B, and B accepts writes that A forwards. After step 3, B also accepts writes from clients directly. After step 4, clients route to B, and A keeps forwarding until no more requests arrive or its drain timeout passes. Steps 1 to 5 are SM's graceful migration. The `cancel-prepare` call and the abort column are additions, because SM's paper gives only the sequence that succeeds.
 
 A forwards writes over the application's own protocol, to the node that `prepare-drop` names as its peer. The library has no forwarding helper, because it does not know the application's requests.
+
+`graceful` needs an explicit acquisition barrier before the support matrix can include it: when B acquires the fence, when A stops writing directly, and when B first reads. Its abort paths also need the four requirements of `break-before-make`'s abort path, because A's `cancel-prepare` at e+2 can run while B writes at e+1.
 
 ```mermaid
 sequenceDiagram
@@ -333,6 +401,8 @@ sequenceDiagram
 
 #### staged
 
+`staged` is outside the support matrix.
+
 | Step | Node | Call | Waits for | Abort |
 |---|---|---|---|---|
 | 1 | A | `unload-state`: stop writing, save state, keep serving reads | Ack | `add` on A as writer at e+2 |
@@ -345,7 +415,7 @@ Writes pause from step 1 until step 3 completes, and A serves reads. This is the
 
 #### elect
 
-`elect` is the only protocol that the `delegated` mode allows. It asks the application's authority for a change of writer, then commits the writer that agents report. It moves only the writer role, because the core does not add or remove replicas in that mode, and it returns an error for any other transfer.
+`elect` is outside the support matrix, together with the `delegated` mode, which is the only mode that allows it. It asks the application's authority for a change of writer, then commits the writer that agents report. It moves only the writer role, because the core does not add or remove replicas in that mode, and it returns an error for any other transfer.
 
 A move of the writer role to a node B that the core chose:
 
@@ -367,16 +437,48 @@ When step 1 exhausts its retries, the core abandons the move and keeps the write
 
 The core runs each script through one engine, whatever the protocol:
 
-1. Before step 1, the core commits the transition to the cell's scope in the store, in phase `Running`, with its protocol, epochs and step number.
+1. Before step 1, the core commits the transition's record to the cell's scope, in phase `Running`, together with the placement's new `Reserved` and `Sequence`. The record has everything a new controller needs to resume the move without planning it again: the operation ID, the protocol's name and version, the spec version the move was planned under, both endpoints with their node incarnations and roles, the old epoch and both reserved epochs, and the fallback. `store.Transition` is its schema.
 2. The core runs a step, waits for its condition, and commits the next step number, or the next phase that `Lifecycle` allows.
-3. A step that times out, or whose callback fails with an error that classifies as `errs.Transient`, is retried through a `resilience.Retrier` from core. By default it makes at most five attempts, backs off with full jitter from 100 ms up to 10 s, and allows retries for at most 10% of the cell's callbacks over one minute, with a floor of 10. The Retrier stops at once on every other class, as core requires for an error that a retry cannot fix. A node's refusal of a callback for a lower epoch classifies as `errs.Conflict`, so it fails the step at once, for every call. When the step fails, the core commits phase `Aborting` and runs the abort path through the same loop.
-4. A new controller of the cell reads every transition in flight from the cell's scope and continues each at its committed phase and step.
+3. A step that times out, or whose callback fails with an error that classifies as `errs.Transient`, is retried through a `resilience.Retrier` from core, with the same idempotency key, because a callback without a reply may have taken effect. By default the Retrier makes at most five attempts, backs off with full jitter from 100 ms up to 10 s, and allows retries for at most 10% of the cell's callbacks over one minute, with a floor of 10. The Retrier stops at once on every other class, as core requires for an error that a retry cannot fix. A node's refusal of a callback for a lower epoch or another incarnation classifies as `errs.Conflict`, so it fails the step at once, for every call. When the step fails, the core commits phase `Aborting` and the failed step's number, and runs the abort path through the same loop.
+4. A new controller of the cell acquires the cell's scope first, then reads every transition in flight and continues each at its committed phase and step, with the recorded endpoints, epochs and protocol version. It never plans an endpoint of a transition in flight again. A controller whose release lacks a recorded protocol version refuses to acquire the scope, with an error of class `errs.Unsupported`.
+5. The commit that ends a transition removes its record and keeps the placement's `Reserved` and `Sequence`, so the next transition of the shard starts above them.
+
+A callback targets the node incarnation that the record names. A node that has restarted since has a new incarnation and refuses the callback, and the step fails. The core then runs the abort path, and plans the restarted node's replicas again with new operations. It never sends an old operation's callbacks to a new incarnation.
 
 The retry budget protects a node that fails every callback: without it, each of hundreds of transitions to that node would retry five times at once. Callbacks to one node also pass through a `resilience.Bulkhead` from core, with as many permits as the `move-limits` constraint allows moves per node, so that one slow node cannot occupy every callback slot of the controller.
 
 The engine commits the step changes of every transition of the cell that is ready in the same tick in one store commit, up to the store's commit bound. A rebalance of hundreds of moves therefore costs a few commits per step, not one per transition.
 
-Every callback has an idempotency key of the form `namespace/shard/sequence/step`, where the sequence number counts the shard's transitions. A retried callback reuses the key. A node that receives a key it has completed returns the first result and does nothing else. When a controller fails between sending a callback and committing the next step, its successor resends the same callback, and the node does not repeat the callback's effect.
+### The callback contract
+
+A retry, a new controller or a delayed message can deliver a callback again, so callbacks are delivered at least once, and a callback whose reply is lost may have taken effect.
+
+`protocol.Request.Key` returns a callback's idempotency key. The key contains the operation ID, the path, the step within that path, and the target node with its incarnation. The operation ID identifies the namespace incarnation, the shard and the transition's sequence, and the path is forward or abort. Two callbacks cannot share a key. A transition fails at most once, so it has one abort path at most, and the core does not reuse a sequence. A callback also contains a digest of its payload, and an agent refuses a key that it has seen with another digest.
+
+The agent and the handler divide the work:
+
+- The agent refuses a callback for another namespace incarnation or another node incarnation, a callback with a lower shard or controller epoch, a forward callback of an operation whose abort path it has seen, and a callback of an operation older than the newest it has seen for the shard. It refuses each before it looks up the key or calls the handler.
+- The agent runs one callback at a time per shard. A callback that arrives while another callback with the same key runs waits for that callback's result and returns it.
+- The agent keeps the result of every callback that ended in success, or in an error that is not transient, until the shard's next operation starts. A repeated key returns the kept result without calling the handler. The agent keeps no transient error, so a retry runs the handler again.
+- The agent keeps its results in memory. A restarted node has a new incarnation, which refuses the callbacks of the old one, so no result has to survive a restart.
+- A handler whose callback has an effect that must not happen twice, such as a write to an external system, records the callback's key in the same transaction as the effect, and returns the recorded result for a key that it finds. Only the application's storage can commit a key and an effect together, so the library does not make an arbitrary effect happen once.
+
+The examples include a handler that records its keys in the transactions of its storage, and its test replays every callback of a move.
+
+### Tokens
+
+`Agent.Token` returns the fencing token of a shard that the node writes. Its result follows the node's state:
+
+| Situation | `Token` returns |
+|---|---|
+| The node is not the shard's writer | `replica.ErrNotWriter` |
+| The node is the writer, and its lease is valid | The tenure's token |
+| The lease deadline has passed, under `Stop` | `epoch.ErrFenced`. The node starts no new writer work |
+| The lease deadline has passed, under `ContinueFenced` | The tenure's token. The fence rejects its writes once a newer tenure acquires |
+| The agent has learned of a newer tenure: from a callback, from its watch of its placements, or from an acquisition that returned `epoch.ErrFenced` | `epoch.ErrFenced`. The agent stops the writer and discards the tenure's state |
+| A `delegated` namespace, outside the support matrix | The token of the node's latest election, until the application reports the node deposed |
+
+A token that a process copied before its tenure ended remains in that process, and stopping the agent cannot recall it. The fence, not `Token`, decides whether a write commits.
 
 ### Fencing
 
@@ -389,6 +491,8 @@ Fenced storage applies core's fence laws to every write of a shard:
 A rejected write returns `epoch.ErrFenced`, which classifies as `errs.Conflict`. Its remedy is to abdicate, not to retry: the writer stops, releases state derived from the revoked tenure, and waits for a new assignment. `errors.Is` separates it from `version.ErrMismatch`, whose remedy is to read again.
 
 A writer binds its token when it is created, and every check it performs validates that token's epoch. No write takes an epoch as a parameter, so no write path escapes validation.
+
+A fence keeps one watermark per fence key: the namespace incarnation and the shard ID. The cell is not part of the key, so a shard keeps its fence record when it changes cells.
 
 ```go
 // Package fence defines fencing tokens and the interfaces of fenced storage. Every
@@ -408,23 +512,27 @@ import (
 // retired shard with epoch.ErrFenced.
 const Retired = epoch.Epoch(math.MaxInt64)
 
-// Token authorises writes to one shard at one epoch.
+// Token authorises writes to one shard at one epoch. Its fence key is the pair of
+// Incarnation and Shard. Namespace and Cell identify the shard to an operator, and
+// neither is part of the key.
 type Token struct {
- Namespace shard.Namespace
- Cell      shard.CellID
- Shard     shard.ID
- Epoch     epoch.Epoch
+ Namespace   shard.Namespace
+ Incarnation shard.NamespaceIncarnation
+ Cell        shard.CellID
+ Shard       shard.ID
+ Epoch       epoch.Epoch
  // Supersedes lists the parent shards that this shard's first acquisition retires,
- // after a split or merge. It is empty otherwise.
+ // after a split or merge. It is empty in the support matrix, which has no
+ // resharding.
  Supersedes []shard.ID
 }
 
 // Acquirer starts a writer's tenure.
 type Acquirer interface {
- // Acquire advances the watermark of t.Shard to t.Epoch and raises the watermark of
- // every shard in t.Supersedes to Retired, in one transaction. A writer calls it once
- // per tenure, before it reads shard data. It returns epoch.ErrFenced when the
- // watermark of t.Shard is above t.Epoch.
+ // Acquire advances the watermark of t's fence key to t.Epoch and raises the
+ // watermark of every shard in t.Supersedes to Retired, in one transaction. A writer
+ // calls it once per tenure, before it reads shard data. It returns epoch.ErrFenced
+ // when the watermark of t's fence key is above t.Epoch.
  Acquire(ctx context.Context, t Token) error
 }
 
@@ -451,19 +559,35 @@ type Writer[Tx any] interface {
 
 `Acquire` is the tenure's first fenced write, and the writer makes it before it reads. Suppose the writer read first. The old writer, still running, could write between the new writer's read and its acquisition, and the new writer would then act on a state it never saw. Hochstein's 2025 model check found this case in fencing tokens used alone. Core pairs its fence with conditional writes: a write conditioned on the version that the new writer read fails with `version.ErrMismatch` when another writer changed the value since. Temporal conditions each write on a record version as well as its range ID. Acquiring first gives the same protection to applications whose writes are not conditional: every later write of the old writer fails, so the new writer's first read already includes every write the old writer could complete.
 
-A split or merge retires its parents in the acquisition of each new shard. `Retired` is `math.MaxInt64`, and the core issues epochs one at a time from 1, so no writer ever holds an epoch at or above it. The admit-equal law then rejects every writer of a retired shard, and the fence needs no separate retired flag.
+A split or merge, outside the support matrix, retires its parents in the acquisition of each new shard. `Retired` is `math.MaxInt64`, and the core issues epochs one at a time from 1, so no writer ever has an epoch at or above it. The admit-equal law then rejects every writer of a retired shard, and the fence needs no separate retired flag.
 
 The application implements `Guard` over its own storage, because the fence has to run in the same transaction as the application's writes. Every implementation meets these requirements:
 
-- `Acquire` advances the shard's watermark and raises every parent's watermark to `Retired` in one transaction.
+- It keeps one watermark per fence key.
+- `Acquire` advances the watermark of the token's fence key and raises every parent's watermark to `Retired` in one transaction.
 - `Check` reads the watermark under a lock that makes a concurrent `Acquire` wait until the write's transaction ends, and advances the watermark in that transaction when the writer's epoch is above it.
 - An absent record is a watermark of zero.
 
-In a SQL database, the fence is one row per shard. `Acquire` is an upsert conditioned on the stored epoch, and `Check` reads the row with a shared row lock, such as PostgreSQL's `SELECT ... FOR SHARE`. A new writer's `Acquire` then waits for every write transaction of the old writer that has already checked the fence, and every later `Check` of the old writer sees the new epoch and fails.
+In a SQL database, the fence is one row per fence key. `Acquire` is an upsert conditioned on the stored epoch, and `Check` reads the row with a shared row lock, such as PostgreSQL's `SELECT ... FOR SHARE`. A new writer's `Acquire` then waits for every write transaction of the old writer that has already checked the fence, and every later `Check` of the old writer sees the new epoch and fails.
 
 Every implementation passes core's `coretest/epochtest.AssertFencedWriter`, with two named writes: the acquisition, and a transaction that checks the fence and writes one row. The suite asserts that a write through a superseded writer returns `epoch.ErrFenced`, classifies as `errs.Conflict` and leaves the fence record unchanged. It also asserts that a write at the current epoch is admitted, that a writer at `epoch.Zero` neither validates nor advances, and that a fresh writer at a new epoch succeeds where the superseded one fails.
 
+### Recreating a namespace over existing data
+
+A new namespace incarnation starts every fence key at a watermark of zero, because its fence keys differ from the old incarnation's. The old incarnation's fence records remain valid for its own tokens. A writer of the old incarnation that is still running, paused or cut off, still passes its own fence, and its writes commit. A new incarnation is therefore not by itself a safe recovery for data that the old incarnation wrote.
+
+Recovery over existing application data needs one of these:
+
+- **A fresh application-data namespace.** The new incarnation writes to new tables, prefixes or databases, which no writer of the old incarnation uses.
+- **An administrative barrier.** Before the new incarnation starts, an operator makes every writer of the old incarnation unable to write. For example, the operator raises every fence record of the old incarnation to `fence.Retired` in one transaction of the application's storage, or revokes the old incarnation's credentials for that storage.
+
+The library provides neither mechanism, because both act on the application's storage. Recovery over the old data without one of them is not supported.
+
+The same applies when a namespace's store is restored from a backup, which the support matrix does not support. A restored store can issue epochs again that the application's fences have already passed. Raising the epochs above the watermarks that the fences report does not repair it either, because the store's other restored state, such as its transitions and reservations, remains older than the application's.
+
 ### Delegated ownership
+
+Delegated ownership is outside the support matrix. The thesmos ledger's integration depends on it. This section records the design.
 
 In the `delegated` mode, the application's authority elects every writer and grants its epoch, and the core follows the writers that agents report. The authority is the application's own election, such as the leader election of a consensus protocol. It must grant each epoch to one writer, the condition under which core's admit-equal law is sound. In the ledger, each voter records one holder per epoch, so at most one candidate collects a fence quorum for an epoch.
 
@@ -473,33 +597,35 @@ The core applies these rules to a `delegated` namespace:
 2. A report of a writer at an epoch above the committed one describes a change that has already happened. The core commits it as the cell's next generation, so that routers and `sharderctl` see it, and counts every other replica of the shard as a non-writer.
 3. The replicas of a shard are the replicas that agents report through `Hosted`, `Elected`, `Deposed` and `Released`. The core adds and removes none. A plan may change only which reported replica is the writer, and only to a replica whose role the model allows to become the writer.
 4. A change of writer that the core requests runs through `elect`, which asks the authority. The authority decides.
-5. Invariant 2 becomes a contract of the authority. A node's store lease still decides whether the node is live, but it no longer bounds a writer's tenure, so `LockDelay`, `OnLoss` and the `lease-lapse` wait do not apply to the namespace's writers.
+5. Epoch uniqueness and writer safety become contracts of the authority. A node's store lease still decides whether the node is live, but it no longer bounds a writer's tenure, so `LockDelay`, `OnLoss` and the `lease-lapse` wait do not apply to the namespace's writers.
 6. `Agent.Token` returns a token at the epoch of the node's latest election, and `epoch.ErrFenced` once the application reports the node deposed. A fence over the application's storage checks those epochs with core's fence laws.
 7. The authority splits and merges shards instead of the partitioner, so the core does not call `Reshape`. An agent reports each shard that a split or merge created with its range and its parents. The core applies the change in one generation once the reported children cover their parents' ranges exactly, each child at the epoch that the authority granted.
 8. The disruption budget admits only the moves that the core requests. The authority's own changes of writer, such as its failovers, are outside the budget.
 
 An authority that balances writers by itself must keep a writer that the core requested on the node that the core chose. In the ledger, a host's request for a shard becomes the shard's preferred leader, and the ledger's balancer keeps the shard there.
 
-Validation requires `single-writer` on the replication axis and `delegated-safe` on the handoff axis, which only `elect` provides. Every node must implement the agent's `Elector` interface, and the core refuses to start a transition on a node that does not.
+Validation requires `single-writer` on the replication axis and `delegated-safe` on the handoff axis, which only `elect` provides. Every node must implement the agent's `Elector` interface, and the core refuses to start a transition on a node that does not. Availability in a delegated consensus namespace also needs the voter-aware rule and the authority's effective quorum, which the replication models record as requirements.
 
 ### Failure handling
 
 | Failure | Detected by | Core action | Time until a new writer serves |
 |---|---|---|---|
 | The writer's node crashes | Lease expiry at the store | Break-before-make with lease lapse as step 1 | TTL + lock delay + the new writer's `add` |
-| The writer pauses past its deadline | The node's own deadline timer when it resumes | The node stops its writers. The fence rejects any write in flight | As a crash, if the pause outlasts the TTL |
-| The writer is cut off from the store | Failed renewals at the node, expiry at the store | As a crash. The node stops at its deadline under `Stop` | As a crash |
-| A callback fails or times out | The step's wait condition | Retry within the attempt count and the budget, then the abort path | The protocol's step timeout times the attempts |
-| The new node fails during a move | Callback failure or lease expiry | The abort path returns the writer role to the old node at a new epoch | One abort path |
-| The application reports a fault in a writer | The agent's next report | Break-before-make, whatever the namespace's protocol. In the `delegated` mode, `abdicate` on the faulted node | The demotion's acknowledgement plus the new writer's `add` |
+| The writer pauses past its deadline | The node's own deadline timer when it resumes | The node stops its writers under `Stop`. The fence rejects every write of its tenure once a new writer acquires | As a crash, if the pause outlasts the TTL |
+| The writer is cut off from the store | Failed renewals at the node, expiry at the store | As a crash. The node stops at its deadline under `Stop`, and its writes fail at the fence under `ContinueFenced` once the new writer acquires | As a crash |
+| A callback fails or times out | The step's wait condition | Retry with the same key within the attempt count and the budget, then the abort path | The protocol's step timeout times the attempts |
+| A callback's reply is lost after it took effect | The step's wait condition, as a timeout | Retry with the same key. The node returns the kept result, or refuses the key when its digest differs. After the attempts, the abort path, which does not assume the callback failed | As a failed callback |
+| A commit's outcome is unknown | `Commit` returns an error that wraps `version.ErrOutcomeUnknown` | The controller commits again with the same commit ID until it learns the outcome, or until a newer controller's acquisition fences it. It sends no callback that depends on the commit before then | Delayed by the reconciliation |
+| The new node fails during a move | Callback failure, a refusal from its new incarnation, or lease expiry | The abort path gives the writer role to the fallback at the reserved abort epoch | One abort path |
+| The application reports a fault in a writer | The agent's next report | Break-before-make to a node other than the faulted one, whatever the namespace's protocol. In the `delegated` mode, `abdicate` on the faulted node | The demotion's acknowledgement plus the new writer's `add` |
 | The authority replaces a writer, in the `delegated` mode | The new writer's report | Commits the reported writer as the cell's next generation | The authority's own failover time, about 3 seconds for the ledger |
-| A cell's controller fails during a move | The root, through the controller's lease | The root places the cell on another controller at a higher epoch. The new controller continues from the committed step with the same idempotency keys | The controller's lease plus one step |
+| A cell's controller fails during a move | The root, through the controller's lease | The root places the cell on another controller at a higher epoch. The new controller acquires the scope, reads each transition's record and continues it with the same keys and epochs | The controller's lease plus one step |
 | A replaced cell controller keeps running | Its next commit fails with `epoch.ErrFenced` | It abdicates and stops calling nodes | None: its callbacks contain a lower controller epoch than the new controller's, and a node refuses them once it has seen the new controller's epoch |
 | The store is unavailable | Failed commits and renewals | No new transitions. Writers stop at their deadline under `Stop` and continue under `ContinueFenced` | Until the store returns |
 
 With the default TTL of 10 seconds and every write fenced, a crashed writer is replaced after about 10 seconds plus the time the new writer's `add` takes. Published numbers for comparison: Service Fabric reports an average failover time of 1.9 seconds, Slicer measured a median lease recall of 2.6 seconds, and Dicer detects a crashed pod in roughly 30 seconds.
 
-The core moves a faulted writer by break-before-make, the path it runs for a crashed node, whatever the namespace's protocol. `graceful` needs the old writer to forward writes, and `staged` needs it to save its state. A replica on a failed disk, or one whose store rejects every write, cannot do either. The abort paths of both protocols also return the writer role to the old node at a new epoch. A failed step would give the role back to the faulted replica, and the core would then move it again. Break-before-make aborts its last step to a new placement instead, not to the faulted replica.
+The core moves a faulted writer by break-before-make, the path it runs for a crashed node, whatever the namespace's protocol. `graceful` needs the old writer to forward writes, and `staged` needs it to save its state. A replica on a failed disk, or one whose store rejects every write, cannot do either. The abort paths of both protocols also return the writer role to the old node at a new epoch. A failed step would give the role back to the faulted replica, and the core would then move it again. Break-before-make's abort path gives the role to the transfer's fallback, which is never the faulted replica.
 
 ## Alternatives considered
 
@@ -507,7 +633,13 @@ The core moves a faulted writer by break-before-make, the path it runs for a cra
 
 Grant each owner a lease and trust owners to stop when it expires, as Splitter does with its grants and as Slicer's consistent mode does with Chubby leases. The application can keep any storage without changes.
 
-**Why not:** a lease is checked before a write, and a pause can fall between the check and the write. The authors of WriteGuards, a system for strongly consistent caches over an auto-sharder, state that "Ownership at the caching layer is not enough". The lease remains the first level of protection here, and `LockDelay` covers resources that cannot check a fence.
+**Why not:** a lease is checked before a write, and a pause can fall between the check and the write. The authors of WriteGuards, a system for strongly consistent caches over an auto-sharder, state that "Ownership at the caching layer is not enough". The lease remains, to detect failure and to stop a stale writer's attempts. The fence is what makes a stale write fail.
+
+### Waiting for the new node on the abort path
+
+Obtain B's acknowledgement that it stopped, or wait for its lease to lapse, before the fallback becomes the writer again.
+
+**Why not:** B may not respond, and the abort path would then wait for B's lease: TTL plus `LockDelay`, with the shard without a writer the whole time. Under a fence, the fallback's acquisition makes every later write of B fail at once, so waiting adds a lease period to the writer gap and makes no write safer. Outside fenced ownership, the wait is required, and that ownership is outside the support matrix.
 
 ### The controller's view as the only guarantee
 
@@ -551,15 +683,19 @@ Let a consensus application follow the core's choice of writer, as the other mod
 
 ## Drawbacks
 
-- Every application that wants exclusive ownership must route its writes through a fence that it implements for its storage. An implementation that gets locking wrong reopens the window this RFC closes. Core's conformance suite catches a write that escapes validation, but not every locking mistake.
+- Every application that wants exclusive ownership must route its writes through a fence that it implements for its storage. In the support matrix, that is every application. An implementation that gets locking wrong reopens the window this RFC closes. Core's conformance suite catches a write that escapes validation, but not every locking mistake.
 - Fencing costs one extra statement and one row lock per write transaction, and one acquisition per tenure. Writers of one shard serialise on the fence row. We have not measured the throughput cost.
 - The application must acquire before its first read. The agent acquires automatically when the application registers its guard, but code that writes outside the agent's tokens bypasses the fence.
+- Break-before-make leaves every moved shard without a writer for the writer gap, 2 seconds at p99 by target and unbounded when a store or a handler fails.
+- The abort path of break-before-make does not wait for the new node to stop, so two nodes can act as the writer until the fallback acquires. Writer safety still applies, and an application that also acts outside the fence, such as by sending messages, can see both.
+- A handler whose callbacks have effects that must not repeat has to record each callback's key in the same transaction as the effect. The library cannot do it for the handler.
 - A namespace whose writes are not all fenced uses `Stop`, and a 10-second TTL then stops every writer after 10 seconds of store unavailability. Shorter TTLs fail over faster and stop sooner in a store outage. Longer TTLs do the opposite.
-- The graceful protocol needs the application to forward writes from the old writer to the new one, which is application code that the library cannot supply.
+- Recreating a namespace over existing data needs a fresh application-data namespace or an administrative barrier in the application's storage, which the library does not provide.
+- The graceful protocol, outside the matrix, needs the application to forward writes from the old writer to the new one, which is application code that the library cannot supply.
 - The built-in protocols have 20 steps, and 13 of them have an abort path or a retry to implement and to cover in the simulator.
-- In the `delegated` mode, invariants 1 and 2 rest on the application's authority. An authority that grants one epoch to two writers breaks them, and the core cannot detect it. The authority's own changes of writer also bypass the disruption budget.
+- In the `delegated` mode, epoch uniqueness and writer safety rest on the application's authority. An authority that grants one epoch to two writers breaks them, and the core cannot detect it. The authority's own changes of writer also bypass the disruption budget.
 - A faulted writer moves by break-before-make even in a namespace whose protocol is `graceful`, so its shard does not accept writes from the demotion until the new writer serves.
-- `fence.Retired` stores as `math.MaxInt64` in a signed 64-bit column, so the fence refuses epochs from 2^63 up. The core would reach them only after 2^63 changes of writer to one shard.
+- `fence.Retired` stores as `math.MaxInt64` in a signed 64-bit column, so the fence refuses epochs from 2^63 up. The core would issue them only after about 2^62 changes of writer to one shard, at two reserved epochs per change.
 
 ## Open questions
 
@@ -567,6 +703,10 @@ None.
 
 ## Unresolved and future work
 
+- Delegated ownership and `elect` are outside the support matrix. The thesmos ledger's integration depends on them.
+- `affinity`, `overlapping` and `exclusive` without a fence are outside the support matrix.
+- `make-before-break`, `graceful` and `staged` are outside the support matrix. `graceful` needs an explicit acquisition barrier, and its abort paths need the requirements of break-before-make's abort path.
+- An administrative barrier that the library runs against the application's storage, for recovery over existing data, is not proposed here.
 - Fencing for external systems that lack both transactions and conditional writes, such as plain object stores, is not proposed here.
 - Moving state between nodes through the library, as Dicer's unreleased state transfer does, is not proposed here. `load-state` and `unload-state` leave the transfer to the application.
 

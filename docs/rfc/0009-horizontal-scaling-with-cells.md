@@ -4,7 +4,7 @@ title: Horizontal scaling with cells and a root controller
 author: Roy Klopper
 status: Draft
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-28
 discussion: none
 supersedes: none
 superseded-by: none
@@ -21,7 +21,7 @@ A namespace scales horizontally in cells. A cell is a disjoint set of nodes, the
 
 The root of a namespace keeps the cell map and places each cell's controller on a controller process. It uses the library's own placement, handoff and fencing to do so: a cell is a shard of the root, the cell's controller is that shard's writer, and the controller's epoch fences its commits to the cell's scope. A node joins the cell that its `cell` label names. The store adapter places each scope on a backend cluster of the deployment's choice. A router resolves a key in two levels, the cell map and then the cell's routes.
 
-By default a cell holds at most 5,000 nodes and 1,000,000 shards. An operator splits a cell above either bound with `sharderctl cell split`.
+The support matrix has one cell per namespace. The root still elects and places that cell's controller, and a node whose label names another cell is refused. Splitting a cell is outside the matrix: it moves a range between two scopes, which needs a durable migration protocol that this RFC records as a requirement. By default a cell has at most 5,000 nodes and 1,000,000 shards. Both bounds are targets, and we have not measured a cell at either of them. The supported limits of a cell follow from the etcd adapter's feasibility measurements.
 
 ## Motivation
 
@@ -40,12 +40,14 @@ SM's design settles the unit of scale. SM places every replica of a shard on ser
 
 A cell is a disjoint set of nodes, the shards placed on them and one controller. These rules hold for every cell:
 
-- Each node belongs to one cell: the cell that its `cell` label names. In a namespace with one cell, a node without the label joins that cell. In a namespace with more than one cell, a node without the label is refused.
+- Each node belongs to one cell: the cell that its `cell` label names. A node without the label joins the namespace's only cell, and is refused in a namespace of more than one cell. A node whose label names a cell that the cell map does not contain is refused.
 - Each cell covers one contiguous range of positions, and the ranges of a namespace's cells cover every position without gaps or overlaps.
 - Every replica of a shard is on a node of the shard's cell. Placement, the disruption budget and the planner therefore work within one cell.
 - Each cell has its own scope in the store, its own membership and its own lease sessions.
 
-The spec bounds a cell. `cells.maxNodes` defaults to 5,000, the size of pool that HashiCorp recommends for Consul's gossip, at which a cell sends about 1,500 lease renewals per second with the default TTL. `cells.maxShards` defaults to 1,000,000, near the 1.3 million shards of SM's largest control-plane instance, and about 1 GB of store data at about 1 KB per shard, by our estimate. The root reports a cell above either bound. It does not split cells by itself.
+In the support matrix, a namespace has one cell for its whole life, whose range is every position. The root creates it with the namespace, and no operation adds another.
+
+The spec bounds a cell. `cells.maxNodes` defaults to 5,000, the size of pool that HashiCorp recommends for Consul's gossip, at which a cell sends about 1,500 lease renewals per second with the default TTL. `cells.maxShards` defaults to 1,000,000, near the 1.3 million shards of SM's largest control-plane instance, and about 1 GB of store data at about 1 KB per shard, by our estimate. Both defaults are targets. We have not measured a cell at either bound, and the supported limits of a cell are published after the etcd adapter's feasibility measurements. The root reports a cell above either bound. It does not split cells by itself.
 
 ### The root
 
@@ -60,16 +62,16 @@ The root's assignment follows the rules of every assignment, with these meanings
 | The shard's epoch | The controller's fence epoch for the cell's scope |
 | A node | A controller process: a `sharderd` process in the `service` topology, or an application process in the `embedded` topology |
 
-The root uses the `primary-only` model, `exclusive` ownership, `break-before-make` handoff and the `planner`, whose count goal balances cells across controller processes. Each controller process declares how many cells it can host, as its `cells` capacity in the root, and the `capacity` constraint keeps the root from placing more on it. `controller.WithCellCapacity` sets the capacity, and the default is one cell. In the `embedded` topology, a label constraint places each cell's controller on a node of that cell. The root publishes the cell map, `shard.CellMap`, from its placements: each cell's range, its controller's address, its controller's identity and its controller's epoch.
+The root uses the `primary-only` model, `exclusive` ownership, `break-before-make` handoff and the `planner`, whose count goal balances cells across controller processes. The cell's scope is the root's fenced resource: the controller's acquisition of the scope is its fence acquisition, and the scope's watermark rejects every commit of a replaced controller. Each controller process declares how many cells it can host, as its `cells` capacity in the root, and the `capacity` constraint keeps the root from placing more on it. `controller.WithCellCapacity` sets the capacity, and the default is one cell. In the `embedded` topology, a label constraint places each cell's controller on a node of that cell. The root publishes the cell map, `shard.CellMap`, from its placements: each cell's range, its controller's address, its controller's identity and its controller's epoch, with the namespace incarnation.
 
 A controller process joins the root as a node, with a membership session in the root scope that registers its identity. The root assigns a cell to it with the `add` callback, and the process starts the cell's controller with the cell's epoch. The `drop` callback stops it. The root elects its own leader through `store.Store.Campaign`, the only election in a namespace.
 
 A cell's controller starts in four steps:
 
-1. It opens a writer for the cell's scope, bound to the epoch that the root granted: `store.Store.Writer(scope, epoch)`.
-2. It commits the cell's record: its address, its identity and its epoch. The commit advances the scope's watermark to its epoch, and every later commit of the controller it replaces fails with `epoch.ErrFenced`.
-3. It reads the scope: the placements, the layout version and the transitions in flight.
-4. It continues every transition at its committed phase and step, and starts its planning loop.
+1. It reads the head of the cell's scope, `store.Store.Head`, and opens a writer bound to the namespace incarnation and the epoch that the root granted: `store.Store.Writer(scope, incarnation, epoch)`.
+2. It commits the cell's record at the head's generation: its address, its identity and its epoch. The commit advances the scope's watermark to its epoch, so every later commit of the controller it replaces fails with `epoch.ErrFenced`. A moved generation repeats the step, and an unknown outcome retries the same commit.
+3. After the acquisition applied, it reads the scope: the placements, the layout version, the transitions in flight, the reservations and the drains.
+4. It continues every transition at its committed phase and step, restores the budget's reservations, and starts its planning loop.
 
 ```mermaid
 flowchart TB
@@ -81,22 +83,22 @@ flowchart TB
     c1 -->|callbacks| n1[Nodes of cell c1]
     c2 -->|callbacks| n2[Nodes of cell c2]
     router[Router in a client] -->|cell map| rs
-    router -->|route lookups| c1
-    router -->|route lookups| c2
+    router -->|watch of routes| s1
+    router -->|watch of routes| s2
 ```
 
 ### Store scopes on more than one cluster
 
-A store adapter can place each scope on a backend cluster of its own, so a deployment adds clusters as its cells grow. The mapping of scopes to clusters is the adapter's own configuration, and the core does not see it. The root scope is small and can share a cluster with any cell. A cell's scope never spans clusters, so every commit remains one transaction on one cluster.
+A store adapter can place each scope on a backend cluster of its own, so a deployment adds clusters as its cells grow. The mapping of scopes to clusters is the adapter's own configuration, and the core does not see it. The root scope is small and can share a cluster with any cell. A cell's scope never spans clusters, so every commit remains one transaction on one cluster. Moving a live scope to another cluster is not supported: a scope on an empty cluster has lost its generation and its watermark.
 
 ### Routing across cells
 
 A router resolves a key in two levels:
 
 1. It computes the key's position with the partitioner and finds the position's cell in the cell map, which it watches in the root scope. The cell map has one entry per cell.
-2. It finds the position's route in the cell's cache. In `lookup` mode, a miss becomes a lookup at the cell's controller, whose address the cell map gives, and falls back to the cell's scope when the controller does not respond.
+2. It finds the position's route in the cell's cache, which a watch of the cell's scope keeps current. In `lookup` mode, outside the support matrix, a miss becomes a lookup at the cell's controller, whose address the cell map gives, and falls back to the cell's scope when the controller does not respond.
 
-A router's memory and its load on the store therefore grow with the cells and routes it uses, not with the size of the namespace.
+A router's memory and its load on the store therefore grow with the cells and routes it uses, not with the size of the namespace. A router never compares the generations of two cells.
 
 ### Capacity
 
@@ -107,31 +109,54 @@ Every component that grows with the namespace is per cell, and only the root and
 | Controller | One planner, one transition engine, and lookups for up to 5,000 nodes and 1,000,000 shards | The root spreads cells over controller processes, within each process's cell capacity |
 | Store | About 1 GB of placements and about 1,500 lease renewals per second, by our estimate | The store adapter spreads scopes over backend clusters |
 | Membership | One session per node in the cell's scope | Per cell |
-| Routers | One watch of the root scope, and lookups at the controllers of the cells used | Per cell used |
+| Routers | One watch of the root scope, and one watch of each cell used | Per cell used |
 | Root | One placement and one controller session per cell | Grows with the number of cells only |
 
-A namespace of 100 cells at the default bounds holds 500,000 nodes and 100,000,000 shards, the order of SM's total deployment. We have not built or measured it.
+A namespace of 100 cells at the default bounds holds 500,000 nodes and 100,000,000 shards, the order of SM's total deployment. We have not built or measured it, and every figure in this table is a target.
 
-### Splitting a cell
+### Splitting a cell, outside the support matrix
 
-`sharderctl cell split <ns> <cell>` divides a cell in five steps:
+Splitting a cell is outside the support matrix, and `Submit` rejects a proposal of the kind `cell-split` with an error of class `errs.Unsupported`. This section records the design and the protocol that it needs before the matrix can include it.
+
+`sharderctl cell split <ns> <cell>` would divide a cell in five steps:
 
 1. It chooses a split position at a shard boundary near the cell's median, and the nodes that go with the upper half. It prints those nodes, so that the operator can relabel them.
 2. The cell's controller adds a constraint that places shards above the split on the chosen nodes and the other shards on the rest, and moves replicas under the disruption budget until the cell is segregated. It then stops planning shards above the split.
-3. The root creates the new cell's scope, copies the placements above the split into it, and commits the new cell map in one generation of the root. Each shard keeps its ID and its epoch, so the application's fences are unaffected.
+3. The root creates the new cell's scope, copies the placements above the split into it, and commits the new cell map in one generation of the root. Each shard keeps its ID and its epoch, and a fence key is the namespace incarnation and the shard ID, so the application's fences are unaffected.
 4. The root places the new cell's controller. The chosen nodes restart with the new `cell` label and join the new cell.
 5. The old controller deletes the placements above the split from its scope.
 
 The split never moves data. Step 2 moves replicas within one cell, through the normal protocols, before any cell boundary changes.
 
+Nothing records the progress of these five steps, which move a range between two scopes on what can be two backend clusters. A source controller that fails after step 3 copied its placements, and before the root published the new map, is replaced by one without a record of the freeze. The replacement can move a writer in the upper half, and both cells can then grant the same next epoch of a shard to different writers.
+
+The split needs a journaled operation, with one authority over the transferred range at every moment, before the support matrix can include it:
+
+| Phase | Durable evidence | Authority over the transferred range |
+|---|---|---|
+| Preparing | A root record of the split: its operation ID, the source and destination cells, the boundary, the moving nodes with their incarnations, and the expected cell-map version | The source. The destination sends no callback |
+| Segregating | The source's segregating constraint, with the transitions and reservations that it causes | The source, which moves replicas under the normal protocols |
+| Frozen | A source commit that seals the transferred range at a named generation, after its transitions have ended | Nobody. The source starts no transition, admission or reshape in the range, and continues on the rest |
+| Copied | A destination manifest of the operation, the sealed generation, and the counts and digest of the copied state, which remains inactive | Nobody. The destination can be read for verification, and assigns no writer |
+| Released | The end of every source lease and writer tenure in the range that activation needs | Nobody. No restart of the source controller can restore its authority |
+| Activated | One root commit of the activation and the new cell-map version | The destination, after it verifies the root's commit. The source remains sealed |
+| Cleaning | A source tombstone that redirects stale readers, and the destination's activation receipt | The destination, which alone reserves epochs in the range |
+
+The protocol also needs these rules:
+
+- The copy includes every placement's `Reserved` and `Sequence`, so the destination reserves epochs and numbers operations above the source's. It copies no tenure: a writer in the transferred range gets a new epoch from the destination.
+- Before activation, the split can be cancelled, which unseals the range. After activation, it can only complete.
+- Each phase's commits follow the store's outcome rules, so a root, source or destination controller that fails over resumes the same operation from its record.
+- The moving nodes' old incarnations cannot receive callbacks from the destination, because an agent refuses a callback for another incarnation of itself.
+
 ### Failure handling
 
 | Failure | Detected by | Action | Effect on the data plane |
 |---|---|---|---|
-| A cell's controller process crashes | Its session in the root scope expires | The root places the cell on another process at a higher epoch. The new controller continues the cell's transitions | None. Routers keep cached routes, and lookups of uncached routes read the cell's scope |
+| A cell's controller process crashes | Its session in the root scope expires | The root places the cell on another process at a higher epoch. The new controller acquires the cell's scope and continues the cell's transitions | None. Routers keep their routes, and agents keep their replicas |
 | A replaced controller keeps running | Its next commit fails with `epoch.ErrFenced`. A node refuses its callbacks once the node has seen the new controller's higher epoch in a callback or a report reply | It abdicates | None |
-| The root's leader crashes | Its election key expires | Another controller process wins `Campaign` and continues | None. Cells keep their controllers, and no cell can change controller meanwhile |
-| A store cluster is unavailable | Failed commits and renewals in its scopes | Its cells stop transitions. Other cells continue | Its cells' writers stop at their lease deadline or continue fenced, as the ownership mode configures |
+| The root's leader crashes | Its election key expires | `Campaign` elects another controller process, which acquires the root scope and continues | None. Cells keep their controllers, and no cell can change controller meanwhile |
+| A store cluster is unavailable | Failed commits and renewals in its scopes | Its cells stop transitions and admissions. Other cells continue | Its cells' writers stop at their lease deadline or continue fenced, as the ownership mode configures |
 
 ## Alternatives considered
 
@@ -139,7 +164,7 @@ The split never moves data. Step 2 moves replicas within one cell, through the n
 
 Run the whole namespace in one controller with one scope, as SM's control plane does for one partition.
 
-**Why not as the only mode:** one controller, one store cluster and one membership pool each have a ceiling below the target scale, as the Motivation measures. A namespace with one cell is exactly this design, so small namespaces lose nothing.
+**Why not as the only mode:** one controller, one store cluster and one membership pool each have a ceiling below the target scale, as the Motivation measures. A namespace with one cell is exactly this design, so small namespaces lose nothing. The support matrix contains only namespaces of one cell.
 
 ### Cells that share nodes
 
@@ -167,11 +192,12 @@ Split a cell as soon as it exceeds a bound, without an operator.
 
 ## Drawbacks
 
-- The root adds a controller and a level of indirection to every namespace, including namespaces that never grow beyond one cell.
+- The root adds a controller and a level of indirection to every namespace, including a namespace that never grows beyond one cell, which every namespace of the support matrix is.
 - Load cannot move between cells without an operator. A cell whose nodes are full cannot use the free capacity of another cell until nodes move.
-- The split procedure runs rarely, touches the root, two cells and the nodes' labels, and must be correct the first time. The simulator has to cover each of its steps under faults.
+- In the support matrix, a namespace cannot grow beyond one cell. A namespace that outgrows it migrates to more than one namespace.
+- The split protocol, outside the matrix, runs rarely, touches the root, two cells and the nodes' labels, and must be correct the first time. It has seven phases, each with its own recovery, and the simulator has to cover a crash at each of them.
 - Operators manage cell labels, for example with one node pool or one deployment per cell.
-- A cold route costs two lookups in the worst case: the cell map, then the cell's route.
+- A cold route costs two reads in the worst case: the cell map, then the cell's routes.
 - The capacity figures in this document are estimates from etcd's documentation and SM's paper. We have not measured the library at any of them.
 
 ## Open questions
@@ -180,6 +206,8 @@ None.
 
 ## Unresolved and future work
 
+- Splitting a cell, and every namespace of more than one cell, are outside the support matrix. A split needs the journaled protocol with one authority over the transferred range in every phase.
+- Moving a live scope to another backend cluster is not supported.
 - Moving a shard from one cell to another without splitting the cell is not proposed here.
 - Balancing load across cells automatically is not proposed here.
 

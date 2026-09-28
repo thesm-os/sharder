@@ -4,7 +4,7 @@ title: Partitioning strategies and resharding
 author: Roy Klopper
 status: Draft
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-28
 discussion: none
 supersedes: none
 superseded-by: none
@@ -17,7 +17,7 @@ related: RFC-0001, RFC-0002, RFC-0004, RFC-0006, RFC-0009
 
 ## Summary
 
-A partitioner maps an application key to a position, an ordered byte string, and defines the shards of each cell as contiguous ranges of positions, called the cell's layout. Every lookup in every strategy is the same algorithm: compute the key's position, then search the sorted layout. We propose one `Partitioner` interface and five built-in strategies:
+A partitioner maps an application key to a position, an ordered byte string, and defines the shards of each cell as contiguous ranges of positions, called the cell's layout. Every lookup in every strategy is the same algorithm: compute the key's position, then find the shard whose range contains it. We propose one `Partitioner` interface and five built-in strategies:
 
 - `fixed-slots` hashes keys into a fixed number of slots.
 - `hash-range` hashes keys into a 64-bit space whose ranges split and merge with load.
@@ -25,7 +25,7 @@ A partitioner maps an application key to a position, an ordered byte string, and
 - `explicit` takes the application's list of shards.
 - `singleton` has one shard.
 
-A split or merge produces a new layout version and leaves the data on the nodes that already store it. The new writer's fence acquisition raises each parent's watermark above every epoch, so that a paused writer of a parent cannot write into a child.
+The support matrix contains `fixed-slots` and `singleton`. In both, the mapping from keys to positions is fixed when the root creates the namespace: the partitioner, the slot count, the hash function and its version, and hash tags. A hash function has a version, and every controller and router compares the version it runs with the one the namespace recorded. The other three strategies and resharding are designs outside the matrix. A split or merge would produce a new layout version and leave the data on the nodes that already store it, with the new writer's fence acquisition retiring each parent, so that a paused writer of a parent cannot write into a child.
 
 ## Motivation
 
@@ -36,7 +36,7 @@ The key-to-shard mapping is the choice on which published systems disagree most 
 - Range-partitioned databases keep keys in order and split a range when it grows past a size or load threshold.
 - Some applications already know their shards, such as one per tenant or one per region, and want the library to place them, not to compute them.
 
-A library with one mapping serves one of these groups. The partitioner is also where a generic library can break correctness quietly. When a range splits while its writer is paused, the writer resumes with a token for the parent shard and can write keys that now belong to a child. The resharding protocol has to close that window for every strategy.
+A library with one mapping serves one of these groups. The partitioner is also where a generic library can break correctness quietly. When a range splits while its writer is paused, the writer resumes with a token for the parent shard and can write keys that now belong to a child. A mapping that changes while processes disagree about it routes one key to two shards. A partitioner therefore needs a mapping that every process computes identically, and a resharding protocol that closes the stale-writer window for every strategy.
 
 At the target scale, one namespace spans many cells, and each cell holds up to 1,000,000 shards by default. The key-to-shard mapping therefore has to divide the key space into cells as well as into shards, with one lookup structure for both.
 
@@ -119,6 +119,10 @@ type Partitioner interface {
  // Position appends the position of key to dst and returns the extended slice. It
  // does not allocate when dst has room for the position.
  Position(dst, key []byte) []byte
+ // Mapping returns what decides Position: the partitioner's registered name, its
+ // configuration, and the name and version of its hash function. The factory sets
+ // it when it builds the partitioner.
+ Mapping() shard.Mapping
  // Initial returns the layout of a new cell whose range is r.
  Initial(cell shard.CellID, r shard.Range) (Layout, error)
  // Reshape proposes the next layout from the current layout and per-shard stats.
@@ -128,23 +132,30 @@ type Partitioner interface {
  Reshape(layout Layout, stats map[shard.ID]Stats, nodes int) (Layout, []Change, error)
 }
 
-// Hash maps a key to 64 bits. A partitioner's configuration names its hash, and the
-// registry builds it under the kind "hash". Implementations return the same value for
-// the same key in every process and on every platform, and do not allocate.
-type Hash func(key []byte) uint64
+// Hash is a 64-bit hash of keys. A partitioner's configuration names its hash, and the
+// registry builds it under the kind "hash".
+type Hash interface {
+ // Sum64 returns the hash of key. It returns the same value for the same key in every
+ // process and on every platform, and does not allocate.
+ Sum64(key []byte) uint64
+ // Version identifies the function that Sum64 computes. It increases whenever Sum64
+ // returns another value for any key, so a registered name and a version identify
+ // one function.
+ Version() uint32
+}
 ```
 
-`Position` and `Layout.Locate` are on the request path of every router, so their cost matters. We measured a binary search over 1,000,000 sorted ranges with 16-byte starts at 241 to 245 ns per lookup, without an allocation, at 24 bytes per entry plus the bytes of each start. Routers that cache only part of a layout use the structure that the router describes.
+`Position` and `Layout.Locate` are on the request path of every router, so their cost matters. We measured a binary search over 1,000,000 sorted ranges with 16-byte starts at 241 to 245 ns per lookup, without an allocation, at 24 bytes per entry plus the bytes of each start. A `fixed-slots` router does not search: a position is a slot number, which indexes an array of routes.
 
 ### Built-in strategies
 
-| Strategy | Position of a key | Shards | Shard IDs | Reshapes | Keeps key order | Default configuration |
-|---|---|---|---|---|---|---|
-| `fixed-slots` | `hash(key) mod slots`, as 4 bytes big-endian | One per slot | `"0"` to `"slots-1"` | No, except by a resharding operation | No | 1024 slots, `xxhash64`, hash tags off |
-| `hash-range` | `hash(key)`, as 8 bytes big-endian | Ranges of the 64-bit space | Hexadecimal range bounds, such as `"4000000000000000-8000000000000000"` | Yes, on load | No | 16 initial shards, `xxhash64`, split and merge thresholds below |
-| `key-range` | The key | Ranges of keys | Generated at each split, stable afterwards | Yes, on size and load | Yes | One initial shard, split at 512 MiB or on load |
-| `explicit` | The key | The configured prefixes and ranges. A prefix p covers every key that starts with p | Configured by the application | Only by a spec edit that adds a shard | Yes | none, the list is required |
-| `singleton` | The empty string | One, covering every position | `"0"` | No | Yes | none |
+| Strategy | Position of a key | Shards | Shard IDs | Reshapes | Keeps key order | Default configuration | In the support matrix |
+|---|---|---|---|---|---|---|---|
+| `fixed-slots` | `hash(key) mod slots`, as 4 bytes big-endian | One per slot | `"0"` to `"slots-1"` | No | No | 1024 slots, `xxhash64`, hash tags off | Yes |
+| `singleton` | The empty string | One, covering every position | `"0"` | No | Yes | none | Yes |
+| `hash-range` | `hash(key)`, as 8 bytes big-endian | Ranges of the 64-bit space | Hexadecimal range bounds, such as `"4000000000000000-8000000000000000"` | Yes, on load | No | 16 initial shards, `xxhash64`, split and merge thresholds below | No |
+| `key-range` | The key | Ranges of keys | Generated at each split, stable afterwards | Yes, on size and load | Yes | One initial shard, split at 512 MiB or on load | No |
+| `explicit` | The key | The configured prefixes and ranges. A prefix p covers every key that starts with p | Configured by the application | Only by a spec edit that adds a shard | Yes | none, the list is required | No |
 
 #### fixed-slots
 
@@ -154,9 +165,17 @@ type Hash func(key []byte) uint64
 
 With `hashTags` on, only the bytes between the first `{` and the first `}` after it are hashed, when at least one byte lies between them. Keys `user:{42}:cart` and `user:{42}:orders` then map to the same slot. Redis Cluster uses the same rule, so applications that already group keys this way keep their groups.
 
-The slot count is fixed for the life of the namespace, except through a resharding operation that multiplies or divides it by an integer factor. With `hash mod slots`, multiplying the count by k sends every key of slot i to one of the slots i, i+n, …, i+(k-1)n of the new layout, where n is the old count. Every new slot takes keys from exactly one old slot, and the core places each new slot on the nodes of its old slot before any data moves. Elasticsearch has routed new indices by the same modulo since 9.4.0, allows a split only to a multiple of the shard count, and fills target shard t from source shard t mod n. Any other change of the slot count remaps nearly every key and is refused.
+Every field of the configuration decides a key's position, so the whole configuration is part of the namespace's mapping. The slot count, the hash function and hash tags are fixed for the life of the namespace incarnation, and `Change` rejects an edit of any of them. A namespace that needs another slot count migrates to a new namespace. A namespace chooses its slot count for its largest deployment: every slot is one entry of each router's route array, so 1,024 slots cost a router about 8 KiB of pointers.
+
+The shard set of `fixed-slots` never changes, so a shard's ID remains its slot number for the life of the namespace incarnation, and no shard is ever retired.
+
+#### singleton
+
+`singleton` maps every key to the empty position and has one shard, `"0"`, whose range is every position. Its mapping has no hash function. Leader election uses it: the shard's one writer is the leader.
 
 #### hash-range
+
+`hash-range` is outside the support matrix.
 
 ```json
 {
@@ -173,6 +192,8 @@ The slot count is fixed for the life of the namespace, except through a reshardi
 
 #### key-range
 
+`key-range` is outside the support matrix.
+
 ```json
 {
   "initialSplits": ["g", "n", "t"],
@@ -186,6 +207,8 @@ The writer of each shard reports the shard's size as the `bytes` load metric and
 
 #### explicit
 
+`explicit` is outside the support matrix.
+
 ```json
 {
   "shards": [
@@ -196,11 +219,15 @@ The writer of each shard reports the shard's size as the `bytes` load metric and
 }
 ```
 
-Each shard has either a key prefix or a key range. Prefixes and ranges must not overlap, and `Layout.Locate` returns `ErrNoShard` for a key that matches neither. Adding a shard is a spec edit. Removing a shard or narrowing its prefix or range is a resharding operation, because keys move. An application whose mapping is more than prefixes and ranges, such as a lookup table, registers its own partitioner.
+Each shard has either a key prefix or a key range. Prefixes and ranges must not overlap, and `Layout.Locate` returns `ErrNoShard` for a key that matches neither. Adding a shard is a spec edit, which needs rules for publishing the new layout to every router before the matrix can include it. Removing a shard or narrowing its prefix or range is a resharding operation, because keys move. An application whose mapping is more than prefixes and ranges, such as a lookup table, registers its own partitioner.
 
 ### Hash functions
 
-A hash function is part of the layout, because two processes that disagree on it route the same key to different shards. The name is recorded in the layout, and changing it is a resharding operation. The one built-in, `xxhash64`, is XXH64 with seed 0 over the key bytes, from core.
+A hash function is part of the mapping, because two processes that disagree on it route the same key to different shards. The one built-in, `xxhash64`, is XXH64 with seed 0 over the key bytes, from core, at version 1.
+
+The namespace's mapping records the hash function's registered name and its version. Every controller and every router compares both with the hash function it runs when it starts, and refuses the namespace with an error of class `errs.Unsupported` when either differs. A process of a release whose hash function returns other values therefore refuses the namespace instead of routing keys to other shards. A registered hash function whose values change for any key increments its version, and a namespace cannot move to the new version by a spec edit.
+
+In its conformance test, `xxhash64` passes the XXH64 vectors of xxHash's reference implementation, from the table `XSUM_XXH64_testdata` of its sanity check, with seed 0. The xxHash specification itself contains no test vectors. Every other hash function passes fixed vectors of its own, and `fixed-slots` passes vectors of keys and slots, with and without hash tags, so that a change to its encoding of positions also fails a test.
 
 An application that migrates with an existing key-to-slot mapping registers that mapping's hash as a `partition.Hash` of its own. With Redis Cluster's CRC16 and 16,384 slots, `fixed-slots` with hash tags on reproduces Redis Cluster's slot of every key. With Kafka's murmur2, masked to 31 bits, and one slot per partition, it reproduces Kafka's default partition of every keyed record.
 
@@ -219,13 +246,17 @@ The Go runtime's `hash/maphash` is excluded because its seed differs between pro
 
 ### Layouts and cells
 
-Each cell covers a contiguous range of positions and has its own layout. Every shard's range lies inside its cell's range, and a split or merge stays inside one cell. A namespace starts with one cell whose range is every position, and its layout is the partitioner's `Initial` for that range. An operator splits a cell at a shard boundary, and each half keeps its shards, their epochs and their placements.
+Each cell covers a contiguous range of positions and has its own layout. Every shard's range lies inside its cell's range. A namespace starts with one cell whose range is every position, and its layout is the partitioner's `Initial` for that range. In the support matrix, the namespace keeps that one cell and that one layout.
 
 The store keeps each shard's range in the shard's placement, and the layout version in the cell's state. A layout of any size is therefore stored in bounded keys, and no single value contains a whole layout.
 
-### Resharding
+The initial placement of a layout can span more than one commit. The core commits the placements of the `Initial` layout in as many generations as the store's commit limits require, and each generation is a valid assignment. A shard whose placement is not committed yet is unplaced: the root reports it, and a router returns an error of class `errs.Transient` for its keys, as for a shard without a serving writer. A layout of 1,024 slots takes about 35 commits at 30 placements per commit.
 
-A split or merge changes which shard serves a key. The core applies a layout change in one generation of the cell, so that no router sees a layout whose placements are missing:
+### Resharding, outside the support matrix
+
+The support matrix contains no partitioner that reshapes, so no namespace in it splits or merges a shard. `Resolve` rejects every strategy that provides `reshapes`, and `Submit` rejects a proposal of the kind `reshard` with an error of class `errs.Unsupported`. This section records the design and the changes it needs before the matrix can include it.
+
+The design applies a split or merge in one generation of the cell, so that no router sees a layout whose placements are missing:
 
 1. The planning pass calls `Reshape` with the current layout and per-shard stats.
 2. For each change, the core places every new shard on the nodes and roles of the shard it comes from. For a merge, the placer first co-locates the parents on the same nodes. A merge whose parents are not co-located waits until they are.
@@ -235,7 +266,14 @@ A split or merge changes which shard serves a key. The core applies a layout cha
 
 Step 5 closes the stale-writer window. Suppose a writer of the parent pauses before step 4 and resumes after step 5. Its token refers to the parent, whose watermark is above the token's epoch, so its write fails. Without the retirement, the parent's watermark would still equal the old epoch. The write would then succeed on keys that belong to a child.
 
-In a namespace with `delegated` ownership, the application's authority splits and merges shards instead of the partitioner, so the core does not call `Reshape`. An agent reports each shard that the authority created with its range and its parents. The core applies the change in one generation once the reported children cover their parents' ranges exactly. Each child keeps the epoch that the authority granted, and its first fence acquisition retires its parents, as in step 5. A partitioner whose layout the spec fixes, such as `explicit`, can match an authority's initial layout, but it cannot follow a split without a spec edit. The application registers a partitioner that takes its initial layout from the authority and leaves every later change to the agents' reports.
+The design needs four changes before the support matrix can include it:
+
+- **Fresh shard identities.** The built-in partitioners derive a shard's ID from its address: `fixed-slots` from the slot number, and `hash-range` from the range bounds. Doubling the slot count would give the child of slot 0 the ID `"0"`, which step 5 retires in the acquisition that makes it writable, and a split followed by a merge recreates a retired range ID. The core has to give every new shard an ID that no earlier shard of the namespace incarnation used, and keep each shard's slot or range in a separate field.
+- **Mapping changes across cells.** Multiplying the slot count by k sends the keys of slot i to the slots i, i+n, …, i+(k-1)n, where n is the old count, and slot i+n can lie in another cell. The inherited placement of step 2 would then put a shard on nodes outside its cell. A change of the slot count is a migration of keys between cells, which the cell design does not provide, or a migration to a new namespace. Elasticsearch, which also routes by modulo, splits an index only into a new index, from a source that is read-only, with a shard count that is a multiple of the source's.
+- **Bounded publication.** A change with more placements than one commit admits cannot be published in one generation. The design needs either reshape operations that each fit in one commit, or staged descriptors behind a small activation record that one commit switches.
+- **Split inputs.** `Reshape` receives no split point from the agents' reports, no durable record of when a shard last changed, and no logical time. It cannot apply `key-range`'s split positions, or keep a cooldown across a restart of the controller.
+
+In a namespace with `delegated` ownership, also outside the support matrix, the application's authority splits and merges shards instead of the partitioner, so the core does not call `Reshape`. An agent reports each shard that the authority created with its range and its parents. The core applies the change in one generation once the reported children cover their parents' ranges exactly. Each child keeps the epoch that the authority granted, and its first fence acquisition retires its parents, as in step 5. A partitioner whose layout the spec fixes, such as `explicit`, can match an authority's initial layout, but it cannot follow a split without a spec edit. The application registers a partitioner that takes its initial layout from the authority and leaves every later change to the agents' reports.
 
 ## Alternatives considered
 
@@ -249,7 +287,7 @@ Map keys straight to nodes on a hash ring, as Dynamo and Cassandra do. There is 
 
 Give each partitioner a `Locate(layout, key)` method, so that `fixed-slots` computes its shard by arithmetic and the range strategies search.
 
-**Why not:** cells divide the same space that shards divide, and routers cache parts of layouts. With one position space, the cell map, a layout and a router's cache share one search over sorted ranges. `fixed-slots` loses its arithmetic lookup, and a router in lookup mode indexes slot positions directly instead.
+**Why not:** cells divide the same space that shards divide, and routers cache parts of layouts. With one position space, the cell map, a layout and a router's cache share one search over sorted ranges. A `fixed-slots` router still indexes slot positions directly, because a slot's position is its index.
 
 ### Application-defined shards only
 
@@ -269,13 +307,20 @@ Store the location of each key or small key group in a directory, as Facebook's 
 
 **Why not as a built-in:** the directory is itself a sharded, replicated datastore on the request path, and a partitioner performs no I/O. An application with a directory resolves a key to its micro-shard first and routes the micro-shard's ID, which `key-range` or `explicit` then maps to a shard.
 
+### Hash functions identified by name alone
+
+Record only the hash function's registered name in the mapping, and rely on the conformance vectors to keep the function unchanged across releases.
+
+**Why not:** the vectors catch an accidental change in a test run, but a deliberate change under the same name would still be deployed. With a version, a process of a release whose function returns other values refuses the namespace when it starts, instead of routing keys to other shards.
+
 ## Drawbacks
 
-- Five built-in strategies are about 1,500 lines of code by our estimate, plus the conformance suite each must pass.
-- Resharding adds a path that runs rarely and must be correct the first time: co-locating merge parents, a new layout and new placements in one generation, and retirement of parent tokens. Each application's fence must raise the parents' watermarks in the same transaction as the acquisition. A fence that gets this wrong reopens the stale-writer window.
-- `key-range` depends on the application to report sizes and split positions. An application that reports neither never splits.
-- `fixed-slots` cannot change its slot count except by an integer factor. A namespace that starts with too few slots for its largest deployment must reshard. Too many slots add per-slot overhead to every router.
-- A router in watch mode keeps the layouts of the cells it watches. A sorted index of 1,000,000 ranges takes 24 bytes per entry, measured, plus the bytes of each start: about 40 MB with 16-byte starts.
+- Five built-in strategies are about 1,500 lines of code by our estimate, plus the conformance suite each must pass. The support matrix contains two of them.
+- In the support matrix, `fixed-slots` never changes its slot count. A namespace that starts with too few slots for its largest deployment migrates to a new namespace. Too many slots add one route to each router's array per slot.
+- A hash function's implementer must increment its version on any change of its values. The version check does not detect a missed increment, and the conformance vectors do.
+- Resharding, outside the matrix, adds a path that runs rarely and must be correct the first time: co-locating merge parents, a new layout and new placements in one generation, and retirement of parent tokens. Each application's fence must raise the parents' watermarks in the same transaction as the acquisition. A fence that gets this wrong reopens the stale-writer window.
+- `key-range`, outside the matrix, depends on the application to report sizes and split positions. An application that reports neither never splits.
+- A router of a range partitioner in watch mode keeps the layouts of the cells it watches. A sorted index of 1,000,000 ranges takes 24 bytes per entry, measured, plus the bytes of each start: about 40 MB with 16-byte starts.
 
 ## Open questions
 
@@ -283,6 +328,8 @@ None.
 
 ## Unresolved and future work
 
+- Resharding is outside the support matrix. It needs fresh shard identities, a migration protocol for mapping changes across cells, bounded publication, and split inputs before the matrix can include it.
+- `hash-range`, `key-range` and `explicit` are outside the support matrix.
 - Detecting a hot key and splitting it into a shard of its own, as Dicer does, is not proposed here. `hash-range` splits a hot range only at its midpoint.
 - A directory-based built-in partitioner is not proposed here.
 - Moving a shard from one cell to another is not proposed here. Cells change by splitting at a shard boundary.
@@ -299,5 +346,6 @@ None.
 | Elasticsearch split index API | https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-indices-split |
 | CockroachDB range size and splits | https://www.cockroachlabs.com/docs/stable/architecture/distribution-layer |
 | Annamalai et al., "Sharding the Shards: Managing Datastore Locality at Scale with Akkio", OSDI '18 | https://www.usenix.org/conference/osdi18/presentation/annamalai |
-| xxHash specification, XXH64 | https://github.com/Cyan4973/xxHash/blob/dev/doc/xxhash_spec.md |
+| xxHash specification, XXH64, version 0.2.0 | https://github.com/Cyan4973/xxHash/blob/dev/doc/xxhash_spec.md |
+| xxHash reference implementation, `XSUM_XXH64_testdata` in `cli/xsum_sanity_check.c` | https://github.com/Cyan4973/xxHash/blob/dev/cli/xsum_sanity_check.c |
 | Our measurement of sorted slices and B-trees, 2026-09-27 | Research-0003 |

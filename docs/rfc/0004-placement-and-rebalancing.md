@@ -4,7 +4,7 @@ title: Placement and rebalancing strategies
 author: Roy Klopper
 status: Draft
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-28
 discussion: none
 supersedes: none
 superseded-by: none
@@ -19,11 +19,13 @@ related: RFC-0001, RFC-0002, RFC-0003, RFC-0005, RFC-0006, RFC-0009
 
 A placer selects the nodes that host each shard's replicas. We propose two kinds of placer and one adapter:
 
+- The `planner` computes placements in a controller from the current assignment, load and constraints. Hard constraints reject moves, and weighted goals in priority tiers score them. A local search applies the best moves within limits on its work. Applications register their own constraints and goals.
 - A function placer computes each shard's nodes from the layout and the node list alone, so every node computes the same placement without a coordinator. The built-ins are `rendezvous`, `consistent-hash`, `bounded-load`, `jump` and `maglev`.
-- The `planner` computes placements in a controller from the current assignment, load and constraints. Hard constraints reject moves, and weighted goals in priority tiers score them. A local search applies the best moves under a move budget. Applications register their own constraints and goals.
 - The `static` adapter places shards where an operator lists them.
 
-The core checks every plan against the constraints and the state model before it commits anything. A plan from a faulty placer that violates either is rejected. A placer places the shards of one cell on the nodes of that cell, so cells place in parallel, each in its own controller.
+The support matrix contains the planner. The function placers and `static` are designs outside it.
+
+A planning pass is a function of its input: the same input gives the same plan on every machine and at every degree of parallelism, unless the pass's timeout ends it. The core checks every plan against the constraints and the state model before it commits anything. A plan from a faulty placer that violates either is rejected. A placer places the shards of one cell on the nodes of that cell, so cells place in parallel, each in its own controller.
 
 ## Motivation
 
@@ -49,6 +51,7 @@ package placement
 import (
  "context"
 
+ "go.thesmos.sh/core/epoch"
  "go.thesmos.sh/core/rand"
  "go.thesmos.sh/sharder/partition"
  "go.thesmos.sh/sharder/replication"
@@ -57,9 +60,11 @@ import (
 
 // Input is everything a placer may read about one cell. A placer must not modify it.
 type Input struct {
- Cell    shard.CellID
- Layout  partition.Layout
- Current shard.Assignment
+ // Snapshot names the state that the pass reads.
+ Snapshot Snapshot
+ Cell     shard.CellID
+ Layout   partition.Layout
+ Current  shard.Assignment
  // Nodes lists the cell's live nodes that accept new replicas.
  Nodes []shard.Node
  // Draining lists live nodes whose replicas must move off. They do not accept new replicas.
@@ -73,21 +78,55 @@ type Input struct {
  // then restore replica counts first, and may leave soft goals unimproved.
  Emergency bool
  // Rand is the only source of randomness a placer may use. The core seeds it for
- // each pass from the cell and its generation, so a pass can be replayed.
+ // each pass from Snapshot, so a pass can be replayed.
  Rand rand.Rand
+}
+
+// Snapshot identifies the state that one planning pass reads. The controller logs it
+// with each plan. The simulator records it with the pass's whole Input, and replays a
+// recorded pass from them.
+type Snapshot struct {
+ // Term is the epoch of the controller that runs the pass.
+ Term epoch.Epoch
+ // SpecVersion is the version of the spec that the pass applies.
+ SpecVersion epoch.Epoch
+ // Generation is the cell's committed generation that Current is at.
+ Generation epoch.Epoch
+ // Membership is the revision of the membership view that Nodes lists.
+ Membership epoch.Epoch
+ // Reports counts the agents' reports that the controller accepted in its term
+ // before the pass, and so identifies the loads in ShardLoad.
+ Reports uint64
 }
 
 // Plan is a placer's proposal for the next assignment.
 type Plan struct {
- // Target maps each shard to its desired replicas. The core assigns epochs.
- Target map[shard.ID][]shard.Replica
- // Unplaced maps each shard that the placer could not fully place to the reason.
- Unplaced map[shard.ID]error
- // Cost is the value of the placer's objective for Target. Lower is better.
+ // Targets maps every shard of the layout to its target.
+ Targets map[shard.ID]Target
+ // Cost is the value of the placer's objective for Targets. Lower is better.
  Cost float64
+ // Incomplete reports that the pass ended on its timeout or on a work limit before
+ // its search finished. The core validates and commits an incomplete plan like any
+ // other, and never reports it as converged.
+ Incomplete bool
 }
 
-// Placer proposes an assignment. Given the same Input, it returns the same Plan.
+// Target is a placer's proposal for one shard. The shard's desired count is
+// len(Replicas) plus Deficit.
+type Target struct {
+ // Replicas lists the desired replicas that have a feasible node. The core assigns
+ // epochs.
+ Replicas []shard.Replica
+ // Deficit counts the desired replicas without a feasible node. The core keeps a
+ // shard's current replicas that the target does not move, so a target with a
+ // deficit repairs what it can and leaves the rest in place.
+ Deficit int
+ // Reason explains a deficit, such as the constraint that rejected every node.
+ Reason error
+}
+
+// Placer proposes an assignment. Given the same Input, it returns the same Plan,
+// unless its timeout ends the pass.
 type Placer interface {
  Place(ctx context.Context, in Input) (Plan, error)
 }
@@ -102,17 +141,7 @@ type Function interface {
 }
 ```
 
-### Function placers
-
-| Strategy | Maps a shard to nodes by | Cost per shard | Moved on one node change | Restriction | Configuration and defaults |
-|---|---|---|---|---|---|
-| `rendezvous` | The k nodes with the highest hash of shard ID and node ID, weighted by capacity | O(N) | Only the shards whose top k included the changed node | none | `hash`: `xxhash64`, `weighted`: true |
-| `consistent-hash` | The next k distinct nodes clockwise on a ring of virtual nodes | O(log(N·v)) | About 1/N of the shards | More virtual nodes balance better but give each node more distinct replica neighbours, so more combinations of two failures lose a shard | `vnodes`: 100, Dapr's default for its actor placement ring |
-| `bounded-load` | Consistent hashing in which a shard that maps to a full node moves on to the next node below c times the mean count | O(1/ε²) nodes probed, where c = 1+ε | O(1/ε²) times the shards that plain consistent hashing moves | Placement depends on which nodes are full, so it needs the whole layout | `capacityFactor`: 1.25, the value Vimeo used in production |
-| `jump` | Jump consistent hash over node ordinals | O(log N) | 1/(N+1) of the shards when a node is added, all to the new node | Nodes must be numbered 0 to N-1, and only the highest can leave without remapping others | `ordinalLabel`: `"ordinal"` |
-| `maglev` | A lookup table of prime size filled by per-node permutations | O(1) after a table build | About twice as many as a ring, by Envoy's simulations | Table must be rebuilt on every node change. Its authors size it above 100 × N for a 1% balance | `tableSize`: 65537, the authors' default |
-
-N is the node count, k the replica count, v the virtual nodes per node, and M the table size. The core counts the shards each function moves when membership changes, and exports the count as a metric, because a function placer does not read the previous assignment.
+A target states the repair it can make. Suppose a shard of three replicas has lost two nodes, and one spare node is feasible. Its target lists the surviving replica and the spare, with a deficit of one. The core adds the spare and keeps the survivor, and the shard has two serving replicas instead of one.
 
 ### The planner
 
@@ -121,7 +150,10 @@ The planner has three parts, each configured in the spec: hard constraints, weig
 ```go
 package placement
 
-import "go.thesmos.sh/sharder/shard"
+import (
+ "go.thesmos.sh/sharder/partition"
+ "go.thesmos.sh/sharder/shard"
+)
 
 // Move adds, removes, relocates or re-roles one replica.
 type Move struct {
@@ -132,8 +164,13 @@ type Move struct {
 }
 
 // State is the planner's working copy of the assignment, indexed for goals and
-// constraints. Only the planner applies moves to it.
+// constraints. Only the planner applies moves to it, on one goroutine, between
+// evaluations. Constraints and goals read it from as many goroutines as the planner
+// evaluates in parallel, and never modify it. Slices that it returns are sorted by ID,
+// and the caller must not modify them.
 type State interface {
+ // Shard returns the layout's descriptor of shard id, with its range and labels.
+ Shard(id shard.ID) (partition.Shard, bool)
  Replicas(id shard.ID) []shard.Replica
  OnNode(n shard.NodeID) []shard.ID
  Node(n shard.NodeID) (shard.Node, bool)
@@ -142,10 +179,16 @@ type State interface {
  NodeLoad(n shard.NodeID) shard.Load
  // Moved returns the number of moves applied since the pass started.
  Moved() int
+ // MovedNode returns the number of moves applied since the pass started that add a
+ // replica to n or remove one from it.
+ MovedNode(n shard.NodeID) int
+ // MovedShard returns the number of moves applied since the pass started to the
+ // replicas of shard id.
+ MovedShard(id shard.ID) int
 }
 
 // Constraint is a hard rule. The planner never applies a move that a constraint rejects,
-// and the core rejects a plan that violates one.
+// and the core rejects a plan that adds or moves a replica that a constraint rejects.
 type Constraint interface {
  Name() string
  // Check returns nil when st may apply m, and otherwise an error that explains why not.
@@ -164,6 +207,8 @@ type Goal interface {
 ```
 
 `Delta` exists so that the planner scores a candidate move by touching only the nodes and shards the move affects. SM's solver evaluates moves the same way, updating only the parts of its objective that a move can change.
+
+The built-in constraints and goals use only the exported methods of `State`, so a constraint that an application registers from its own package can do everything a built-in does. The conformance suite contains an external package that implements `match-label` and `move-limits` again, and checks that they reject the same moves as the built-ins.
 
 #### Built-in constraints
 
@@ -210,11 +255,26 @@ Tiers encode priority. The planner never accepts a move that worsens the cost of
 
 Kafka's assignors are planner configurations, not placers of their own. `count` alone spreads partitions as round-robin does, and `count` with `stickiness` keeps them in place as the sticky assignors do. No built-in goal keeps a member's partitions contiguous, as the range assignor does, and an application that needs that registers a goal.
 
+#### Repair
+
+A constraint that the spec adds, or a node whose capacity or labels change, can make the current assignment invalid before the planner runs. The planner and the core treat that assignment as a starting point to repair, not as a plan to reject:
+
+- The core checks a replica that the current assignment has and a plan keeps as the move that would add it. A replica that fails is a violation. The core reports it and does not reject the plan for it.
+- The planner plans repair before every goal tier. A replica on a failed node, on a draining node or in violation of a constraint moves to the best feasible node, even when the move raises a goal's cost. A drain therefore completes when it makes the balance worse for a while.
+- A repair move must pass every constraint. A replica without a feasible node remains where it is, and its shard's target reports the deficit.
+
 #### Search
 
 ```json
 {
-  "search": {"algorithm": "local", "maxMoves": 500, "sample": 16, "timeout": "60s"},
+  "search": {
+    "algorithm": "local",
+    "maxMoves": 500,
+    "maxEvaluations": 200000,
+    "maxSourceShards": 5000,
+    "sample": 16,
+    "timeout": "60s"
+  },
   "churn": {"maxShardFraction": 0.09},
   "triggers": {"interval": "30s", "minImbalance": 1.1, "activeAbove": 0.25, "onMembership": true}
 }
@@ -222,28 +282,68 @@ Kafka's assignors are planner configurations, not placers of their own. `count` 
 
 The planner runs in one of two modes, as SM's allocator does:
 
-- **Emergency.** When shards are under-replicated, after node failures or after an application reports a permanent fault in a replica, the planner places each missing replica on the best feasible node: every constraint filters the nodes, and the goals score the rest. It spreads the replicas of a failed node over many nodes, so that recovery work runs in parallel. It does not move healthy replicas.
-- **Periodic.** On each trigger, the planner improves the assignment tier by tier. For each tier, it takes the nodes with the highest cost and evaluates moving each of their shards to a sample of target nodes. It applies the best move that improves the tier's cost and passes the constraints. It evaluates larger shards first, because one large move fixes more than many small ones. SM's solver samples targets across groups of nodes and tries large shards first for the same reasons.
+- **Emergency.** When shards are under-replicated, after node failures or after an application reports a permanent fault in a replica outside the `delegated` mode, the planner places each missing replica on the best feasible node: every constraint filters the nodes, and the goals score the rest. It spreads the replicas of a failed node over many nodes, so that recovery work runs in parallel. It does not move healthy replicas.
+- **Periodic.** On each trigger, the planner repairs, then improves the assignment tier by tier. For each tier, it takes the nodes with the highest cost and evaluates moving each of their shards to a sample of target nodes. It applies the best move that improves the tier's cost and passes the constraints. It evaluates larger shards first, because one large move fixes more than many small ones. SM's solver samples targets across groups of nodes and tries large shards first for the same reasons.
 
 The `algorithm` field selects the search:
 
 - `greedy` applies the best move per shard once.
-- `local`, the default, repeats improving moves until no move improves the cost or the move budget is spent.
-- `anneal` accepts a worsening move with a probability that falls over the pass, as Service Fabric does.
+- `local`, the default, repeats improving moves until no move improves the cost or a limit ends the pass.
+- `anneal` accepts a worsening move within a tier with a probability that falls over the pass, as Service Fabric does. It never accepts a move that worsens a lower tier.
 
-The planner samples `sample` target nodes per candidate move, not every node, which keeps a pass's cost independent of the node count. Mitzenmacher's analysis of randomised load balancing supports the choice: a system in which each item chooses among a small number of random candidates "can perform almost as well as a perfect load balancing system with global load knowledge". Orleans's activation-count placement samples two silos by default, and the Kubernetes scheduler scores 50% of the nodes of a 100-node cluster, falling to 5% on large clusters.
+A pass ends at the first of four limits:
 
-A pass is deterministic unless its `timeout` stops it. The planner draws every random choice from `Input.Rand`, a `rand/pcg` source from core, and reads the timeout through the controller's `clock.Clock`, so the simulator replays a pass exactly under a virtual clock. The timeout is a safety bound. When it stops a pass, the planner reports the timeout, because the result then depends on the machine's speed.
+- `maxMoves` accepted moves.
+- `maxEvaluations` evaluated candidate moves.
+- `maxSourceShards` shards examined as the source of a move.
+- `timeout`.
 
-The planner has two time bounds at the default cell bounds of 5,000 nodes and 1,000,000 shards, on 4 cores. Emergency mode places the replicas of one failed node within 1 second. A periodic pass ends within 60 seconds, the default `timeout`, with the best plan it has found. Benchmarks in CI enforce both bounds.
+The first three bound a pass's search whatever the size of the cell, including a pass that finds no improving move: it stops after `maxSourceShards` shards and `maxEvaluations` evaluations. The planner builds its `State` from the `Input` once per pass, which costs time proportional to the shards and nodes of the cell. It then maintains its index of the nodes' costs with each applied move, so finding the costliest nodes does not scan the cell again. A pass that the timeout or a work limit ends returns its best plan with `Incomplete` set, and the core reports the cell as not converged.
 
-A pass's work depends on `maxMoves` and `sample`, not on the size of the cell, because the planner starts from the nodes with the highest cost and samples targets. Each cell plans in its own controller, so a namespace of many cells plans its cells in parallel on as many processes. Inside one controller, the planner draws its samples on one goroutine, because a `rand/pcg` source is not safe for concurrent use. It then evaluates the candidate targets of a move in parallel with `task.Each` from core, bounded by the controller's CPU limit.
+The planner samples `sample` target nodes per candidate move, not every node. Mitzenmacher's analysis of randomised load balancing supports the choice: a system in which each item chooses among a small number of random candidates "can perform almost as well as a perfect load balancing system with global load knowledge". Orleans's activation-count placement samples two silos by default, and the Kubernetes scheduler scores 50% of the nodes of a 100-node cluster, falling to 5% on large clusters.
+
+A pass is deterministic: the same `Input` gives the same `Plan`, whatever the number of goroutines and whatever the order of Go's map iteration. The planner applies these rules:
+
+- It visits nodes and shards in the order of their IDs, never in the order of a map.
+- It takes every random choice from `Input.Rand`, a `rand/pcg` source from core, on one goroutine, because a `rand/pcg` source is not safe for concurrent use.
+- It evaluates the candidate targets of a move in parallel with `task.Each` from core, bounded by the controller's CPU limit, and reduces the results in candidate order, not in the order in which they complete.
+- Of two candidates with equal cost, it takes the one with the lower shard ID, then the one with the lower target node ID.
+- It rejects a cost that is not a finite number, and reports the goal that returned it.
+- It reads the timeout through the controller's `clock.Clock`, so the simulator replays a pass exactly under a virtual clock.
+
+The timeout is the one source of machine dependence. A pass that the timeout ends has a result that depends on the machine's speed, and its plan is marked `Incomplete`.
+
+The planner has two targets at the default cell bounds of 5,000 nodes and 1,000,000 shards, on 4 cores. Emergency mode places the replicas of one failed node within 1 second. A periodic pass ends within 60 seconds, the default `timeout`. We have not measured either. CI benchmarks measure them at increasing cell sizes, in six cases: each supported preset's goals, a pass with no improving move, a cell where every move is infeasible, skewed load, many label constraints, and one failed node. For each case, a benchmark reports these values at p50, p95 and p99:
+
+- the planner's CPU time and allocations
+- the time to build its `State`
+- the plan's cost against the starting cost
+- the latency of the commits that apply the plan
+- the time until every moved replica serves
+
+A measurement that misses a target is recorded as a defect. The deterministic simulator checks the plans, never the elapsed times.
+
+Each cell plans in its own controller, so a namespace of many cells plans its cells in parallel on as many processes.
 
 The churn budget caps the fraction of shards that one periodic pass may move. Its default, 9%, is Slicer's per-adjustment key churn budget. The simulator measures the balance and the moves that the default gives, and a preset can set its own budget. `triggers` skip a periodic pass while the most loaded node is below `activeAbove` of its capacity, or while the ratio of the highest to the mean node load is below `minImbalance`. Slicer suppresses rebalancing below 25% CPU for the same reason: when no node is at risk, a move has a cost and no benefit.
 
+### Function placers
+
+The function placers are outside the support matrix.
+
+| Strategy | Maps a shard to nodes by | Cost per shard | Moved on one node change | Restriction | Configuration and defaults |
+|---|---|---|---|---|---|
+| `rendezvous` | The k nodes with the highest hash of shard ID and node ID, weighted by capacity | O(N) | Only the shards whose top k included the changed node | none | `hash`: `xxhash64`, `weighted`: true |
+| `consistent-hash` | The next k distinct nodes clockwise on a ring of virtual nodes | O(log(N·v)) | About 1/N of the shards | More virtual nodes balance better but give each node more distinct replica neighbours, so more combinations of two failures lose a shard | `vnodes`: 100, Dapr's default for its actor placement ring |
+| `bounded-load` | Consistent hashing in which a shard that maps to a full node moves on to the next node below c times the mean count | O(1/ε²) nodes probed, where c = 1+ε | O(1/ε²) times the shards that plain consistent hashing moves | Placement depends on which nodes are full, so it needs the whole layout | `capacityFactor`: 1.25, the value Vimeo used in production |
+| `jump` | Jump consistent hash over node ordinals | O(log N) | 1/(N+1) of the shards when a node is added, all to the new node | Nodes must be numbered 0 to N-1, and only the highest can leave without remapping others | `ordinalLabel`: `"ordinal"` |
+| `maglev` | A lookup table of prime size filled by per-node permutations | O(1) after a table build | About twice as many as a ring, by Envoy's simulations | Table must be rebuilt on every node change. Its authors size it above 100 × N for a 1% balance | `tableSize`: 65537, the authors' default |
+
+N is the node count, k the replica count, v the virtual nodes per node, and M the table size. The core counts the shards each function moves when membership changes, and exports the count as a metric, because a function placer does not read the previous assignment.
+
 ### The static adapter
 
-`static` places each shard on the nodes and roles an operator lists in the spec. It reports a shard whose listed node is not live as unplaced, unless its `failover` field names another placer to fill the gap.
+`static` is outside the support matrix. It places each shard on the nodes and roles an operator lists in the spec. It reports a shard whose listed node is not live as unplaced, unless its `failover` field names another placer to fill the gap.
 
 An application that uses an optimiser in another process registers a `Placer` that calls it. The core validates the plan that it returns like any other.
 
@@ -257,16 +357,16 @@ The planner balances one namespace. Namespaces whose processes share machines re
 
 The core checks every plan before it commits it, whatever placer produced it:
 
-- Each shard in the layout has a target or an entry in `Unplaced`.
-- Each target has as many replicas as `Replicas` asks, with at most one replica per node.
-- No target violates a constraint of the spec.
-- No target puts more replicas in a role than the state model's bound allows.
+- Each shard in the layout has a target.
+- Each target has at most one replica per node, and its replicas plus its deficit equal the shard's desired count.
+- Every replica that a target adds or moves passes every constraint of the spec, checked as the move that adds it. A replica that a target keeps and that fails a constraint is a violation, which the core reports.
+- No target puts more replicas in a role than the state model's bound allows, counting started transitions.
 
 A plan that fails a check is rejected whole. The current assignment remains in effect, and the core reports the placer and the failed check.
 
-`sharderctl move`, `drain`, `reshard` and `cell split` each become a plan that the core validates the same way. The core refuses such a plan before anything is committed, and reports the check that failed.
+`sharderctl move` and `drain` each become a plan that the core validates the same way. The core refuses such a plan before anything is committed, and reports the check that failed. `reshard` and `cell split` are outside the support matrix.
 
-In a namespace with `delegated` ownership, the application's authority chooses each shard's replicas, and the core takes them from the agents' reports. A plan there may change only which of a shard's reported replicas is the writer.
+In a namespace with `delegated` ownership, outside the support matrix, the application's authority chooses each shard's replicas, and the core takes them from the agents' reports. A plan there may change only which of a shard's reported replicas is the writer.
 
 ## Alternatives considered
 
@@ -281,6 +381,12 @@ Formulate placement as a mixed-integer program or a constraint program and solve
 Service Fabric's approach: random moves, with worsening moves accepted at a probability that falls over time. It escapes local minima in which greedy search stops.
 
 **Why not as the default:** annealing needs more moves per pass to converge, and its random walk makes results harder to explain to an operator. It is available as `"algorithm": "anneal"`.
+
+### A timeout as the only bound on a pass
+
+End a pass only on its timeout, with the best plan found so far. The search then needs no limits on its work, and a fast machine searches further.
+
+**Why not:** a pass that the timeout ends depends on the machine's speed, so its plan cannot be replayed on another machine, and a slow machine ends every pass at the timeout. Work limits end a pass at the same point on every machine, and the timeout remains as a safety bound.
 
 ### Consistent hashing as the only placer
 
@@ -306,12 +412,13 @@ Filter the feasible nodes and pick the highest-scoring one for each shard, as a 
 
 ## Drawbacks
 
-- The planner is the largest component of the library: seven constraints, seven goals, three search algorithms and two modes. By our estimate it is 4,000 lines of code, and CI benchmarks must show that it meets its bounds of 1 second per emergency placement and 60 seconds per periodic pass.
-- We have not measured the planner. SM reports 30 seconds for 75,000 shards on 1,000 servers with a mature, heavily optimised solver, growing to 205 seconds for 375,000 shards on 5,000 servers. A 60-second pass over 1,000,000 shards ends on its move budget or its timeout, not at a converged plan.
+- The planner is the largest component of the library: seven constraints, seven goals, three search algorithms and two modes. By our estimate it is 4,000 lines of code.
+- We have not measured the planner. SM reports 30 seconds for 75,000 shards on 1,000 servers with a mature, heavily optimised solver, growing to 205 seconds for 375,000 shards on 5,000 servers. A 60-second pass over 1,000,000 shards ends on a work limit or its timeout, not at a converged plan.
+- Building a pass's `State` costs time proportional to the cell, on every pass, before the work limits apply.
+- A plan is reproducible on another machine only when a work limit or the search, not the timeout, ends the pass.
 - Namespaces that share machines without isolation do not see each other's load. Capacity that one namespace leaves idle is not available to another.
-- A plan is deterministic only when the move budget ends the pass. A pass that the timeout ends produces a result that depends on the machine.
 - Tiers and weights are configuration that users must understand. A goal list with badly chosen weights moves shards without improving anything that matters.
-- Function placers that ignore load can overload a node that serves hot shards. `bounded-load` limits the imbalance in shard count, not in measured load.
+- Function placers, outside the matrix, ignore load and can overload a node that serves hot shards. `bounded-load` limits the imbalance in shard count, not in measured load.
 - Placement never crosses a cell. A cell whose nodes are full cannot use the free capacity of another cell until an operator moves nodes between them.
 
 ## Open questions
@@ -320,6 +427,7 @@ None.
 
 ## Unresolved and future work
 
+- The function placers and `static` are outside the support matrix.
 - Placement across namespaces, where a goal in one namespace reads another namespace's assignment, is not proposed here beyond the `colocate` goal within one namespace.
 - Machine-wide utilisation as a load metric, which would let each namespace's planner avoid machines that other namespaces load, is not proposed here.
 - Forecasting load and placing ahead of it is not proposed here.
@@ -354,3 +462,4 @@ None.
 | Microsoft Learn, Service Fabric metrics | https://learn.microsoft.com/en-us/azure/service-fabric/service-fabric-cluster-resource-manager-metrics |
 | Guo and Kooburat, "Scaling services with Shard Manager", Engineering at Meta, 2020 | https://engineering.fb.com/2020/08/24/production-engineering/scaling-services-with-shard-manager/ |
 | Yu, "Twine: Efficient, reliable cluster management", Engineering at Meta, 2019 | https://engineering.fb.com/2019/06/06/data-center-engineering/twine/ |
+| Go specification, range over maps | https://go.dev/ref/spec#For_range |
