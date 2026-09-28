@@ -4,13 +4,15 @@ title: Along which axes do sharding systems differ, and how do configurable syst
 author: Claude, for Roy Klopper
 status: Answered
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-28
 freshest-source: 2026-09-23
 supersedes: none
 superseded-by: none
 ---
 
 # Research-0002: Along which axes do sharding systems differ, and how do configurable systems select and validate strategies?
+
+Note: this research of 2026-09-27 predates the design, and its conclusions are historical. The strategies of the design, and the subset that the first release supports, are in [the RFCs](../rfc/README.md).
 
 ## The question
 

@@ -4,13 +4,15 @@ title: How do sharding control planes, stores and routers scale to huge deployme
 author: Claude, for Roy Klopper
 status: Answered
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-28
 freshest-source: 2026-04-13
 supersedes: none
 superseded-by: none
 ---
 
 # Research-0003: How do sharding control planes, stores and routers scale to huge deployments, and which structure should a route cache use?
+
+Note: this research of 2026-09-27 predates the design, and its conclusions about scale are historical estimates. The cells of the design are in [the RFCs](../rfc/README.md), and the supported limits come from the measurements that [the roadmap](../roadmap/README.md) requires.
 
 ## The question
 

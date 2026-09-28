@@ -4,13 +4,15 @@ title: Is seaweedfs/shardmanager a sound base for a generic shard-management lib
 author: Claude, for Roy Klopper
 status: Answered
 created: 2026-09-27
-updated: 2026-09-27
+updated: 2026-09-28
 freshest-source: 2026-09-27
 supersedes: none
 superseded-by: none
 ---
 
 # Research-0001: Is seaweedfs/shardmanager a sound base for a generic shard-management library, and what must a replacement add?
+
+Note: this research of 2026-09-27 predates the design, and its invariants, build order and recommendations are historical. The guarantees of the design are in [the RFCs](../rfc/README.md), and the order of work is in [the roadmap](../roadmap/README.md).
 
 ## The question
 
