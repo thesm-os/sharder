@@ -20,7 +20,7 @@ related: RFC-0001, RFC-0002, RFC-0006, RFC-0008, RFC-0009
 Every strategy depends on these mechanisms:
 
 - Membership reports which nodes of a cell are alive.
-- The store persists the cell map, each cell's assignment, the transitions in flight, the disruptions that the budget admitted, and the proposals that controllers applied.
+- The store persists the cell map, each cell's assignment, the transitions in flight, the disruptions that the budget deferred or admitted, and the proposals that controllers applied.
 - Distribution delivers each committed change to agents and routers.
 
 We propose one interface for each, written in core's vocabulary: epochs from `epoch`, conditional-write errors from `version`, pages from `page`, and error classes from `errs`. The store and membership are interfaces with conformance suites. The root module contains an in-memory store with fault hooks, which also provides a membership, for tests and simulations. Adapters in their own modules implement both over real backends, and the support matrix contains the etcd adapter. Each adapter reports its own limits per scope, so the core depends on no backend. Each cell has its own scope in the store, and an adapter can place scopes on separate backend clusters, so the store scales with the number of cells.
@@ -56,12 +56,14 @@ import (
  "iter"
 
  "go.thesmos.sh/core/epoch"
+ "go.thesmos.sh/sharder/ownership"
  "go.thesmos.sh/sharder/shard"
 )
 
-// View is one list of the live nodes of a cell.
+// View is one list of the live nodes of a cell in one namespace incarnation.
 type View struct {
- Scope shard.Scope
+ Scope       shard.Scope
+ Incarnation shard.NamespaceIncarnation
  // Revision increases with every change of the view.
  Revision epoch.Epoch
  Nodes    []shard.Node
@@ -73,8 +75,10 @@ type Session interface {
  // of the same node.
  Incarnation() epoch.Epoch
  // Done is closed when the session's lease is lost: when the backend reports the
- // loss, or when the local deadline passes without an accepted renewal. The deadline
- // is a clock timer, armed for Lease.Validity when each renewal is sent.
+ // loss, or when the local deadline passes. The deadline is the send time of the
+ // latest accepted renewal plus Lease.Validity, on a clock timer. A renewal that fails
+ // or has no reply does not move it, and a reply that arrives after Done has closed
+ // does not reopen the session.
  Done() <-chan struct{}
  // Leave ends the session and removes the node from the view at once.
  Leave(ctx context.Context) error
@@ -83,12 +87,15 @@ type Session interface {
 // Membership registers nodes in cells and reports which nodes are live. A node is
 // live while the backend renews its lease.
 type Membership interface {
- // Join registers n in the cell n.Cell of ns and renews its lease until ctx ends or
- // Leave is called.
- Join(ctx context.Context, ns shard.Namespace, n shard.Node) (Session, error)
- // Watch yields the current view of the cell of s, then every later view, in
- // revision order, until ctx ends.
- Watch(ctx context.Context, s shard.Scope) iter.Seq2[View, error]
+ // Join registers n in scope s, the root or one cell, of the namespace incarnation
+ // inc, and renews its lease every l.Renew, for a lease of l.TTL, until ctx ends or
+ // Leave is called. It returns shard.ErrIncarnation when the scope belongs to another
+ // incarnation.
+ Join(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, n shard.Node, l ownership.Lease) (Session, error)
+ // Watch yields the current view of scope s, then every later view, in revision
+ // order, until ctx ends. It yields shard.ErrIncarnation and stops when the scope
+ // belongs, or comes to belong, to another incarnation than inc.
+ Watch(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation) iter.Seq2[View, error]
 }
 ```
 
@@ -98,9 +105,11 @@ type Membership interface {
 | `store/memory` | the root module | A lease per node, on the store's clock | The lease's TTL, 10 s | `leases` | In tests and simulations |
 | `membership/static` | the root module | None. The embedder lists the nodes | Never | `ordinal-nodes` | No, because `exclusive` requires `leases` |
 
-Each adapter declares its capabilities through `config.Provider`, and the controller checks the spec's requirements against them. Every implementation keeps each node's description with its session, including the node's identity, so the cell's controller knows which identity each node's reports must come from.
+Each adapter declares its capabilities through `config.Provider`, and the controller checks the spec's requirements against the capabilities of each role: those of the store, and those of the membership. Every implementation keeps each node's description with its session, including the node's identity, so the cell's controller knows which identity each node's reports must come from.
 
-Each cell's nodes register in the cell's own scope, so the renewals of a namespace spread over its cells and over the backend clusters that store them. A cell of 5,000 nodes that renew every 3.3 seconds, a third of the default TTL, sends about 1,500 renewals per second to its store. We have not measured any backend's renewal throughput.
+`Join` takes the lease of the namespace's spec, so every adapter renews at the spec's interval and moves each session's deadline on each accepted renewal, whatever its backend's own default TTL. `Join` and `Watch` are bound to a namespace incarnation, so a delayed call of a namespace that was deleted and created again under the same name changes nothing in the new incarnation.
+
+Each cell's nodes register in the cell's own scope, so the renewals of a namespace spread over its cells and over the backend clusters that store them. A cell of 5,000 nodes that renew every 3.3 seconds, a third of the default TTL, sends about 1,500 renewals per second to its store. The root's membership adds one session in the root scope for each process that runs a controller: a cell whose 5,000 processes all run one adds about 1,500 renewals per second to the root's store. We have not measured any backend's renewal throughput.
 
 The core waits `failoverDelay` after a node's session ends before it moves the node's replicas, as SM lets applications configure. The default is zero, and every preset keeps it, so a failed writer is replaced as soon as its lease expires. An application whose replicas are expensive to rebuild sets a delay of its own. A node that restarts inside the delay registers a new incarnation, and the core restores its replicas through the normal protocols, with a new epoch for every writer.
 
@@ -125,10 +134,12 @@ import (
  "go.thesmos.sh/sharder/shard"
 )
 
-//go:generate go tool kanon -type=Head,Transition,Endpoint,Drain,CommitID,Receipt,Applied,Mutation
+//go:generate go tool kanon -type=Head,Transition,Endpoint,Drain,DrainKey,CommitID,Receipt,Applied,Mutation
 
-// Schema is the version of the record formats that this release writes and reads. A
-// controller refuses to acquire a scope whose Head.Schema is above it.
+// Schema is the version of the record formats and of the handoff protocols' scripts
+// that this release writes and reads. A release that changes either raises it. A
+// controller refuses to acquire a scope whose Head.Schema is above it, before it
+// commits anything to the scope.
 const Schema uint32 = 1
 
 // ErrCompacted reports a read or a watch at a generation that the store no longer
@@ -152,7 +163,8 @@ type Head struct {
  Generation  epoch.Epoch
  // Watermark is the highest writer epoch that the scope has admitted.
  Watermark epoch.Epoch
- // Schema is the highest record schema that the scope contains.
+ // Schema is the highest schema of any record or transition that the scope contains.
+ // The commit that writes a record or a transition of a higher schema raises it.
  Schema uint32
 }
 
@@ -169,7 +181,8 @@ type Transition struct {
  SpecVersion epoch.Epoch
  From        Endpoint
  To          Endpoint
- // Fallback is the node that the abort path makes the writer.
+ // Fallback is the node that the abort path makes the writer. It is empty when no
+ // node qualifies, and the abort path then ends with no assigned writer.
  Fallback Endpoint
  OldEpoch epoch.Epoch
  // NewEpoch and AbortEpoch are the epochs that the core reserved for the move.
@@ -192,16 +205,27 @@ type Endpoint struct {
  Role        shard.Role
 }
 
-// Drain excludes a node from new placements until the operator undrains the node, or,
-// for the drain of a disruption, until the disruption's reservation ends.
+// Drain is one reason to exclude a node from new placements, and a node is draining
+// while it has at least one drain. The node and the disruption ID identify a drain.
+// The empty disruption ID is the node's manual drain, which sharderctl drain adds and
+// sharderctl undrain removes, and which operators share: a second manual drain of the
+// node changes nothing. Every other ID is the drain of that disruption's reservation,
+// which ends with the reservation.
 type Drain struct {
  Node shard.NodeID
- // Disruption is the ID of the reservation that drains the node, or empty for an
- // operator's drain.
+ // Disruption is the ID of the reservation that drains the node, pending or
+ // admitted, or empty for the manual drain.
  Disruption string
  // Caller is the identity that requested the drain.
  Caller shard.Identity
  Since  time.Time
+}
+
+// DrainKey identifies one drain: the node and the disruption ID, which is empty for the
+// manual drain.
+type DrainKey struct {
+ Node       shard.NodeID
+ Disruption string
 }
 
 // State is a scope's committed state apart from its placements.
@@ -214,21 +238,23 @@ type State struct {
  Cell shard.Cell
  // Mapping is the namespace's mapping, in the root scope only.
  Mapping shard.Mapping
- // Spec is the accepted spec, with the proposal that introduced it, as JSON, in the
- // root scope only.
+ // Spec is the accepted spec, resolved with every default applied, with the proposal
+ // that introduced it, as JSON, in the root scope only.
  Spec []byte
  // Approvals lists every version of the namespace's approvals section in order,
  // each as the signed spec proposal that introduced it, in the root scope only. It is
  // empty in the support matrix.
  Approvals [][]byte
  // Applied maps the ID of each applied proposal to its Expires, until Expires
- // passes.
+ // passes. An ID that Applied contains proves that the proposal applied. An ID that
+ // it lacks does not show that the proposal was rejected, because Forget removes each
+ // ID once its Expires passes.
  Applied     map[string]time.Time
  Transitions []Transition
- // Reservations lists the disruptions that the budget admitted and that have not
- // ended.
+ // Reservations lists the disruptions that the budget deferred or admitted and that
+ // have not ended. A reservation whose Admitted is zero is pending.
  Reservations []budget.Reservation
- // Drains lists the nodes that accept no new replicas.
+ // Drains lists every drain. A node with at least one drain accepts no new replicas.
  Drains []Drain
 }
 
@@ -282,12 +308,15 @@ type Mutation struct {
  Applied []Applied
  // Forget removes applied proposals whose Expires has passed.
  Forget []string
- // Reserve adds reservations, and Release removes the reservations with these IDs.
+ // Reserve adds reservations, or replaces the reservations with the same IDs, such as
+ // a pending reservation that the budget admits. Release removes the reservations
+ // with these IDs.
  Reserve []budget.Reservation
  Release []string
- // Drain adds drains, and Undrain removes the drains of these nodes.
+ // Drain adds drains, and Undrain removes the drains with these keys. Removing one
+ // drain of a node leaves the node's other drains in effect.
  Drain   []Drain
- Undrain []shard.NodeID
+ Undrain []DrainKey
  // Confirm removes the receipts of the writer's earlier commits whose outcome the
  // writer knows.
  Confirm []CommitID
@@ -313,6 +342,11 @@ type Applied struct {
 type Event struct {
  Generation epoch.Epoch
  Mutation   Mutation
+ // Removed lists, for a watcher filtered by node, each shard whose placement stops
+ // naming the node in this generation. A move to another node does not delete the
+ // placement, so Mutation.Delete does not list the shard. Removed is empty for every
+ // other watcher.
+ Removed []shard.ID
 }
 
 // Limits bounds what one commit to a scope may contain. The planner splits a larger
@@ -339,15 +373,18 @@ type Leadership interface {
 // both bound when the Writer is created.
 type Writer interface {
  // Commit applies m as the generation after expect, and writes m's receipt in the
- // same transaction. It returns the generation that m created. A commit whose ID the
- // scope has recorded with the same digest returns the recorded generation and
- // applies nothing again. Five errors are definite rejections, which apply nothing:
- // epoch.ErrFenced when the scope's watermark is above the writer's epoch,
- // shard.ErrIncarnation when the scope has another incarnation, ErrReused,
- // ErrTooLarge, and version.ErrMismatch when the scope is not at expect and has no
- // receipt of m. Every other error wraps version.ErrOutcomeUnknown: m may have
- // applied. An admitted commit advances the watermark to the writer's epoch. A
- // commit at generation zero creates the scope with the writer's incarnation.
+ // same transaction. It returns the generation that m created. It returns ErrTooLarge
+ // before it sends anything. In one atomic step with the mutation, it then checks the
+ // scope's incarnation, the fence, the receipt of m's ID and the generation, in that
+ // order, and returns the error of the first check that fails: shard.ErrIncarnation
+ // when the scope has another incarnation, epoch.ErrFenced when the scope's watermark
+ // is above the writer's epoch, ErrReused when the scope has recorded m's ID with
+ // another digest, and version.ErrMismatch when the scope is not at expect. A receipt
+ // of m's ID with m's digest returns the recorded generation and applies nothing
+ // again. These five errors are definite rejections, which apply nothing. Every other
+ // error wraps version.ErrOutcomeUnknown: m may have applied. An admitted commit
+ // advances the watermark to the writer's epoch. A commit at generation zero creates
+ // the scope with the writer's incarnation.
  Commit(ctx context.Context, expect epoch.Epoch, m Mutation) (epoch.Epoch, error)
 }
 
@@ -359,15 +396,21 @@ type Store interface {
  Head(ctx context.Context, s shard.Scope) (Head, error)
  // Read returns the scope's state and a cursor over the placements that q selects,
  // one page per call. The read of the state is linearizable, and every page is at
- // the state's generation. A page whose generation the store no longer keeps fails
- // with ErrCompacted.
- Read(ctx context.Context, s shard.Scope, q Query, p page.Page) (State, page.Cursor[shard.Placement], error)
+ // the state's generation. inc is the namespace incarnation that the reader expects,
+ // or zero for a reader that has not learned it yet, and a scope of another
+ // incarnation fails with shard.ErrIncarnation. Each page token encodes the state's
+ // incarnation and generation, so a later page of a scope that was deleted and
+ // created again fails with shard.ErrIncarnation as well. A page whose generation the
+ // store no longer keeps fails with ErrCompacted.
+ Read(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, q Query, p page.Page) (State, page.Cursor[shard.Placement], error)
  // Watch yields the generations of s later than from, in order and each whole, until
  // ctx ends. With node set, it yields only the generations that change a placement
  // that has or had a replica on node, or the scope's controller record, and yields
  // empty events as progress. It yields ErrCompacted when from is older than the
- // store's history, or when the watcher falls behind its buffer.
- Watch(ctx context.Context, s shard.Scope, from epoch.Epoch, node shard.NodeID) iter.Seq2[Event, error]
+ // store's history, or when the watcher falls behind its buffer. It yields
+ // shard.ErrIncarnation and stops when the scope belongs, or comes to belong, to
+ // another incarnation than inc.
+ Watch(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, from epoch.Epoch, node shard.NodeID) iter.Seq2[Event, error]
  // Writer returns a writer for s bound to the namespace incarnation inc and the epoch
  // term. It performs no I/O.
  Writer(s shard.Scope, inc shard.NamespaceIncarnation, term epoch.Epoch) Writer
@@ -412,16 +455,16 @@ A commit ends in one of three outcomes:
 - **Rejected.** `Commit` returns one of the five definite rejections, and the scope is unchanged.
 - **Unknown.** `Commit` returns an error that wraps `version.ErrOutcomeUnknown`. A timeout, a lost connection or a cancelled context during the send can leave the commit applied or not.
 
-A commit is idempotent by its ID. A retry with the same ID and the same mutation returns the generation that the first attempt created, if the first attempt applied, and applies nothing again. The store checks the fence before the receipt. A writer that a newer term has fenced therefore gets `epoch.ErrFenced` whatever its receipts, and an unfenced writer's retry succeeds even when its own later commits have moved the generation.
+A commit is idempotent by its ID. A retry with the same ID and the same mutation returns the generation that the first attempt created, if the first attempt applied, and applies nothing again. The store checks the incarnation, the fence, the receipt and the generation in that order, in one atomic step. A writer that a newer term has fenced therefore gets `epoch.ErrFenced` whatever its receipts and whatever the generation, and an unfenced writer's retry succeeds even when its own later commits have moved the generation.
 
-An absent receipt does not prove that the commit was rejected, because the original request may still arrive at the backend and apply. `Outcome`, which reads a receipt and applies nothing, settles an unknown outcome only together with a retry or a barrier:
+An absent receipt does not prove that the commit was rejected, because the original request may still arrive at the backend and apply. A controller ends the uncertainty with a retry or a barrier:
 
-- **A retry.** The controller retries the same commit, with the same ID, `expect` and mutation, until the commit returns a generation or a definite rejection. When the retry returns `version.ErrMismatch` and `Outcome` then finds no receipt, the first attempt did not apply. It cannot apply later either, because the generation has moved past `expect`.
-- **A barrier.** The controller establishes a state that makes the commit's precondition impossible. An acquisition by a newer controller is such a barrier. It raises the watermark above the old term, so every request of the old writer fails its fence check, whenever it arrives.
+- **A retry** settles the outcome. The controller retries the same commit, with the same ID, `expect` and mutation, until the commit returns a generation or a definite rejection. When the retry returns `version.ErrMismatch`, and `Outcome`, which reads a receipt and applies nothing, then finds no receipt, the first attempt did not apply. The fence check comes before the generation check, so a mismatch shows that no newer term has fenced the writer, and that no acquisition has deleted the writer's receipts. The first attempt cannot apply later either, because the generation has moved past `expect`.
+- **A barrier** prevents the commit from applying in the future. The controller establishes a state that makes the commit's precondition impossible. An acquisition by a newer controller is such a barrier. It raises the watermark above the old term, so every request of the old writer fails its fence check, whenever it arrives. A barrier does not recover whether the commit applied before it, because the acquisition deletes the receipts of older terms. The newer controller does not need to know: it recovers from its snapshot, which contains every commit that applied.
 
 A controller sends no callback, admits no disruption and returns no reply to an operator on the strength of a commit whose outcome is unknown. It never makes the same change under a new commit ID while the first one is unsettled.
 
-The two mechanisms have different uses. A retry settles an outcome by applying the commit at most once. `Outcome` settles it without applying anything. A controller needs it after a mismatch, and `sharderctl` uses it to report whether an operation applied.
+A retry settles an outcome by applying the commit at most once. `Outcome` settles it without applying anything, and a controller reads it after a mismatch. `sharderctl` reports whether a proposal applied from `State.Applied`: an ID that `Applied` contains proves that the proposal applied, and an absent ID means that the outcome is unknown, not that the proposal was rejected.
 
 The store keeps a receipt until one of two commits removes it. The writer's own later commit confirms it in `Confirm`, once the writer knows the commit's outcome. Otherwise an acquisition by a newer term deletes every receipt of the older terms, in the same transaction. A scope therefore keeps the receipts of one writer's unconfirmed commits: the commits in flight and the last one. A receipt cannot outlive its namespace incarnation, because its ID contains the incarnation.
 
@@ -429,16 +472,18 @@ The store keeps a receipt until one of two commits removes it. The writer's own 
 
 A controller acquires a scope before it reads the scope's contents:
 
-1. It reads the scope's `Head`. It uses only the generation and the incarnation, and decides nothing from the scope's contents.
+1. It reads the scope's `Head`. It uses only the generation, the incarnation and the schema, and decides nothing from the scope's contents. It refuses a scope whose `Head.Schema` is above `store.Schema`, with an error of class `errs.Unsupported`, before it commits anything.
 2. It commits its record, a `shard.Cell` with its address, identity and epoch, at that generation, through a writer bound to the namespace incarnation and its epoch. The commit advances the scope's watermark to its epoch, and deletes the receipts of older terms.
 3. On `version.ErrMismatch`, it reads the head again and repeats. On `epoch.ErrFenced`, it stops, because a newer controller has the scope. On an unknown outcome, it retries the same commit.
 4. Once the acquisition has applied, it reads the scope with `Read`, which is linearizable, and recovers from that snapshot only. It never acts on a read that it made before the acquisition.
 
-A commit of the replaced controller between steps 1 and 2 moves the generation, and the acquisition's compare fails and repeats. Once the acquisition applies, every commit of an older term fails with `epoch.ErrFenced`, so the snapshot of step 4 contains every commit that the replaced controller can ever make. The controller then refuses to continue when the snapshot's `Head.Schema` is above `store.Schema`, or when a transition in it has a protocol version or a phase that its release does not implement. Each refusal is an error of class `errs.Unsupported`.
+A commit of the replaced controller between steps 1 and 2 moves the generation, and the acquisition's compare fails and repeats. A rise of the schema after step 1 moves the generation too, and the controller checks the new schema when it repeats. Once the acquisition applies, every commit of an older term fails with `epoch.ErrFenced`. The snapshot of step 4 then contains every commit that the replaced controller can ever make. Every new protocol version raises the schema, so step 1 also refuses a scope with a transition that the release cannot resume. As a last check, the controller stops with an error of class `errs.Unsupported` at a transition in its snapshot whose protocol version or phase its release does not implement.
 
 A controller's first commit in a scope writes its record: its own address, its identity and its epoch. The root's record is a `shard.Cell` with an empty ID, in the root scope, and its epoch is the root's term. Agents read the record to learn which identity their controller's calls must come from, `sharderctl` reads it to learn where to submit an operation, and a replaced controller cannot overwrite it.
 
-A commit at generation zero creates a scope with its writer's incarnation. The root creates a namespace when it accepts the namespace's first spec: it generates the namespace incarnation with core's `id/ulid`, and commits its record, the mapping and the spec at generation zero, in one commit. A cell's controller creates its cell's scope in its first acquisition, with the incarnation that the root's callback names. A commit through a writer of another incarnation fails with `shard.ErrIncarnation`, so a process of a deleted namespace cannot write to its successor.
+A commit at generation zero creates a scope with its writer's incarnation. The root creates a namespace from the initial spec that its process passes to `Controller.Run`, when the root scope's head shows no incarnation. It generates the namespace incarnation with core's `id/ulid`, resolves the spec, and commits its record, the mapping and the resolved spec at generation zero, in one commit. The commit is conditional: of two roots that race to create one namespace, the commit of the second fails with `shard.ErrIncarnation`, because the scope already has the first one's incarnation. A retry of a creation whose outcome is unknown reuses its incarnation and its commit ID. A process uses its initial spec only in that commit, and resolves the spec that the root scope stores once the namespace exists. When two processes start with different initial specs, the committed one applies to both.
+
+A cell's controller creates its cell's scope in its first acquisition, with the incarnation that the root's callback names. A commit through a writer of another incarnation fails with `shard.ErrIncarnation`, so a process of a deleted namespace cannot write to its successor.
 
 #### Transaction shapes and limits
 
@@ -448,11 +493,11 @@ The core commits five shapes, and every commit is one of them:
 |---|---|---|
 | Transition steps | The records or next steps of one or more transitions, the placements that they change with their indexes, and the reservations that the steps create or end | A step's placement and its recorded progress must agree |
 | A batch of placements | Up to `Limits.MaxPlacements` placements from one plan, with their indexes and transitions | Each generation must be a valid assignment |
-| A reservation | One reservation or drain added or removed, with the transitions that its drain starts | A grant must be durable before `Disrupt` returns it |
+| A reservation | One reservation added, admitted or removed, with its drains and the transitions that its drain starts | A deferral, a grant and an expiry must each be durable before `Disrupt` returns it or a new controller acts on it |
 | An acquisition | A controller's record and the scope's watermark, and the deletion of older receipts | Every later commit of an older term must fail |
-| A creation | The root's record, the incarnation, the mapping and the first spec | A namespace exists with its mapping or not at all |
+| A creation | The root's record, the incarnation, the mapping and the resolved first spec | A namespace exists with its mapping or not at all |
 
-Every commit also writes its receipt and confirms earlier ones. Only the batch of placements grows with a plan: the planner splits a plan into batches that fit, and the engine commits the steps of ready transitions together while they fit. The other shapes have a fixed size, apart from the spec in a creation.
+Every commit also writes its receipt and confirms earlier ones. Only the batch of placements grows with a plan: the planner splits a plan into batches that fit, and the engine commits the steps of ready transitions together while they fit. The other shapes have a fixed size, apart from the spec in a creation and the drains of a reservation, which grow with the disruption's nodes. `Disrupt` returns `ErrTooLarge`, and commits nothing, for a disruption whose reservation does not fit one commit.
 
 `Limits(s)` gives a scope's bounds, and `Fits(s, m)` computes the size of the transaction that the adapter would send for `m`, with its compares, keys, indexes and receipt. `Commit` returns `ErrTooLarge` for a mutation that does not fit, before it sends anything. An adapter that places scopes on more than one backend cluster returns each scope's limits from its own cluster's configuration.
 
@@ -462,14 +507,15 @@ The first release needs no production-scale benchmark before these interfaces ar
 
 An agent or a router keeps a scope's state in memory, from a snapshot and a watch, under these rules:
 
-1. `Read` returns the state at one generation, and every page of the read is at that generation. A page whose generation the backend has compacted fails with `ErrCompacted`. The reader discards the partial snapshot, keeps its last complete state, and starts a new read.
-2. The reader watches from the snapshot's generation. `Watch` yields every later generation that concerns the reader, in order, and never part of a generation: a generation's placements, indexes and records arrive in one event.
-3. A watch filtered by node skips the generations that do not concern the node, so its generations increase with gaps. It yields the removal of a replica from the node, in the generation that removes it, although the removed placement no longer names the node. It yields an empty event as progress when the scope has moved without a change for the node, at an interval that the adapter documents, so the reader knows how current its state is.
+1. `Read` returns the state at one generation of one namespace incarnation, and every page of the read is at that generation. A page whose generation the backend has compacted fails with `ErrCompacted`. The reader discards the partial snapshot, keeps its last complete state, and starts a new read.
+2. The reader watches from the snapshot's generation, in the snapshot's incarnation. `Watch` yields every later generation that concerns the reader, in order, and never part of a generation: a generation's placements, indexes and records arrive in one event.
+3. A watch filtered by node skips the generations that do not concern the node, so its generations increase with gaps. It yields the removal of a replica from the node, in the generation that removes it, and lists the shard in `Event.Removed`, although the removed placement no longer names the node. It yields an empty event as progress when the scope has moved without a change for the node, at an interval that the adapter documents, so the reader knows how current its state is.
 4. A watch whose starting generation the backend has compacted yields `ErrCompacted`, and the reader starts again from rule 1. It never resumes at the oldest generation that the backend kept.
 5. The store and the reader bound their buffers. A watcher that falls behind its buffer receives `ErrCompacted` and starts again from rule 1, instead of losing events or growing without bound.
 6. A reader applies events by generation, so an event that arrives again after a reconnect changes nothing.
+7. A snapshot that replaces the reader's state reports no removal. A replica that the old state listed and the snapshot omits was removed while the watch was broken, so an agent compares each replacement snapshot with its tenures.
 
-A generation is a position in one scope's history of one namespace incarnation. A reader never compares the generations of two scopes, and never resumes from a generation of an earlier incarnation.
+A generation is a position in one scope's history of one namespace incarnation. A reader never compares the generations of two scopes. `Read`, its page tokens and `Watch` check the incarnation that the reader expects, so a reader cannot resume in the history of a namespace that was deleted and created again under the same name, even at an equal generation. A reader that receives `shard.ErrIncarnation` reads the root scope again. A router then snapshots the new incarnation, and an agent or a controller of the old incarnation stops serving the namespace.
 
 #### Restoring a store from a backup
 
@@ -485,10 +531,12 @@ Every store adapter passes `store/storetest`, which checks these laws:
 4. A commit writes its receipt in the same transaction as its mutation. A retry with the same ID and digest returns the recorded generation and applies nothing again, and a retry with the same ID and another digest returns `ErrReused`. `Outcome` returns a receipt exactly when the commit applied and no later commit confirmed or deleted the receipt.
 5. After a commit fails with an error that wraps `version.ErrOutcomeUnknown`, a retry of the same commit and `Outcome` settle the outcome, whether the commit applied or not.
 6. Every page of one `Read` is at one generation, and walking the pages to the end yields every selected placement once, or fails with `ErrCompacted`.
-7. `Watch` yields every generation after the given one that concerns the watcher once, in order and whole. A node-filtered `Watch` yields every change of a placement that has or had a replica on the node, removals included.
+7. `Watch` yields every generation after the given one that concerns the watcher once, in order and whole. A node-filtered `Watch` yields every change of a placement that has or had a replica on the node, and lists in `Event.Removed` each shard whose placement stops naming the node.
 8. `Campaign` grants each term of an election to one candidate. Core's admit-equal law is sound only under this condition.
 9. `Fits` returns `ErrTooLarge` for every mutation that the adapter cannot commit in one transaction, and nil for every other. A commit that fits fails only with a definite rejection or an unknown outcome.
 10. A commit that returned a generation is readable, with the same generation and receipt, after the store is opened again.
+11. `Commit` checks the incarnation, the fence, the receipt and the generation in that order, in one atomic step. A superseded writer gets `epoch.ErrFenced` when the generation has also moved, and a writer of another incarnation gets `shard.ErrIncarnation`.
+12. `Read`, a page token of `Read`, and `Watch` return `shard.ErrIncarnation` for a scope whose incarnation differs from the one that the caller expects, including a scope that was deleted and created again at an equal generation.
 
 ```go
 // Package storetest checks a store.Store against the laws of package store.
@@ -497,6 +545,7 @@ package storetest
 import (
  "testing"
 
+ "go.thesmos.sh/sharder/shard"
  "go.thesmos.sh/sharder/store"
 )
 
@@ -506,6 +555,7 @@ type Option func(*config)
 type config struct {
  reopen func(t *testing.T, s store.Store) store.Store
  lose   func(t *testing.T, s store.Store, l Loss)
+ del    func(t *testing.T, s store.Store, sc shard.Scope)
 }
 
 // Loss selects where a fault interrupts a commit.
@@ -527,6 +577,13 @@ func WithReopen(reopen func(t *testing.T, s store.Store) store.Store) Option
 // error that wraps version.ErrOutcomeUnknown, at the point that l selects. The suite
 // then checks that a retry and Outcome settle both cases.
 func WithLostCommits(lose func(t *testing.T, s store.Store, l Loss)) Option
+
+// WithDelete gives the suite a way to delete scope sc from the storage behind s, as an
+// operator does before a namespace is created again under the same name. The suite
+// then creates the scope with another incarnation, brings it to the old generation,
+// and checks that a read, a page token and a watch of the old incarnation return
+// shard.ErrIncarnation.
+func WithDelete(del func(t *testing.T, s store.Store, sc shard.Scope)) Option
 
 // AssertStore checks every law of package store against stores that newStore returns.
 // It creates a new store for each case, so cases cannot observe each other's scopes.
@@ -588,7 +645,7 @@ func (s *Store) Compact()
 
 ### The controller
 
-One `Controller` serves every namespace of its process. It takes the store, the membership and the client for calls to agents as arguments, and core's seams as options. It resolves every other strategy of a namespace from the namespace's spec through the registry, with the capabilities that the store and the membership provide. The controller implements `protocol.ControllerServer`, which the embedder serves through a transport adapter.
+One `Controller` serves every namespace of its process. It takes the store, the membership and the client for calls to agents as arguments, and core's seams and the process's own description as options. It resolves every other strategy of a namespace from the namespace's spec through the registry, with the capabilities that the store and the membership provide. The controller implements `protocol.ControllerServer`, which the embedder serves through a transport adapter. It also implements `protocol.AgentServer` for the callbacks of each namespace's root, which place cell controllers on the process. The embedder serves those callbacks and its agents' callbacks on one endpoint through `protocol.Dispatch`.
 
 ```go
 // Package controller runs the root and cell controllers of namespaces: the planning
@@ -630,12 +687,16 @@ type Controller struct {
  // unexported fields
 }
 
-var _ protocol.ControllerServer = (*Controller)(nil)
+var (
+ _ protocol.ControllerServer = (*Controller)(nil)
+ _ protocol.AgentServer      = (*Controller)(nil)
+)
 
 // Option configures a Controller.
 type Option func(*options)
 
 type options struct {
+ node            shard.Node
  clock           clock.Clock
  rand            rand.Rand
  telemetry       telemetry.Reporter
@@ -646,6 +707,13 @@ type options struct {
  volatile        bool
  unauthenticated bool
 }
+
+// WithNode sets this process's description in the root of each namespace: its ID,
+// address, identity and labels. The controller joins each root's membership with it,
+// campaigns for each root under its identity, and writes its address and identity in
+// the record of every scope that it acquires. New returns an error of class
+// errs.Invalid without it.
+func WithNode(n shard.Node) Option
 
 // WithClock sets the clock that every lease, timer and deadline of the controller
 // reads. The default is a clock/hlc clock.
@@ -691,23 +759,38 @@ func WithUnauthenticated() Option
 // New returns a controller that keeps namespace state in st, follows the live nodes
 // of each cell through m, and calls agents through agents. It builds each namespace's
 // strategies from the namespace's spec with reg. It returns an error of class
-// errs.Invalid when st does not provide the capability "durable" and
-// WithVolatileStore is not set, and of class errs.Unsupported when WithTrust is set
-// and reg's support matrix has no approvals.
+// errs.Invalid when WithNode is not set, or when st does not provide the capability
+// "durable" and WithVolatileStore is not set. It returns an error of class
+// errs.Unsupported when WithTrust is set and reg's support matrix has no approvals.
 func New(reg *config.Registry, st store.Store, m membership.Membership, agents protocol.AgentClient, opts ...Option) (*Controller, error)
 
-// Run campaigns for the root of each namespace and hosts the cells that the roots
-// assign to this controller, until ctx ends. It runs every loop under task.Run, so it
-// returns only after every goroutine it started has returned: ctx.Err() once ctx
-// ends, or the first error that stops it before then.
-func (c *Controller) Run(ctx context.Context, namespaces ...shard.Namespace) error
+// Run campaigns for the root of the namespace of each spec in specs, and hosts the
+// cells that the roots assign to this controller, until ctx ends. A root that finds
+// its root scope without an incarnation creates the namespace from the spec, in one
+// conditional commit. Once the namespace exists, the controller resolves the spec
+// that the root scope stores, and ignores its own. Run runs every loop under
+// task.Run, so it returns only after every goroutine it started has returned:
+// ctx.Err() once ctx ends, or the first error that stops it before then.
+func (c *Controller) Run(ctx context.Context, specs ...config.Spec) error
+
+// Do runs one callback of a namespace's root. An add starts the controller of the
+// cell r.Shard at the epoch r.Epoch, and returns once that controller's acquisition
+// of the cell's scope has applied, or with the acquisition's error, such as an error
+// of class errs.Unsupported for a scope of a newer schema. A drop returns once that
+// controller's loops have returned. Do checks md and r as an agent checks the
+// callbacks of its cell, against the root's leader, this process's session in the
+// root and the root's epochs. It returns an error of class errs.Invalid for a request
+// whose scope is not a root scope.
+func (c *Controller) Do(ctx context.Context, md protocol.Metadata, r protocol.Request) error
 
 // Report accepts one report of an agent of a cell that this controller hosts. It
 // returns an error of class errs.Denied when md.Caller is not the registered identity
 // of r.Node, and of class errs.Conflict when r names another namespace incarnation or
 // a node incarnation that is not the node's live one. It discards a report whose
 // Sequence is not above the last one it accepted from the node incarnation, and
-// returns the accepted Sequence in the Ack.
+// returns the accepted Sequence in the Ack. Outside the delegated mode, an accepted
+// report updates the status, the load and the faults of the replicas that the
+// assignment names, and never changes the assignment.
 func (c *Controller) Report(ctx context.Context, md protocol.Metadata, r protocol.Report) (protocol.Ack, error)
 
 // Lookup returns the placements of a.Scope that contain a.Positions, and up to
@@ -723,13 +806,19 @@ func (c *Controller) Lookup(ctx context.Context, md protocol.Metadata, a protoco
 // proposal fails validation, with every reason.
 func (c *Controller) Submit(ctx context.Context, md protocol.Metadata, s config.Signed) (protocol.Receipt, error)
 
-// Disrupt admits d under the budget of its nodes' cell, and commits its reservation
-// before it returns Allowed. It returns an error of class errs.Denied when md.Caller
-// is neither an operator nor, for a disruption of one node at its live incarnation,
-// that node's registered identity.
+// Disrupt decides d under the budget of its nodes' cell, and commits each decision
+// before it returns it: a deferral as a pending reservation with the drains of d's
+// nodes, and an admission by setting the reservation's Admitted. A repeated d
+// evaluates a pending reservation again, and returns Allowed for an admitted one. It
+// returns store.ErrTooLarge, and commits nothing, when d's reservation and drains do
+// not fit one commit. It returns an error of class errs.Invalid for a d whose ID the
+// scope has recorded with another digest, and of class errs.Denied when md.Caller is
+// neither an operator nor, for a disruption of one node at its live incarnation, that
+// node's registered identity.
 func (c *Controller) Disrupt(ctx context.Context, md protocol.Metadata, d budget.Disruption) (budget.Decision, error)
 
-// Done ends the reservation a.ID. It returns an error of class errs.Denied when
+// Done ends the reservation a.ID: it releases an admitted reservation, and cancels a
+// pending one together with its drains. It returns an error of class errs.Denied when
 // md.Caller is neither the reservation's owner nor an operator.
 func (c *Controller) Done(ctx context.Context, md protocol.Metadata, a protocol.DoneArgs) error
 ```
@@ -776,7 +865,7 @@ Every agent watches the cell's membership, so each change of membership reaches 
 | A commit's reply is lost | `Commit` returns an error that wraps `version.ErrOutcomeUnknown` | The controller retries the same commit, or reads `Outcome` after a mismatch. No callback, admission or reply depends on the commit before its outcome is known |
 | A mutation does not fit | `Fits` or `Commit` returns `ErrTooLarge` before anything is sent | The planner splits the plan into smaller batches. The fixed shapes fit the default limits of etcd, which the feasibility check confirms |
 | The store is unavailable | Failed commits and renewals | No new transitions or admissions. The data plane serves within the limits of the core's outage table |
-| A read page or a watch meets compaction | `ErrCompacted` | The reader keeps its last complete state and starts a new snapshot |
+| A read page or a watch meets compaction | `ErrCompacted` | The reader keeps its last complete state and starts a new snapshot. An agent then cleans up each tenure that the new snapshot omits |
 | A watcher falls behind its buffer | `ErrCompacted` | As compaction |
 | Two controllers race to acquire a scope | One acquisition's compare or fence fails | The loser reads the head again, or stops when it is fenced |
 | The store is restored from a backup | Not detected | Not supported. The namespace recovers with a new incarnation |
@@ -792,7 +881,7 @@ The store and the membership are adapters, each a Go module of its own, so an ap
 | Linearizable reads, and reads at a fixed generation | A range request without `serializable`, which etcd serves linearizably by default, and a range at a fixed revision |
 | An ordered change feed of each scope that resumes from a generation | A watch from a revision, which pushes. Events of one revision arrive together, and progress notifications report the revision that the watch has delivered |
 | An election that grants each term to one candidate, and ends a term within a bounded time after its holder fails | `concurrency.Election`. A term is the create revision of the candidate's key, which core's fence documentation names as a valid source of fence epochs, and it ends when the candidate's lease expires |
-| Leases that expire on a timer, for the membership and the leaderless topology | Leases with a TTL, which membership keys and election keys attach to |
+| Leases that expire on a timer, for the membership and the leaderless topology | Leases with a TTL, which membership keys and election keys attach to. A membership key's lease has the TTL that `Join` passes |
 | `Limits` and `Fits` | 128 operations per transaction and 1.5 MiB per request by default, per cluster. A move writes about four keys and a receipt, so `MaxPlacements` is about 30 by our estimate, and `Fits` computes each commit's operations and bytes from the transaction it compiles |
 
 The adapter's key layout, its sizing, and its mapping of scopes to etcd clusters belong to the adapter's own documentation. The core depends on none of them. Moving a live scope to another cluster is a migration with a new store identity, which this proposal does not provide: pointing a scope at an empty cluster loses its generation and its watermark.

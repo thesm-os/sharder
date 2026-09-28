@@ -202,8 +202,9 @@ type Replica struct {
 type Placement struct {
  Shard ID
  Range Range
- // Epoch is the fence epoch of the shard's writer. It is epoch.Zero for a shard
- // without a writer, and fenced storage admits a zero epoch without fencing it.
+ // Epoch is the fence epoch of the shard's assigned writer. It is epoch.Zero while
+ // the shard has no assigned writer, and fenced storage admits a zero epoch without
+ // fencing it.
  Epoch epoch.Epoch
  // Reserved is the highest epoch that any transition of the shard has reserved,
  // including an abort path's epoch that no callback used. The core reserves every
@@ -212,6 +213,9 @@ type Placement struct {
  // Sequence is the Sequence of the shard's latest transition. It remains after the
  // transition ends.
  Sequence uint64
+ // Replicas lists the assigned replicas. It is empty for an unplaced shard, such as
+ // one whose transition ended without a writer. A process can still act as the
+ // writer of an unplaced shard, until a newer tenure acquires its fence.
  Replicas []Replica
 }
 
@@ -379,11 +383,11 @@ The root module takes one mechanism from outside core, kanon and the standard li
 A namespace spec sets the core's parameters but cannot replace the core. The core applies these rules to every combination of strategies:
 
 - The core assigns every generation, and every epoch except the writer epochs of the `delegated` mode, which it takes from the application's authority. A placer returns target replica sets without epochs.
-- The core turns a target assignment into transitions and runs each transition through the namespace's handoff protocol.
+- The core turns a target assignment into transitions and runs each transition through the namespace's handoff protocol. It changes the assignment only by its own commits. Outside the `delegated` mode, reports and the replies of ended operations leave the assignment unchanged.
 - Before a transition's first callback, the core commits the transition's full record: its operation ID, both endpoints with their node incarnations, every epoch it reserves, and the version of its protocol. The core commits each step before it calls a node, so a new controller resumes a transition from the record alone, without planning it again.
 - The core checks every placer output against the hard constraints and the state model's bounds before it commits anything.
-- The core admits every transition through the disruption budget, together with maintenance requests from outside, and commits each admitted request to the store before it replies.
-- The core gives each callback an idempotency key and a digest of its payload, and each commit a commit ID. A retried callback or commit then has the effect of the first attempt, and a controller that lost a reply can learn the outcome.
+- The core admits every transition through the disruption budget and within the budget's bounds on transitions in flight, together with maintenance requests from outside, and commits each deferred or admitted request to the store before it replies.
+- The core gives each callback an idempotency key and a digest of its payload, which excludes the sender's controller epoch, and each commit a commit ID. A retried callback or commit then has the effect of the first attempt, and a controller that lost a reply can learn the outcome.
 
 ### Properties
 
@@ -397,9 +401,9 @@ A fault can take down more replicas than the budget allows. The admission proper
 | Writer safety | `exclusive` with `fenced: true` | Once a tenure has acquired a shard's fence, no transaction of an older tenure commits a fenced write. Two processes can still both act as the writer for a while, for example on the two sides of a partition. The fence decides which process's writes commit |
 | Control safety | Every scope | A scope's state changes only by a commit in the scope's namespace incarnation that names the generation it replaces, from a writer whose epoch is at or above the scope's watermark |
 | Role safety | Every state model | The replicas in each role, counted together with the started transitions into the role, never exceed the role's bound. The core admits a transition that lowers a role that is already above its bound |
-| Admission | Every namespace | The core admits a planned transition or disruption only when the unavailable replicas it observes, plus the reservations in the store, remain within the budget. It admits repair that raises no shard's count of unavailable replicas, even when failures have already exceeded the budget |
-| Constraints | The planner | Every replica that a commit adds or moves satisfies every hard constraint. A replica that a changed constraint or a changed node makes invalid is reported as a violation, and repair moves it without making any violation worse |
-| Convergence | Every namespace | While the store is available, the nodes of each transition are live and their handlers return within the step timeouts, every transition ends in `Done` or `Aborted`. When a feasible placement also exists, the committed assignment arrives at the planner's target |
+| Admission | Every namespace | The core admits a planned transition or disruption only when the unavailable replicas it observes, plus the admitted reservations in the store, remain within the budget. It admits repair that raises no shard's count of unavailable replicas, even when failures have already exceeded the budget. It starts every transition within the budget's bounds on transitions in flight |
+| Constraints | The planner | Every replica that a commit adds or moves satisfies every hard constraint of the spec version that its plan or its transition was planned under. A replica that a changed constraint or a changed node makes invalid, including one that a transition of an older spec version places, is reported as a violation, and repair moves it without making any violation worse |
+| Convergence | Every namespace | While the store is available and every handler returns within its step timeout, every transition ends in `Done` or `Aborted`, under fenced ownership also when its nodes restart or fail. Once faults have ceased, membership and the spec no longer change, one controller keeps the cell, and each planning pass examines at least one shard, repair examines every shard that needs it within a finite number of passes. The planner is a heuristic, so a feasible assignment can exist that it does not find |
 
 The data plane does not depend on the control plane. Agents keep their replicas and routers keep their routes while a controller or the store is unavailable, within these limits:
 
@@ -407,7 +411,7 @@ The data plane does not depend on the control plane. Agents keep their replicas 
 |---|---|---|---|---|---|
 | The cell's controller | Serve | Serve | Route | Read the routes from the store, then route | Stop until the root places the cell's controller again. A crashed writer is not replaced meanwhile |
 | The root's leader | Serve | Serve | Route | Route | Continue. The cell cannot change controller |
-| The store | Serve. No newer tenure can acquire during the outage | Stop at the lease deadline, one TTL after the last renewal | Route on the last routes they read | Return an error of class `errs.Transient`, because they have no route | Stop. A crashed writer is not replaced until the store returns |
+| The store | Serve. A newer tenure acquires only through a callback that the controller sent before the outage, and only when the node has installed the callback's placement by the time the callback starts the tenure. An event that the watch buffered before the outage can install the placement during the outage | Stop at the lease deadline, one TTL after the last renewal | Route on the last routes they read | Return an error of class `errs.Transient`, because they have no route | No step that needs a commit advances. A callback sent before the outage can still take effect when its node has installed the callback's placement by the time the callback starts the tenure. A crashed writer is not replaced until the store returns |
 
 ### Components
 
@@ -432,7 +436,7 @@ flowchart LR
 
 A cell is a disjoint set of nodes, the shards placed on them and one controller. Each cell covers one contiguous range of positions, and every replica of a shard is on a node of the shard's cell. A node's cell is the value of its `cell` label. A namespace starts with one cell that covers every position, and a node without the label joins it. In the support matrix, a namespace keeps that one cell, and a node whose label names another cell is refused. Outside the matrix, in a namespace of more than one cell, a node without the label is refused.
 
-The root is a small controller per namespace. It keeps the cell map and places each cell's controller on a controller process, with the same planner and handoff protocols that place shards: a cell is a shard of the root, and the cell's controller is that shard's writer. The controller's epoch fences its commits to the cell's keyspace in the store, so a controller that the root has replaced cannot commit. The root's own leader is elected through the store. The root also creates the namespace: its first commit generates the namespace incarnation and records the mapping, and neither changes until the namespace is deleted.
+The root is a small controller per namespace. It keeps the cell map and places each cell's controller on a controller process, with the same planner and handoff protocols that place shards: a cell is a shard of the root, and the cell's controller is that shard's writer. The controller's epoch fences its commits to the cell's keyspace in the store, so a controller that the root has replaced cannot commit. The root's own leader is elected through the store. The root also creates the namespace, from the initial spec that its process passes to `Controller.Run`. Its first commit is conditional on an empty root scope, generates the namespace incarnation, and records the mapping and the resolved spec. The incarnation and the mapping remain unchanged until the namespace is deleted. A process whose initial spec differs from the committed one resolves the committed spec.
 
 Each cell has its own keyspace in the store, its own membership, its own planner and its own lease sessions, so adding cells adds capacity to every part of the control plane. The spec bounds a cell at 5,000 nodes and 1,000,000 shards by default. Both bounds are targets, and we have not measured a cell at either of them. The root reports a cell that exceeds either bound. Splitting a cell is outside the support matrix. Routers read the small cell map, and then the routes of each cell they call.
 
@@ -482,11 +486,11 @@ The root module, `go.thesmos.sh/sharder`, contains these packages. They import p
 | `store/memory` | The in-memory store and membership with fault hooks, the conformance suite's first subject | `store`, `membership` |
 | `store/storetest` | The conformance suite for store adapters | `store` |
 | `protocol` | The protocol's messages with their kanon codecs, its metadata, its server and client interfaces, and `Network` and `Local`, which connect servers by direct calls | `shard`, `config`, `budget` |
-| `membership` | The membership interface | `shard` |
+| `membership` | The membership interface | `shard`, `ownership` |
 | `membership/static` | A fixed node list | `membership` |
 | `controller` | The root and cell controllers: planning loop, transition engine, budget enforcement, topologies | every package above except `store/memory`, `store/storetest` and `membership/static` |
 | `replica` | The agent that an application process runs | `shard`, `config`, `protocol`, `fence`, `store`, `membership` |
-| `router` | The client-side router and its route cache | `shard`, `protocol`, `store`, `partition` |
+| `router` | The client-side router and its route cache | `shard`, `config`, `protocol`, `store`, `partition` |
 | `sim` | The deterministic simulator | every package above |
 
 Each adapter is a module of its own, so an application's build contains only the backends it imports. The embedder constructs the adapters and passes them to `controller.New` and `replica.Start`.
@@ -510,13 +514,13 @@ The simulator in package `sim` runs every process of a namespace on one goroutin
 
 - Each controller and each agent is a state machine that takes one event at a time, such as a message, a store result, a timer or a handler's result. It returns the calls it makes and does not start a goroutine. In production, a runtime calls the state machine from goroutines under core's `task` package. In the simulator, the scheduler calls it.
 - The scheduler keeps one queue of events, ordered by virtual time and then by the sequence number that the scheduler gave each event when it queued it. When more than one event is due at one virtual time, the scheduler picks the next one with the run's `rand/pcg` source, so a seed selects one interleaving and reproduces it.
-- Every process has its own `clock/fake` clock. The scheduler advances each clock by the virtual time that passed, scaled by the process's clock drift, and a paused process's clock stops.
+- Every process has its own `clock/fake` clock. The scheduler advances each clock by the virtual time that passed, scaled by the process's clock drift. A paused process handles no events while its clock keeps advancing, as the monotonic clock of a stopped process does. When the pause ends, the process handles its expired timers and the messages that arrived during the pause in an order that the run's seed selects.
 - Faults enter at three boundaries: the `protocol.Network` that connects the processes, the fault hooks of `store/memory`, and a simulated `Handler` that each agent calls. The fault hooks lose a commit before it applies or lose its reply after it applies, and both fail the call with an error that wraps `version.ErrOutcomeUnknown`, as the ledger's memory store does for its appends.
 - The planner evaluates candidate moves in parallel in production, and reduces the results in candidate order, so its plan does not depend on the number of goroutines.
 
 The determinism contract is that the same binary, spec, faults and seed produce the same event trace, whatever `GOMAXPROCS` is. CI runs every scenario at `GOMAXPROCS` 1 and 4 and compares the two traces. A failing run prints its seed and its trace, and CI keeps each failing trace as a named regression scenario.
 
-CI runs the simulator over each supported preset, with every fault kind and a fixed set of seeds, and `CrashPoints` over each preset's first handoff. A release is not published while any seed violates a property.
+CI runs the simulator over each supported preset, with every fault kind and a fixed set of seeds. It also runs `CrashPoints` over every scenario of each preset: the first handoff, the abort path after a lost reply of the new writer's `add`, and the settlement of a commit whose reply is lost. A crash of the cell's controller at one of these events is a takeover, so the scenarios cover a takeover between a callback's effect and the commit of its step, on the forward and the abort path. A release is not published while any seed violates a property.
 
 Each axis has a conformance suite that every strategy, built-in or external, must pass. A partitioner must map every key to one position in every process, and every position of a cell to at most one shard of the cell's layout. A partitioner whose layouts leave gaps, as `explicit` does, declares the gaps, and every other partitioner covers every position. A placer must return the same plan for the same input. Every store adapter passes `store/storetest`. Every fenced writer, the application's fence and the store's writers alike, passes core's `coretest/epochtest`.
 
@@ -527,7 +531,7 @@ The etcd adapter's feasibility check runs these cases against a real etcd cluste
 - a watch whose history is compacted during a paged snapshot
 - every supported transaction shape at the cluster's configured limits
 
-A formal model is optional, and the supported scope has none. Its authority protocol is break-before-make with a fenced acquisition, and `CrashPoints` covers a crash at every event of it. A model is worth building for an authority or migration protocol whose interleavings the traces leave uncovered, such as a cell split.
+A formal model is optional, and the supported scope has none. Its authority protocol is break-before-make with a fenced acquisition, and `CrashPoints` covers a crash before and after every event of each scenario's run, which includes the abort path and the settlement of an unknown commit. A model is worth building for an authority or migration protocol whose interleavings the traces leave uncovered, such as a cell split.
 
 ```go
 package sim
@@ -564,17 +568,34 @@ type Faults struct {
  ForgeRate float64
 }
 
+// Scenario selects the run around whose events CrashPoints crashes processes.
+type Scenario uint8
+
+const (
+ // FirstHandoff is a shard's first move, without faults.
+ FirstHandoff Scenario = iota
+ // LostAddReply loses the reply of the new writer's add after the add takes effect,
+ // so the move runs its abort path.
+ LostAddReply
+ // LostCommitReply loses the reply of a commit after the commit applies, so the
+ // controller settles an unknown outcome.
+ LostCommitReply
+)
+
 // Run simulates spec on nodes for the simulated duration d from seed. It checks every
-// safety property after every event. It injects no faults in the last quarter of d, and
-// checks convergence at the end. On the first violation, it fails t with the seed and
-// the event trace.
+// safety property after every event, and injects faults during the first three
+// quarters of d. Once every pause has ended, every delayed message has arrived and the
+// store is available, it checks convergence within a bound that it derives from the
+// spec's lease, retry and planner settings. It reports a run that ends before that
+// bound separately from a violation. On the first violation, it fails t with the seed
+// and the event trace.
 func Run(t *testing.T, reg *config.Registry, spec config.Spec, nodes int, d time.Duration, f Faults, seed rand.Seed)
 
-// CrashPoints runs spec once from seed without faults, and then twice for every event
-// of that run: once with the process that handles the event crashed just before it, and
+// CrashPoints runs scenario s of spec once from seed, and then twice for every event of
+// that run: once with the process that handles the event crashed just before it, and
 // once just after it. It checks every property in each run, so a crash between any
-// commit and any callback is covered.
-func CrashPoints(t *testing.T, reg *config.Registry, spec config.Spec, nodes int, d time.Duration, seed rand.Seed)
+// commit and any callback of the scenario is covered.
+func CrashPoints(t *testing.T, reg *config.Registry, spec config.Spec, nodes int, d time.Duration, s Scenario, seed rand.Seed)
 ```
 
 ## Alternatives considered

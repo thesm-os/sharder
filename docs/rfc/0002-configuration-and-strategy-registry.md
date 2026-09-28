@@ -19,7 +19,7 @@ related: RFC-0001, RFC-0003, RFC-0004, RFC-0005, RFC-0006, RFC-0007, RFC-0008, R
 
 A namespace has one declarative spec, which selects a preset and, per axis, a registered strategy with its own JSON configuration. Strategies register in an explicit `Registry` through a typed factory. The factory parses and validates the strategy's configuration, and declares the capabilities that the parsed configuration provides.
 
-Each registry has a support matrix, and `Resolve` checks a spec against it first: a selection outside the matrix fails with an error of class `errs.Unsupported`. `Resolve` then applies the preset and defaults, parses every strategy configuration, and checks every cross-axis requirement, including the capabilities of the process's store and membership adapters. It reports all problems at once, each with its spec path, and warns about combinations that are valid but probably a mistake.
+Each registry has a support matrix, and `Resolve` checks a spec against it first: a selection outside the matrix fails with an error of class `errs.Unsupported`. `Resolve` then merges the spec over its preset, applies defaults, parses every strategy configuration, and checks every cross-axis requirement, including the capabilities of the process's store and membership adapters. It reports all problems at once, each with its spec path, and warns about combinations that are valid but probably a mistake.
 
 A running namespace accepts a new spec version only after `Change` confirms that the move from the old spec is possible by an edit alone. The mapping from keys to positions is not editable, because the root fixes it when it creates the namespace. `Submit` returns a rejected version's reasons, and the namespace continues on the last accepted spec. A controller authorises every operation by its kind, against the operators in its process's own configuration. The design also lets a namespace require signatures from a threshold of approvers, which is outside the support matrix.
 
@@ -98,16 +98,18 @@ type CellPolicy struct {
 }
 
 // Selection selects a registered strategy by name. Config is the strategy's
-// configuration as raw JSON, in the schema that the strategy's factory defines.
+// configuration as raw JSON, in the schema that the strategy's factory defines. A
+// selection without a name selects the preset's strategy. The Config of a selection
+// of the preset's strategy merges over the preset's configuration of that strategy.
 type Selection struct {
  Name   string          `json:"name,omitempty"`
  Config json.RawMessage `json:"config,omitempty"`
 }
 
-// Budget bounds how many replicas of a shard may be unavailable at once, and how many
-// nodes planned disruptions may take out at once. A nil field takes its value from the
-// preset, then from the default that its comment names, so an explicit zero differs
-// from an absent field.
+// Budget bounds how many replicas of a shard may be unavailable at once, how many nodes
+// planned disruptions may take out at once, and how much transition work runs at once.
+// A nil field takes its value from the preset, then from the default that its comment
+// names, so an explicit zero differs from an absent field.
 type Budget struct {
  // MaxUnavailable is the most replicas of one shard that may be unavailable at once,
  // counting failures, maintenance and transitions. Nil selects the replication
@@ -117,6 +119,19 @@ type Budget struct {
  // MaxConcurrentNodes is the most nodes that planned disruptions may take out at once.
  // Nil selects one.
  MaxConcurrentNodes *int `json:"maxConcurrentNodes,omitempty"`
+ // MaxTransitions is the most transitions of a cell in flight at once, repair
+ // included. Nil selects 64. Resolve rejects a value below one.
+ MaxTransitions *int `json:"maxTransitions,omitempty"`
+ // MaxNodeTransitions is the most transitions in flight at once that count against
+ // one node. A transition counts against its destination and its fallback, and
+ // against its source while the source's session is live. Nil selects 16. Resolve
+ // rejects a value below one.
+ MaxNodeTransitions *int `json:"maxNodeTransitions,omitempty"`
+ // NodeCallbacks is the most callbacks that the controller has outstanding to one node
+ // at once. It does not bound the handlers that still run on the node after the
+ // controller's call has timed out. Nil selects the value of MaxNodeTransitions, so
+ // that no callback waits for a permit. Resolve rejects a value below one.
+ NodeCallbacks *int `json:"nodeCallbacks,omitempty"`
  // Interruption states whether planned work may leave a shard without a serving
  // writer for the handoff protocol's writer gap. Empty takes the preset's value, and
  // a preset without one selects NoInterruption.
@@ -167,28 +182,29 @@ func (d Duration) MarshalJSON() ([]byte, error)
 func (d *Duration) UnmarshalJSON(b []byte) error
 ```
 
-A spec that relies on its preset for everything but two fields:
+A spec that relies on its preset for everything but two settings:
 
 ```json
 {
   "namespace": "orders",
   "version": 3,
   "preset": "exclusive-worker",
-  "partitioning": {"name": "fixed-slots", "config": {"slots": 4096}},
+  "partitioning": {"config": {"slots": 4096}},
   "placement": {
-    "name": "planner",
     "config": {
       "constraints": [
-        {"name": "match-label", "config": {"label": "jurisdiction"}}
+        {"name": "capacity", "config": {"headroom": 0.2}}
       ]
     }
   }
 }
 ```
 
+Both selections omit the strategy's name, so each selects the preset's strategy and merges over the preset's configuration of it. The slot count replaces the preset's slot count and keeps its hash function. The list of constraints replaces the preset's list and keeps the preset's goals.
+
 ### The registry
 
-A strategy registers through a factory for its axis. The factory's type parameter is the axis interface, such as `partition.Partitioner`. `Build` returns an error for a factory whose type parameter does not match the axis, such as a partitioner factory registered on the placement axis, and the controller calls `Build` for every axis when it starts.
+A strategy registers through a factory for its axis. The factory's type parameter is the axis interface, such as `partition.Partitioner`. `Build` returns an error for a factory whose type parameter does not match the axis, such as a partitioner factory registered on the placement axis, and the controller calls `Build` for every axis when it starts. The root also builds every strategy of a spec before it accepts the spec, the constraints, goals and hash functions that its configurations name included. A live edit that selects such a factory, or one whose `New` fails, is therefore rejected with its spec path, and the namespace continues on its current spec.
 
 The planner's constraints and goals register the same way, under the kinds `constraint` and `goal`. An application adds a rule that no built-in covers as a Go factory of `placement.Constraint` or `placement.Goal`, and a spec names it in the planner's configuration.
 
@@ -209,7 +225,8 @@ import (
 
 // Axis names a kind of registered strategy: a spec field, the planner's constraints
 // and goals, which the planner's configuration names, or the hash functions, which a
-// partitioner's configuration names.
+// partitioner's configuration names. Store and Membership name the roles of the
+// process's adapters, which provide capabilities and do not register strategies.
 type Axis string
 
 const (
@@ -223,13 +240,16 @@ const (
  Constraint   Axis = "constraint"
  Goal         Axis = "goal"
  Hash         Axis = "hash"
+ Store        Axis = "store"
+ Membership   Axis = "membership"
 )
 
 // Capability is a named property that a strategy provides to other axes,
 // such as "ordered-keys" or "single-writer".
 type Capability string
 
-// Requirement demands that the strategy selected on Axis provides Capability.
+// Requirement demands that the strategy selected on Axis, or the adapter in the role
+// that Axis names, provides Capability.
 type Requirement struct {
  Axis       Axis
  Capability Capability
@@ -247,7 +267,10 @@ type Capabilities struct {
 }
 
 // Parsed is a strategy configuration after parsing. Validate returns every invalid
-// field joined with errors.Join, or nil when the configuration is valid.
+// field joined with errors.Join, or nil when the configuration is valid. A Parsed
+// value encodes with encoding/json to its complete configuration, every default
+// included, and Parse of that encoding returns an equal value. The root stores that
+// encoding in the resolved spec.
 type Parsed interface {
  Validate() error
 }
@@ -259,6 +282,8 @@ type Factory[T any] interface {
  Name() string
  // Parse decodes raw into the strategy's configuration type and applies defaults.
  // An empty raw yields the default configuration, and an unknown field is an error.
+ // A field that raw omits takes its default, and a field that raw sets keeps its
+ // value, an empty list included.
  Parse(raw json.RawMessage) (Parsed, error)
  // Capabilities declares the capabilities that the strategy provides and requires
  // with the configuration cfg, which Parse returned and Validate accepted.
@@ -370,7 +395,9 @@ Each `Registry` is a value that the application creates and passes to the contro
 ```go
 package config
 
-// Preset is a named partial spec. Resolve copies each field that the spec leaves empty.
+// Preset is a named partial spec, from which Resolve fills each field that the spec
+// leaves empty, and over whose configuration of a strategy Resolve merges the spec's
+// selection of that strategy.
 type Preset struct {
  Name        string
  Description string
@@ -382,13 +409,21 @@ type Preset struct {
 func RegisterPreset(r *Registry, p Preset) error
 ```
 
-Resolution fills a field from three sources in order: the spec, the preset, and the strategy's own default. A preset selects strategies and may contain their configurations. A strategy's `Parse` fills every field that the resulting configuration leaves empty. The budget's numeric fields are pointers, so a spec that sets one to zero gets zero. Every other field is empty when it has its zero value, so a spec that needs such a field set to zero states it through the strategy's explicit option, such as `"replicas": 1`.
+`Resolve` builds each selection in three steps:
+
+1. A selection that names another strategy than the preset's starts from that strategy's defaults. The preset's configuration of its own strategy does not apply to it.
+2. A selection of the preset's strategy, or one without a name, merges its configuration over the preset's configuration of that strategy as a JSON Merge Patch, as RFC 7396 defines it. An object merges key by key, `null` deletes a key, and an array or any other value replaces the preset's value. An empty array, `[]`, is an explicit empty list.
+3. The strategy's `Parse` applies its defaults to the merged configuration, so a key that the merge deleted takes the strategy's default.
+
+The root stores the resolved spec, with every selection's configuration expanded: the encoding of what `Parse` returned, every default included. A release that changes a strategy's default therefore does not change a running namespace, whose stored configuration states the value that it runs.
+
+A spec field that is not a selection takes the preset's value when the spec leaves it empty. The budget's numeric fields are pointers, so a spec that sets one to zero gets zero. Every other field is empty when it has its zero value, so a spec that needs such a field set to zero states it through the strategy's explicit option, such as `"replicas": 1`.
 
 Every preset in the support matrix selects `fenced: true` in its ownership configuration, `watch` routing and `PlannedInterruption`, and resolves completely: no field of it takes a value that fails a check.
 
 ### Capabilities and cross-axis requirements
 
-A factory declares the capabilities its strategy provides and the capabilities it requires on other axes. The store and membership adapters of the process declare what they provide through `Provider`, and the controller passes those capabilities to `Resolve`. `Resolve` checks every requirement against the strategies the spec selected and the adapters the process has. The capability names are part of the library's public contract.
+A factory declares the capabilities its strategy provides and the capabilities it requires on other axes. The store and membership adapters of the process declare what they provide through `Provider`. The controller passes each adapter's capabilities to `Resolve` under the adapter's role: the axis `store` for the store, and the axis `membership` for the membership. A requirement names the role that must provide a capability, so a store that has leases does not satisfy a requirement on the membership. An adapter that the process passes in both roles provides its capabilities in both. `Resolve` checks every requirement against the strategies the spec selected and the adapters the process has. The capability names are part of the library's public contract.
 
 | Capability | Provided by | Required by |
 |---|---|---|
@@ -403,8 +438,8 @@ A factory declares the capabilities its strategy provides and the capabilities i
 | `overlap` | handoffs `make-before-break`, `staged` | ownership `overlapping` |
 | `writer-epochs` | ownership `exclusive`, `overlapping`, `delegated` | none. Handoff `graceful` prefers it |
 | `fenced` | ownership `exclusive`, `overlapping` and `delegated`, when their configuration sets `fenced: true` | the support matrix of the first release |
-| `leases` | store and membership adapters that end a node's session within a bounded time after the node stops renewing it | ownership `exclusive` and `overlapping` |
-| `durable` | store adapters that persist every commit | topology `service`, and `controller.New` unless the process selects a volatile store |
+| `leases` | membership adapters that end a node's session within a bounded time after the node stops renewing it, and store adapters whose elections end the same way | ownership `exclusive` and `overlapping`, from the membership |
+| `durable` | store adapters that persist every commit | topology `service`, and `controller.New` unless the process selects a volatile store, from the store |
 
 The capability checks reject these combinations, among others, whatever the support matrix contains:
 
@@ -415,7 +450,7 @@ The capability checks reject these combinations, among others, whatever the supp
 
 Validation accepts `affinity` ownership with `graceful` handoff and warns about it. `graceful` prefers `writer-epochs`, and under `affinity` it runs a coordinated primary handoff for a writer that the core does not fence.
 
-A namespace on `membership/static` fails the capability checks inside the support matrix as well, because `exclusive` requires `leases`, and the static membership does not provide them. An `exclusive` ownership configuration without `fenced: true` fails the matrix, which requires `fenced`.
+A namespace on `membership/static` fails the capability checks inside the support matrix as well, because `exclusive` requires `leases` from the membership, and the static membership does not provide them, whatever the store provides. An `exclusive` ownership configuration without `fenced: true` fails the matrix, which requires `fenced`.
 
 ### Resolution
 
@@ -426,6 +461,8 @@ import "go.thesmos.sh/sharder/shard"
 
 // Resolved is a spec after presets, defaults, parsing and cross-axis checks.
 type Resolved struct {
+ // Spec is the spec with every field filled, and every selection's configuration
+ // expanded with its defaults. The root stores it.
  Spec    Spec
  Configs map[Axis]Parsed
  // Mapping is the mapping of the resolved partitioner, which Resolve reads from the
@@ -446,6 +483,7 @@ type Warning struct {
 
 // Provider is implemented by store and membership adapters. Provides lists the
 // capabilities that the adapter offers to the spec's strategies, such as "leases".
+// The controller files them under the role in which the process passes the adapter.
 type Provider interface {
  Provides() []Capability
 }
@@ -454,15 +492,15 @@ type Provider interface {
 // its factory, the constraints, goals and hash functions that configurations name
 // included. It parses no selection whose name r's support matrix does not list. It
 // checks the result against the support matrix, every cross-axis requirement, and the
-// budget's interruption against the handoff protocol, with the capabilities in
-// provided. A problem with the support matrix is a selection outside it, an approvals
+// budget's interruption against the handoff protocol, with the capabilities that
+// provided lists for the roles Store and Membership. A problem with the support matrix is a selection outside it, an approvals
 // section, or a capability that the matrix requires and the resolved namespace lacks.
 // When there is any such problem, Resolve returns every one of them joined with
 // ErrUnsupported. Otherwise it returns every other problem, a missing preset included,
 // joined in one error of class errs.Invalid. Each problem names its spec path, such as
 // "placement.config.goals[1].weight". A preference that the selections do not meet
 // becomes a Warning in the result.
-func Resolve(r *Registry, spec Spec, provided []Capability) (*Resolved, error)
+func Resolve(r *Registry, spec Spec, provided map[Axis][]Capability) (*Resolved, error)
 ```
 
 `Resolve` reports every problem of one class in one error, so a user fixes a spec in at most two rounds instead of one round per problem. Every error of the package classifies as `errs.Invalid` or `errs.Unsupported` under core's `errs.Classify`, so a generic retry loop never retries a spec that cannot succeed.
@@ -472,12 +510,12 @@ func Resolve(r *Registry, spec Spec, provided []Capability) (*Resolved, error)
 The root of a running namespace reads the spec from the root scope, and the cell controllers read it from there. A new version takes effect in these steps:
 
 1. `sharderctl apply` sends the new spec as a proposal with the next version number to the root, through the protocol's `Submit` call.
-2. The root authorises the caller for the kind `spec`, resolves the proposal, and calls `Change` with the current resolved spec.
-3. On success, the root commits the new spec together with the proposal and its caller's identity, and records the new version as the accepted one. `Submit` returns the warnings of `Resolve`.
+2. The root authorises the caller for the kind `spec`, resolves the proposal, builds every strategy of the result, and calls `Change` with the current resolved spec. A strategy that fails to build rejects the proposal with its spec path.
+3. On success, the root commits the resolved spec together with the proposal and its caller's identity, and records the new version as the accepted one. `Submit` returns the warnings of `Resolve`.
 4. On failure, `Submit` returns the reasons, and the root continues with the current spec.
 5. Each cell's controller reads the accepted spec, verifies it, and applies it at its next planning pass. The commit that starts applying it records its version as `shard.Cell.SpecVersion` in the cell's record.
 
-`sharderctl status` prints the accepted version and each cell's applied version, so an operator sees a cell that has not applied the latest spec. `sharderctl` prints what `Submit` returns. Operators do not need credentials for the store.
+`sharderctl status` prints the accepted version and each cell's applied version, so an operator sees a cell that has not applied the latest spec. `sharderctl` prints what `Submit` returns. It reads the store for `status`, so operators need read credentials for the store, and no write credentials.
 
 ```go
 package config
@@ -751,7 +789,9 @@ Restrict writes to the root scope with the store's own access control, such as r
 - The support matrix is a third check next to the registry and the capabilities. A registered strategy outside it fails `Resolve`, so an application that registers its own partitioner cannot use it until the matrix admits the partitioning axis.
 - An application rule that no built-in constraint covers is Go code, so changing it requires a deploy of the application.
 - In the support matrix, a spec edit can change only placement, the budget, the load model and the cell bounds. Every other change needs a new namespace, including a change of the lease TTL.
-- A factory registered on the wrong axis fails when the controller starts, not when the application compiles. `Register` takes the axis as a value, so the compiler cannot match it to the factory's type parameter.
+- A factory registered on the wrong axis fails when the controller starts, or when the root builds a spec that selects it, not when the application compiles. `Register` takes the axis as a value, so the compiler cannot match it to the factory's type parameter.
+- To use none of a list that its preset configures, a spec states an empty list, `[]`, because a selection of the preset's strategy merges over the preset's configuration. A selection of another strategy loses the preset's configuration of the preset's strategy.
+- Every strategy's `Parse` must encode its result with every default and parse that encoding back to an equal value, so the root can store the expanded spec.
 - Strict parsing conflicts with rolling upgrades. A spec that uses a field added in a newer release is rejected by controllers that still run the older release. gRPC ignores unknown fields for this reason. Here, a spec may use a new field only after every controller runs a release that supports it, and the controller that rejects such a spec reports the unknown field by name.
 - Operator identities are part of each controller process's configuration. Adding or removing an operator changes the configuration of every controller process of the namespace.
 - Approvals, outside the matrix, need a signing key for each approver and the anchor in each process's configuration. A change of approvers needs signatures under both the old and the new policy.
@@ -772,6 +812,7 @@ None.
 
 | What | Where |
 |---|---|
+| JSON Merge Patch, RFC 7396 | https://www.rfc-editor.org/rfc/rfc7396 |
 | gRPC service config, load-balancing policy selection | https://github.com/grpc/grpc/blob/master/doc/service_config.md |
 | gRPC proposal A21, service config error handling | https://github.com/grpc/proposal/blob/master/A21-service-config-error-handling.md |
 | grpc-go v1.84.0, balancer registration and ConfigParser | https://github.com/grpc/grpc-go/blob/v1.84.0/balancer/balancer.go |

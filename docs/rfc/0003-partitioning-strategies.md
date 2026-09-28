@@ -83,7 +83,7 @@ type Shard struct {
  ID    shard.ID
  Range shard.Range
  // Labels contains attributes that placement goals and constraints read, such as a
- // tenant or a preferred region.
+ // tenant or a preferred region. The partitioners of the support matrix set none.
  Labels tag.Tags
 }
 
@@ -168,6 +168,8 @@ With `hashTags` on, only the bytes between the first `{` and the first `}` after
 Every field of the configuration decides a key's position, so the whole configuration is part of the namespace's mapping. The slot count, the hash function and hash tags are fixed for the life of the namespace incarnation, and `Change` rejects an edit of any of them. A namespace that needs another slot count migrates to a new namespace. A namespace chooses its slot count for its largest deployment: every slot is one entry of each router's route array, so 1,024 slots cost a router about 8 KiB of pointers.
 
 The shard set of `fixed-slots` never changes, so a shard's ID remains its slot number for the life of the namespace incarnation, and no shard is ever retired.
+
+Neither `fixed-slots` nor `singleton` labels a shard. A constraint that requires a shard label, such as `match-label`, therefore rejects every node for every shard in the support matrix, and each shard remains unplaced with the constraint as the reason.
 
 #### singleton
 
@@ -330,6 +332,7 @@ None.
 
 - Resharding is outside the support matrix. It needs fresh shard identities, a migration protocol for mapping changes across cells, bounded publication, and split inputs before the matrix can include it.
 - `hash-range`, `key-range` and `explicit` are outside the support matrix.
+- Labels on ranges of slots in `fixed-slots`, which would give the label constraints and goals of placement a source in the support matrix, are not proposed here.
 - Detecting a hot key and splitting it into a shard of its own, as Dicer does, is not proposed here. `hash-range` splits a hot range only at its midpoint.
 - A directory-based built-in partitioner is not proposed here.
 - Moving a shard from one cell to another is not proposed here. Cells change by splitting at a shard boundary.

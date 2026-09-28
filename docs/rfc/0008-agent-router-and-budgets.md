@@ -21,7 +21,7 @@ An application uses the library through these components:
 
 - The agent runs inside each application process and calls the application's `Handler` to add and drop replicas. Optional interfaces enable role changes, the graceful and staged handoffs, consensus membership changes and resharding, and the agent reports which ones the application implements. Callbacks arrive at least once, each with an idempotency key, and the agent refuses a stale callback before the handler sees it.
 - The router runs inside each client and maps a key to the replicas that serve it. In the support matrix, it keeps every route of the cells it uses, from a watch of the store, and never replaces a route with an older one. It corrects a route when a server replies, before running a request, that it does not serve the shard. The `lookup` and `compute` sources are designs outside the matrix.
-- The disruption budget admits planned operations, such as a rolling restart, only when every shard keeps enough replicas. It commits each admitted operation to the store as a reservation before it replies.
+- The disruption budget admits planned operations, such as a rolling restart, only when every shard keeps enough replicas. It commits each deferred or admitted operation to the store as a reservation before it replies.
 - A protocol defines the calls between controllers, agents and routers, as Go types and interfaces. Every call has metadata, the caller's identity, protocol version and required features, which every receiver checks before any effect. Every message names its scope and its namespace incarnation. The message types have binary codecs that kanon generates. Transport adapters in their own modules run the calls on the embedder's servers and credentials: HTTP/2 through `net/http`, in the support matrix, or gRPC. The library checks each caller's identity against the state in the store.
 - Operators and cluster managers call the controller that applies each change through the same protocol. A controller authorises each call by the kind of the operation, against the operators in its process's own configuration.
 
@@ -70,16 +70,19 @@ import (
 // a repeated key, before it calls the handler. A handler whose callback has an effect
 // that must not happen twice records r.Key() in the same transaction as the effect,
 // and returns the recorded result for a key that it finds. It may delete a recorded
-// key once a callback of the shard's next operation arrives. The context is cancelled
-// when the step's timeout passes, and a handler that ignores the cancellation keeps
-// the shard's next callback waiting.
+// key once it has returned nil for a callback of a later operation of the shard. The
+// context is cancelled when the step's timeout passes, and a handler that ignores the
+// cancellation keeps the shard's next callback waiting.
 type Handler interface {
  // AddShard starts serving r.Shard in r.Role. For a writer role, the agent acquires
- // the fence at r.Epoch before it calls AddShard, and AddShard reads the shard's data
- // only after that. It discards every state that it derived from an earlier tenure
- // of the shard. It returns when the replica serves.
+ // the fence at r.Epoch before it calls AddShard. AddShard discards every state that
+ // it derived from an earlier tenure of the shard, and reads the shard's data only
+ // from a state that contains the acquisition: a new transaction on the authoritative
+ // data source, or a replica that is proven to have applied the acquisition and every
+ // fenced write before it. It returns when the replica serves.
  AddShard(ctx context.Context, r protocol.Request) error
- // DropShard stops serving r.Shard and releases its local resources.
+ // DropShard stops serving r.Shard and releases its local resources. r.Path is
+ // protocol.Cleanup when the agent drops a removed tenure by itself.
  DropShard(ctx context.Context, r protocol.Request) error
 }
 
@@ -209,20 +212,28 @@ func (a *Agent) Token(id shard.ID) (fence.Token, error)
 
 // Close calls Disrupt for this node at its incarnation, and calls it again after each
 // RetryAfter until the controller allows it, which the controller does once the node's
-// replicas have moved away. Close then leaves the cell and calls Done. When ctx ends first, Close leaves the
-// cell and returns ctx's error without calling Done. The reservation, or the drain of
-// the deferred disruption, then remains, and the controller ends it once the node's
-// incarnation has ended and no placement names the node.
+// replicas have moved away. Close then leaves the cell and calls Done. When ctx ends
+// first, Close leaves the cell and returns ctx's error without calling Done. The
+// node's reservation then remains, pending with its drain or admitted, and the
+// controller ends it once the node's incarnation has ended and no placement names the
+// node.
 func (a *Agent) Close(ctx context.Context) error
 
 // Do checks md and r before it looks up r's key or calls the handler, and then runs r,
-// one callback of the cell's controller. It returns an error of class errs.Denied when
-// md.Caller is not the identity that the scope names as its controller. It returns an
-// error of class errs.Conflict when r names another namespace incarnation, another
-// node or node incarnation, or a shard epoch, controller epoch or operation below the
-// highest this node has seen, and when r is a forward callback of an operation whose
-// abort path this node has seen. It returns an error of class errs.Invalid when this
-// node has seen r's key with another digest. A repeated key returns the kept result.
+// one callback of the cell's controller. It returns an error of class errs.Transient
+// when r.ControllerEpoch is above the epoch of the controller record that the agent
+// has read, because its watch has not delivered the newer record yet. It returns an
+// error of class errs.Denied when md.Caller is not the identity of that record. It
+// returns an error of class errs.Conflict when r names another namespace incarnation,
+// another node or node incarnation, or a shard epoch, controller epoch or operation
+// below the highest this node has seen, when r is a forward callback of an operation
+// whose abort path this node has seen, and when r belongs to an operation that this
+// node has seen end. It returns an error of class errs.Invalid when this node has seen
+// r's key with another digest, and for a request on the path protocol.Cleanup, which
+// only the agent itself builds. A repeated key returns the kept result. A callback that
+// starts a tenure, such as an add, runs only once the placements that the agent
+// watches list the tenure at r.Epoch. Do waits for the agent's watch until then, and
+// returns an error of class errs.Transient when ctx ends first.
 func (a *Agent) Do(ctx context.Context, md protocol.Metadata, r protocol.Request) error
 
 // Election is a writer tenure that a delegated namespace's authority granted to this
@@ -293,10 +304,30 @@ func (a *Agent) Recovered(id shard.ID) error
 
 Each callback is one `protocol.Request`, delivered at least once, and the agent handles it in this order:
 
-1. It checks the call's metadata, and the caller's identity against the scope's controller record.
-2. It refuses a request for another namespace incarnation, another node or another node incarnation, a request with a lower shard or controller epoch, a request of an operation older than the newest it has seen for the shard, and a forward request of an operation whose abort path it has seen.
+1. It checks the call's metadata. It then compares the request's controller epoch and the caller's identity with the controller record that it has read. A controller epoch above the record's returns an error of class `errs.Transient`, because its watch has not delivered the newer record yet. A caller other than the record's identity is denied.
+2. It refuses a request for another namespace incarnation, another node or another node incarnation, a request with a lower shard or controller epoch, a request of an operation older than the newest it has seen for the shard, a forward request of an operation whose abort path it has seen, and a request of an operation that it has seen end. It learns of an abort path and of an operation's end from callbacks and from its watch.
 3. It looks up the request's key. A key that it has seen with another digest is refused. A key whose callback has finished returns the kept result, and a key whose callback is running waits for that callback's result.
-4. It runs the callback, one at a time per shard, and keeps a result that is not a transient error until the shard's next operation starts.
+4. A callback that starts a tenure, an `add` in the support matrix, waits until the agent's watched state lists the tenure. The state lists a tenure when the shard's placement names the node at the tenure's epoch. The core commits that placement before it sends the callback, and a callback of a transition in flight runs once the watch has delivered the commit. The callback waits outside the shard's queue, and the agent checks the listing again when the callback's turn comes. When the call's context ends first, the agent returns an error of class `errs.Transient`.
+5. It runs the callback, one at a time per shard, and keeps a result that is not a transient error until the shard's next operation starts.
+
+The agent raises its highest controller epoch only from its watch and from a request that passed these checks. A request that it refuses changes none of its state.
+
+The agent starts a tenure only once its watched state lists the tenure. It cleans up each tenure that its watched state no longer lists. The cleanup stops a replica that a late callback started after its operation ended, also when the watch skipped the generations that ended it, and it never stops a newer tenure:
+
+- The agent compares its tenures with its watched state after it applies each event and after it installs each replacement snapshot. It treats a tenure that it has started or is starting, and that the state does not list at the tenure's epoch, as removed. The agent keeps each tenure's epoch itself, and binds each cleanup to the exact tenure that the comparison found. An event lists in `store.Event.Removed` each shard whose placement stopped naming the node. A snapshot that replaces the state after `store.ErrCompacted` does not report removals, and the comparison finds them.
+- Absence from a replacement snapshot means removal. The agent starts a tenure only from an installed state that lists it, so the commit that placed the tenure is at or below that state's generation. The snapshot's read is linearizable, and its generation is at or above that of every state that the agent installed before it. The snapshot contains the commit that placed the tenure, and a later commit has removed the tenure. Its epoch is not granted again, because the core grants each epoch to one tenure. A snapshot cannot stop a newer tenure either. The agent has not started any tenure whose commit the snapshot does not contain.
+- The agent keeps, with each tenure, the request of the callback that started it. The cleanup request copies that request's operation, node, node incarnation, shard, range, role and epoch, and is a `drop` on the path `protocol.Cleanup`, step 0. Its key depends only on the tenure. An event and a snapshot that report one removal build the same key, and every retry reuses the request.
+- The cleanup is local. The agent runs it in the shard's queue, one at a time with the shard's callbacks, and deduplicates it by its key as it does a callback. `Agent.Do` refuses a request on the path `Cleanup` from a caller.
+- Ordinary callbacks are refused for an operation that has ended, and the cleanup exists to handle ended operations, so it has an eligibility rule of its own: the targeted tenure, the replica at that epoch in the node's current incarnation, is still active. The agent checks the rule immediately before it revokes the token and before it calls the handler, again after each wait, and on each retry. When the tenure is no longer active, because the replica was dropped or a newer tenure replaced it, the cleanup ends without an effect.
+- One transition can remove a tenure and then restore the node at another epoch: forward step 2 of a move away from A removes A's tenure at e, and the move's abort path restores A at e+2. A delayed removal of the tenure at e then finds the tenure at e+2 active, and ends without an effect.
+- When the rule is met, `Token` returns `epoch.ErrFenced` for the tenure, and the agent calls `DropShard` with the cleanup request. The handler records the request's key as it records any callback's key. The agent retries a transient error with the same request. An error that is not transient marks only the targeted tenure failed, and its token remains revoked.
+- A later `drop` of the replica succeeds without a handler call when the cleanup dropped it, and runs the handler when the cleanup failed.
+
+In the support matrix, every replica is a writer that a callback starts, so its epoch identifies its tenure, and the callback that started it identifies its cleanup. These cases outside the matrix need more before the matrix can include them:
+
+- A replica model with non-writer roles needs another discriminator for a non-writer replica.
+- A replica that the agent restores at start-up, or that a delegated authority places, needs another basis for the identity of its cleanup.
+- A protocol that adds a replica before it commits the replica, such as `graceful` or `staged`, needs the agent's watch to list the tenure from the transition's record.
 
 In a `delegated` namespace, outside the support matrix, the core does not place replicas, so the application reports every replica that its authority places on the node, through these calls:
 
@@ -326,10 +357,15 @@ package router
 import (
  "context"
  "fmt"
+ "log/slog"
 
+ "go.thesmos.sh/core/clock"
  "go.thesmos.sh/core/epoch"
  "go.thesmos.sh/core/errs"
+ "go.thesmos.sh/core/telemetry"
+ "go.thesmos.sh/sharder/config"
  "go.thesmos.sh/sharder/shard"
+ "go.thesmos.sh/sharder/store"
 )
 
 // Endpoint is one replica a client can call.
@@ -358,27 +394,32 @@ type Router interface {
  // router has no route for the key, such as for a shard without a committed
  // placement.
  Route(ctx context.Context, key []byte) (Route, error)
- // Refresh returns when the router has observed generation min of cell or a later
- // one, or when ctx ends.
- Refresh(ctx context.Context, cell shard.CellID, min epoch.Epoch) error
+ // Refresh returns when the router has observed generation min of cell in the
+ // namespace incarnation inc, or a later generation of it. It returns
+ // shard.ErrIncarnation when inc is not the incarnation that the router has
+ // installed, or when the router installs another incarnation while Refresh waits,
+ // once the router has read the root scope again and installed the root's current
+ // incarnation. It returns ctx's error when ctx ends first.
+ Refresh(ctx context.Context, inc shard.NamespaceIncarnation, cell shard.CellID, min epoch.Epoch) error
 }
 
 // NotOwnerError is returned by a server, before it starts a request, for a shard that
 // it does not serve at the request's epoch and namespace incarnation. A server never
-// returns it for a request that it has started. Generation is the cell's generation
-// that the server has observed, and Hint names the node the server believes serves the
-// shard.
+// returns it for a request that it has started. Incarnation is the server's namespace
+// incarnation, and Generation is the cell's generation in that incarnation that the
+// server has observed. Hint names the node the server believes serves the shard.
 type NotOwnerError struct {
- Cell       shard.CellID
- Shard      shard.ID
- Epoch      epoch.Epoch
- Generation epoch.Epoch
- Hint       shard.NodeID
+ Incarnation shard.NamespaceIncarnation
+ Cell        shard.CellID
+ Shard       shard.ID
+ Epoch       epoch.Epoch
+ Generation  epoch.Epoch
+ Hint        shard.NodeID
 }
 
 func (e *NotOwnerError) Error() string {
- return fmt.Sprintf("router: shard %s of cell %s is not served here at epoch %d (generation %d, hint %s)",
-  e.Shard, e.Cell, e.Epoch, e.Generation, e.Hint)
+ return fmt.Sprintf("router: shard %s of cell %s is not served here at epoch %d (incarnation %s, generation %d, hint %s)",
+  e.Shard, e.Cell, e.Epoch, e.Incarnation, e.Generation, e.Hint)
 }
 
 // Class returns errs.Conflict: the route that the caller used has moved, and the
@@ -403,18 +444,73 @@ const (
  Compute Source = "compute"
 )
 
-// Do calls call with the route of key. After a *NotOwnerError, it refreshes the route
-// and routes again, at most attempts times. It returns every other error of call at
-// once, including a transport error and a timeout, because a request that fails after
-// it started may have taken effect.
+// Do calls call with the route of key. After a *NotOwnerError, it calls r.Refresh with
+// the error's incarnation, cell and generation, and routes key again when Refresh
+// returns nil or shard.ErrIncarnation, at most attempts times in total. It returns
+// every other error of call or of Refresh at once, including a transport error and a
+// timeout, because a request that fails after it started may have taken effect.
 func Do(ctx context.Context, r Router, key []byte, attempts int, call func(Route) error) error
+
+// Config lists what New needs: the namespace, the store and the registry that a
+// router in watch mode reads, and the seams of the router's runtime.
+type Config struct {
+ Namespace shard.Namespace
+ Store     store.Store
+ // Registry builds the namespace's partitioner from the spec that the root scope
+ // stores.
+ Registry *config.Registry
+ // Clock is the clock of the router's loops. Nil selects a clock/hlc clock.
+ Clock clock.Clock
+ // Telemetry reports the router's metrics. Nil selects telemetry/noop.
+ Telemetry telemetry.Reporter
+ // Logger receives the router's logs. Nil selects slog.Default.
+ Logger *slog.Logger
+}
+
+// Watcher keeps every route of each cell that it has routed to, from a watch of the
+// cell's scope, and the cell map, from a watch of the root scope. It implements Router
+// in watch mode, and is safe for concurrent use.
+//
+// Watcher also rediscovers the namespace. It reads the root scope again when a watch
+// returns shard.ErrIncarnation, or when Refresh names an incarnation other than the
+// installed one. Concurrent triggers share one read. When the root scope records
+// another incarnation, the Watcher builds the partitioner from the stored spec,
+// compares its mapping with the recorded one, snapshots the cells that it routes to,
+// and installs the mapping and the new caches in one step. It then cancels the
+// watches of the old incarnation, ignores their late events, and wakes every Refresh
+// that waits on the old incarnation. A mapping that differs from the recorded one
+// makes Route return an error of class errs.Unsupported.
+type Watcher struct {
+ // unexported fields
+}
+
+var _ Router = (*Watcher)(nil)
+
+// New returns a router in watch mode for cfg.Namespace. It waits until the root has
+// created the namespace or ctx ends, reads the spec and the cell map from the root
+// scope, builds the partitioner with cfg.Registry, and compares the partitioner's
+// Mapping with the recorded one. It returns an error of class errs.Unsupported when
+// the two differ. Its watches run under task.Run until Close, and a watch that
+// returns shard.ErrIncarnation makes the router read the root scope again.
+func New(ctx context.Context, cfg Config) (*Watcher, error)
+
+// Route implements Router.
+func (w *Watcher) Route(ctx context.Context, key []byte) (Route, error)
+
+// Refresh implements Router.
+func (w *Watcher) Refresh(ctx context.Context, inc shard.NamespaceIncarnation, cell shard.CellID, min epoch.Epoch) error
+
+// Close stops the router's watches, and returns once every goroutine that the router
+// started has returned. Route and Refresh return an error of class errs.Invalid after
+// Close.
+func (w *Watcher) Close() error
 ```
 
 A router first maps a key to its position with the namespace's partitioner, then finds the position's cell in the cell map, which it watches in the root scope. The cell map is small: one entry per cell. It then finds the route in the cell's cache. A router compares the mapping of its partitioner with the namespace's recorded mapping when it starts, and refuses the namespace when they differ.
 
-In `watch` mode, the cache is the cell's whole assignment, kept current by a watch of the cell's scope under the store's snapshot and watch rules. A `fixed-slots` cache is an array indexed by slot, with one atomic pointer per slot, so a lookup costs a hash and an index. Each entry records the generation of the placement it came from, and the router replaces an entry only with one from a newer generation. A delayed event or a repeated one after a reconnect therefore never brings back an older route. A shard without a committed placement has no entry, and `Route` returns an error of class `errs.Transient` for its keys.
+In `watch` mode, the cache is the cell's whole assignment, kept current by a watch of the cell's scope under the store's snapshot and watch rules. A `fixed-slots` cache is an array indexed by slot, with one atomic pointer per slot, so a lookup costs a hash and an index. Each entry records the incarnation and the generation of the placement it came from, and the router replaces an entry only with one from a newer generation of the same incarnation. A new incarnation replaces the mapping and every cache at once. A delayed event or a repeated one after a reconnect therefore never brings back an older route. A shard without a committed placement has no entry, and `Route` returns an error of class `errs.Transient` for its keys.
 
-A server replies to a request for a shard it does not serve, or for a lower epoch or another namespace incarnation than its own, with `NotOwnerError`, before it starts the request. It classifies as `errs.Conflict`, the class whose remedy is to read the state again and retry. Redis Cluster's `MOVED` and CockroachDB's not-leaseholder error follow the same redirect model. The router waits for the server's generation of the cell and routes again, because one generation can move many shards, such as every shard of a failed node.
+A server replies to a request for a shard it does not serve, or for a lower epoch or another namespace incarnation than its own, with `NotOwnerError`, before it starts the request. It classifies as `errs.Conflict`, the class whose remedy is to read the state again and retry. Redis Cluster's `MOVED` and CockroachDB's not-leaseholder error follow the same redirect model. The router waits for the server's generation of the cell, in the server's incarnation, and routes again, because one generation can move many shards, such as every shard of a failed node. A generation of another incarnation belongs to another history, so the router rediscovers the namespace instead of waiting for that generation.
 
 `router.Do` retries only after a `NotOwnerError`, because only that error proves that the request did not run. A request whose reply is lost, or that fails after the server started it, may have taken effect. The application retries it, with an idempotency of its own when the request changes state.
 
@@ -458,7 +554,7 @@ The router's callback takes only a `Route`, so the router cannot bound the memor
 
 Controllers, agents and routers in separate processes call each other through a transport adapter. The protocol itself is Go types and interfaces:
 
-- The agent implements `AgentServer`, and the controller implements `ControllerServer`.
+- The agent implements `AgentServer` for the callbacks of its cell's controller. The controller implements `ControllerServer`, and `AgentServer` for the callbacks of a namespace's root, which place cell controllers on its process. `Dispatch` serves both kinds of callback on one endpoint.
 - A controller sends callbacks through an `AgentClient`. Agents and routers send reports and lookups through a `ControllerClient`, and operators and cluster managers send operations and disruptions through it.
 - The argument of every call is one message, and so is its result or its `CallError`. Every message names its scope and its namespace incarnation, so one controller can serve many namespaces, and a delayed message of a deleted namespace is refused.
 - Every call has metadata besides its message, in `Metadata`: the caller's identity, its protocol version and the features it requires. The metadata is part of the protocol's contract, and a transport only encodes it.
@@ -566,7 +662,8 @@ const (
  Abdicate         Call = "abdicate"
 )
 
-// Path is the path of a transition's script that a callback belongs to.
+// Path is the path of a transition's script that a callback belongs to, or the
+// agent's own cleanup.
 type Path uint8
 
 const (
@@ -574,11 +671,16 @@ const (
  Forward Path = 1
  // Abort is the path that undoes the move after a forward step fails.
  Abort Path = 2
+ // Cleanup is the path of an agent's own drop of a tenure that the placements it
+ // watches no longer list. Only the agent builds requests on it, and Agent.Do refuses
+ // them from a caller.
+ Cleanup Path = 3
 )
 
 // Request is one callback for one replica. The controller of the replica's cell sends
 // it, and the agent checks it before the handler sees it. Its Key and its Digest
-// identify it across retries.
+// identify it across retries. A request on the path Cleanup comes from the agent
+// itself.
 type Request struct {
  Call  Call
  Scope shard.Scope
@@ -603,27 +705,32 @@ type Request struct {
  // a namespace whose partitioner does not reshape.
  Supersedes []shard.ID
  Epoch      epoch.Epoch
- Generation epoch.Epoch
- // ControllerEpoch is the fence epoch of the cell's controller that sends the
- // request. A node refuses a request below the highest controller epoch it has seen.
+ // ControllerEpoch is the fence epoch of the controller that sends the request. A
+ // node refuses a request below the highest controller epoch it has seen. It is the
+ // sender's authority, not part of the callback's payload.
  ControllerEpoch epoch.Epoch
 }
 
 // Key returns r's idempotency key. No two callbacks share a key.
 func (r Request) Key() Key
 
-// Digest returns the SHA-256 digest of r's encoding. An agent refuses a key that it
-// has seen with another digest.
+// Digest returns the SHA-256 digest of the encoding of r with ControllerEpoch set to
+// zero: the digest of the callback's payload. A new controller that resends a
+// callback under its own epoch therefore sends the same digest. An agent refuses a
+// key that it has seen with another digest.
 func (r Request) Digest() crypto.Digest
 
-// Key is the idempotency key of one callback: its operation, its path and step, and
-// the node incarnation that it is for.
+// Key is the idempotency key of one callback: its operation, its path and step, the
+// node incarnation that it is for, and the epoch of the tenure that it acts on. The
+// operation of a cleanup is the operation of the callback that started the tenure, so
+// a removal event and a replacement snapshot build the same key for one tenure.
 type Key struct {
  Operation       shard.OperationID
  Path            Path
  Step            int
  Node            shard.NodeID
  NodeIncarnation epoch.Epoch
+ Epoch           epoch.Epoch
 }
 
 // Report is a full snapshot of one node's replicas, which the node's agent sends to its
@@ -662,10 +769,18 @@ type Located struct {
  Addresses []string
 }
 
-// AgentServer receives the callbacks of a cell's controller.
+// AgentServer receives callbacks: an agent receives those of its cell's controller,
+// and a controller receives those of a namespace's root.
 type AgentServer interface {
  Do(ctx context.Context, md Metadata, r Request) error
 }
+
+// Dispatch returns an AgentServer that passes a request for a root scope to root, and
+// a request for a cell to the agent that agents maps the request's namespace to. It
+// returns an error of class errs.Transient for a namespace without an agent, as a
+// transport does for an unreachable node. A process serves the result on its one
+// callback endpoint.
+func Dispatch(root AgentServer, agents map[shard.Namespace]AgentServer) AgentServer
 
 // ControllerServer receives the reports of agents, the lookups of routers, and the
 // operations and disruptions of operators and cluster managers. Each method serves the
@@ -818,6 +933,8 @@ var (
 |---|---|
 | The call's version or a feature it requires is not implemented by the receiver | `errs.Unsupported` |
 | The receiver does not implement the callback or the operation kind | `errs.Unsupported` |
+| The request's controller epoch is above the controller record that the receiver has read | `errs.Transient` |
+| The request starts a tenure that the receiver's watched placements do not list before the call's context ends | `errs.Transient` |
 | The caller's identity is not the identity that the authorisation rules require | `errs.Denied` |
 | The message names another namespace incarnation, or another incarnation of the node | `errs.Conflict` |
 | The request's shard epoch, controller epoch or operation is older than the node's | `errs.Conflict` |
@@ -825,7 +942,7 @@ var (
 | The step's timeout passed | `errs.Transient` |
 | The handler returned an error | The handler error's class |
 
-A transport adapter keeps each error's class across the wire. `httptransport` returns a `CallError` in the response body, and the gRPC adapter maps each class to a gRPC status. The transition engine retries only `errs.Transient`, so a stale epoch or incarnation ends the step at once, for every call. A handler error without a class is `errs.Unspecified`, which core's `errs.Retryable` reports as not retryable. A handler whose failure a retry can fix classifies its error as `errs.Transient`.
+A transport adapter keeps each error's class across the wire. `httptransport` returns a `CallError` in the response body, and the gRPC adapter maps each class to a gRPC status. The transition engine retries only `errs.Transient`, so a stale epoch or incarnation ends the step at once, for every call, and a callback that arrives before its controller's record is retried. A handler error without a class is `errs.Unspecified`, which core's `errs.Retryable` reports as not retryable. A handler whose failure a retry can fix classifies its error as `errs.Transient`.
 
 At the default cell bounds, a node of the support matrix has about 200 replicas, and by our estimate its report is about 20 KiB. A report is always one message, because this proposal does not chunk reports.
 
@@ -838,12 +955,14 @@ The embedder is responsible for transport security, and the root module contains
 - The store and membership adapters take clients that the embedder built.
 - `sharderd`, the program of the `service` topology, is its own embedder, and its `main` package chooses its adapters and configures its credentials.
 
-Whether an authenticated caller may make a call depends on sharder's state: which identity is a cell's current controller, and which identity is node N. The transport knows neither. In the `embedded` topology, every application process can run a controller and must be able to call every agent. Without a check against that state, one compromised process can fence any writer with a forged `add` at a high epoch or retire any shard with a forged `supersedes` list. The core issues epochs one at a time from 1, so both are permanent in practice.
+Whether an authenticated caller may make a call depends on sharder's state: which identity is a cell's current controller, and which identity is node N. The transport knows neither. In the `embedded` topology, every application process can run a controller and must be able to call every agent. Without a check against that state, any process that the transport lets call an agent can fence any writer with a forged `add` at a high epoch, or retire any shard with a forged `supersedes` list. The core issues epochs one at a time from 1, so both are permanent in practice.
+
+The checks limit callbacks to the process that the store names as the cell's controller, and refuse a replaced controller. They do not protect a namespace from a compromised process that can run a controller. In the `embedded` topology, every application process has a controller's store credentials and can write the cell's record directly. The processes of one namespace therefore trust each other.
 
 The library checks each call against its own state, with the identity that the transport adapter passes:
 
 1. Each node registers its identity with its membership session, in `shard.Node.Identity`. Each cell's controller writes its identity to the cell's record when it acquires the cell's scope, and the root's leader campaigns under its identity.
-2. An agent accepts `Do` only from the identity that its scope names as its controller: the cell's record in a cell's scope, and the root's leader in the root scope. It also refuses a controller epoch below the highest it has seen, and a request for another namespace incarnation or another incarnation of itself.
+2. An agent accepts `Do` only from the identity that its scope names as its controller, and a controller accepts the callbacks of a root only from the root's leader. Each also refuses a controller epoch below the highest it has seen, and a request for another namespace incarnation or another incarnation of itself. A request whose controller epoch is above the record that the receiver has read returns an error of class `errs.Transient`, and the receiver raises its highest controller epoch only from a request that passed the identity check, and from its watch.
 3. A cell's controller accepts a `Report` for node N only from N's registered identity, for N's live incarnation.
 4. A controller authorises every `Submit`, `Disrupt` and `Done` by the kind of the operation. A kind without an approval policy, which is every kind in the support matrix, needs an operator of the namespace. A node may disrupt only itself, at its live incarnation, and `Done` comes only from the reservation's owner or an operator.
 
@@ -851,7 +970,7 @@ A call without an identity is denied. A deployment whose transport authenticates
 
 `Lookup` returns placements and addresses without changing any state, so the embedder authorises its callers, in the transport adapter or with a mesh policy. The shard and controller epoch checks apply whatever the transport.
 
-Identities, cell records and membership sessions are in the store, so the store's access control is the root of trust for rules 2 and 3. A deployment gives each role its own store credentials: controllers write the root and cell scopes, nodes write their own membership keys, and routers only read. Operators and cluster managers do not need store credentials. The operators of rule 4 come from the process's own configuration, never from the store, so a writer to the store cannot grant itself operator rights.
+Identities, cell records and membership sessions are in the store, so the store's access control is the root of trust for rules 2 and 3. A deployment gives each role its own store credentials: controllers write the root and cell scopes, nodes write their own membership keys, and routers only read. `sharderctl` reads the store to find a controller and for `status` and `history`, so an operator needs read credentials. A cluster manager that knows a controller's address needs none. Every change goes through an authenticated call to a controller, so neither needs write credentials. The operators of rule 4 come from the process's own configuration, never from the store, so a writer to the store cannot grant itself operator rights.
 
 ### Disruption budgets
 
@@ -886,7 +1005,7 @@ const (
 // Disruption is a planned operation on nodes of one cell.
 type Disruption struct {
  // ID is unique within the scope. A Disrupt with an ID that the scope has reserved
- // returns the recorded decision.
+ // evaluates a pending reservation again, and returns Allowed for an admitted one.
  ID          string
  Scope       shard.Scope
  Incarnation shard.NamespaceIncarnation
@@ -910,46 +1029,63 @@ type Decision struct {
  RetryAfter time.Duration
 }
 
-// Reservation is a disruption that the budget admitted, as the cell's scope records it.
+// Reservation is a disruption that the budget deferred or admitted, as the cell's scope
+// records it. It is pending while Admitted is zero. Only an admitted reservation
+// covers its nodes for the budget.
 type Reservation struct {
  Disruption Disruption
  // Digest is the SHA-256 digest of the disruption's encoding. A Disrupt with the same
- // ID and another digest fails with an error of class errs.Invalid.
+ // ID and another digest fails with an error of class errs.Invalid, whether the
+ // reservation is pending or admitted.
  Digest crypto.Digest
- // Owner is the identity that the disruption was admitted for.
+ // Owner is the identity that the disruption was requested for.
  Owner shard.Identity
- // Incarnations maps each node of the disruption to its incarnation at admission.
+ // Incarnations maps each node of the disruption to its incarnation when the
+ // reservation was recorded.
  Incarnations map[shard.NodeID]epoch.Epoch
- Admitted     time.Time
+ // Admitted is the instant of the admission, or zero while the reservation is
+ // pending.
+ Admitted time.Time
 }
 
 // Budget admits the disruptions of one cell.
 type Budget interface {
- // Admit decides d for owner. It commits a Reservation to the cell's scope before it
- // returns a Decision that allows d, and it is idempotent per d.ID: a repeated d
- // returns the recorded decision.
+ // Admit decides d for owner. Before it returns a deferral, it commits a pending
+ // Reservation with the drains of d's nodes, and before it returns a Decision that
+ // allows d, it commits the admission. A repeated d evaluates a pending reservation
+ // again, and returns Allowed for an admitted one. It returns an error of class
+ // errs.Invalid for a d whose ID the scope has recorded with another digest.
  Admit(ctx context.Context, owner shard.Identity, d Disruption) (Decision, error)
- // Done removes the reservation id, which ends the disruption.
+ // Done ends the reservation id: it releases an admitted reservation, and cancels a
+ // pending one together with its drains.
  Done(ctx context.Context, id string) error
 }
 ```
 
 The budget admits a negotiable disruption when these conditions remain true after it starts:
 
-- No shard has more unavailable replicas than the spec's `maxUnavailable`. The budget counts each replica once, whether it is unavailable because its node failed, because a transition moves it, or because a reservation covers its node.
-- At most `maxConcurrentNodes` nodes are covered by reservations at once.
+- No shard has more unavailable replicas than the spec's `maxUnavailable`. The budget counts each replica once, whether it is unavailable because its node failed, because a transition moves it, or because an admitted reservation covers its node.
+- At most `maxConcurrentNodes` nodes are covered by admitted reservations at once.
 
-Before it admits a disruption, the core moves the replicas in `drainRoles` off the disrupted nodes through the handoff protocol, and returns a deferral meanwhile. The drain is committed as a `store.Drain` with the disruption's ID. A new controller therefore continues it. The drain ends with the disruption's reservation, or when the disruption's `End` passes before an admission.
+The transitions that a drain or a repair starts run within the budget's bounds on work in flight: `maxTransitions` per cell, and `maxNodeTransitions` and `nodeCallbacks` per node.
+
+Before it admits a disruption, the core moves the replicas in `drainRoles` off the disrupted nodes through the handoff protocol, and returns a deferral meanwhile. With the first deferral, it commits the disruption as a pending reservation, with its digest and its owner, together with a `store.Drain` for each of its nodes. A new controller reads both and continues the drain. A repeated `Disrupt` evaluates admission again, and the commit that admits the disruption sets the reservation's `Admitted`. A non-negotiable disruption is admitted at its `Start`, whatever the budget decides.
+
+One commit removes a pending reservation together with its drains, when:
+
+- the disruption's `End` passes before the admission, because the disruption's window has closed
+- `Done` cancels it, from the reservation's owner or an operator
+- for a node's own disruption, the node's incarnation ends before the admission
 
 The default `drainRoles` is the model's writer role, because most SM applications drain their primaries and leave their secondaries in place. In the support matrix, every replica is a writer. A node is therefore empty when its disruption is admitted. In a `delegated` namespace, the core runs `abdicate` for each writer on the disrupted nodes. A writer that the authority does not move keeps the disruption deferred.
 
-A reservation remains until its disruption ends:
+An admitted reservation remains until its disruption ends:
 
 - `Done` ends it, from the reservation's owner or an operator.
 - The controller ends it by itself once every node that it covers has left the cell, or has rejoined with a new incarnation, and no placement names the node's old replicas.
 - The disruption's `End` time does not end it, because the disruption may have started and not finished.
 
-A new controller of a cell reads every reservation and drain from the scope, as part of its acquisition's snapshot, before it admits anything. Until every live node of the cell has sent it a report, it admits no planned disruption, so that failures that it has not observed yet cannot let it over-admit. Failover and repair run meanwhile.
+A new controller of a cell reads every pending and admitted reservation and every drain from the scope, as part of its acquisition's snapshot, before it admits anything. It continues the drain of each pending reservation, and ends each reservation by the rules of its state. Until every live node of the cell has sent it a report, it admits no planned disruption, so that failures that it has not observed yet cannot let it over-admit. Failover and repair run meanwhile.
 
 SM's TaskController works the same way: it approves a subset of pending container operations under a global cap and a per-shard cap that count replicas already down. A non-negotiable disruption is SM's non-negotiable event, which arrives with notice and an impact class. The budget cannot delay it, so the core uses the notice to move replicas away first. Kubernetes records the same gap between an admitted eviction and its observation, in a pod disruption budget's `disruptedPods`.
 
@@ -957,13 +1093,13 @@ Every replica of a shard is on a node of the shard's cell, so each cell's contro
 
 ### Operations
 
-A command that changes a namespace sends a proposal to the controller that applies it, through `Submit`, and prints the `Receipt` or the error that `Submit` returns. `sharderctl` finds the controller in the controller's record: the cell's record for a cell, and the root leader's record for the root. `status` and `history` read the store and do not need a controller. `why` submits an `explain` proposal, and the cell's controller returns the explanation without committing anything. A proposal whose controller fails over before it replies returns `errs.Transient`, and `sharderctl` sends it again to the successor. The successor reports an ID that its scope has already applied instead of applying it twice.
+A command that changes a namespace sends a proposal to the controller that applies it, through `Submit`, and prints the `Receipt` or the error that `Submit` returns. `sharderctl` finds the controller in the controller's record: the cell's record for a cell, and the root leader's record for the root. `status` and `history` read the store and do not need a controller. `why` submits an `explain` proposal, and the cell's controller returns the explanation without committing anything. A proposal whose controller fails over before it replies returns `errs.Transient`, and `sharderctl` sends it again to the successor. The successor reports an ID that its scope has already applied instead of applying it twice. `sharderctl` reports a proposal as applied when the scope's `Applied` contains its ID. An ID that `Applied` lacks means that the outcome is unknown, not that the proposal was rejected, because the scope forgets an ID once its `Expires` passes.
 
 | Command | Does | In the support matrix |
 |---|---|---|
-| `sharderctl status <ns>` | Prints the cells, the generation of each, the accepted spec version and each cell's applied version, the shards per node, the transitions in flight, the reservations and drains, the unplaced shards, and the ownership guarantee | Yes |
+| `sharderctl status <ns>` | Prints the cells, the generation of each, the accepted spec version and each cell's applied version, the shards per node, the transitions in flight, the pending and admitted reservations, the drains, the unplaced shards, and the ownership guarantee | Yes |
 | `sharderctl apply <spec>` | Proposes a new spec version and prints the root's reply: the acceptance with the warnings of `Resolve`, or the reasons for rejecting it | Yes |
-| `sharderctl drain <node>` / `undrain` | Moves every replica off a node under the budget, or releases it, and prints the budget's decision | Yes |
+| `sharderctl drain <node>` / `undrain` | Adds the node's manual drain, which moves every replica off the node under the budget, or removes that drain, and prints the budget's decision. A disruption's drain of the node remains in effect | Yes |
 | `sharderctl move <shard> <node>` | Moves one shard's writer to a node of its cell through the handoff protocol | Yes |
 | `sharderctl why <shard>` | Prints the constraints and goal costs that placed a shard where it is | Yes |
 | `sharderctl history <ns> <cell>` | Lists recent generations of a cell and what changed in each | Yes |
@@ -988,7 +1124,7 @@ The library reports these instruments through core's `telemetry.Reporter`. Each 
 | `sharder.commits.unknown` | Counter | `{commit}` | Commits that failed with an unknown outcome, per scope |
 | `sharder.lease.renewal.duration` | Histogram | `s` | Latency of lease renewals per node |
 | `sharder.budget.deferred` | Counter | `{disruption}` | Disruptions and transitions the budget deferred |
-| `sharder.budget.reservations` | Gauge | `{reservation}` | Reservations that have not ended, per cell |
+| `sharder.budget.reservations` | Gauge | `{reservation}` | Reservations that have not ended, per cell and state: pending, admitted |
 | `sharder.fence.refusals` | Counter | `{acquisition}` | Fence acquisitions that returned `epoch.ErrFenced` |
 | `sharder.router.lookups` | Counter | `{lookup}` | Route lookups, per result: hit, miss, redirect |
 | `sharder.router.cache.routes` | Gauge | `{route}` | Routes in a router's cache, per cell |
@@ -1063,7 +1199,9 @@ The controller still persists what it accepts: it commits each admitted disrupti
 - The library's checks are only as strong as the transport's authentication. An adapter that passes an identity that it did not prove lets any caller pass them.
 - A node registers its own identity through the store, so a writer to the store can register an identity of its own. Only the store's access control prevents it.
 - Capabilities are detected at runtime, so an application that omits an interface finds out from the controller's report, not from the compiler.
-- `Close` makes a deploy wait for its node's replicas to move. With many shards per node, that takes longer than Kubernetes' default 30-second grace period, which then needs raising. A `Close` that runs out of time leaves a reservation that the budget counts until the controller has replaced the node's replicas.
+- `Close` makes a deploy wait for its node's replicas to move. A node with 200 replicas moves them 16 at a time by default, in at least 13 rounds: about 26 seconds at the writer gap's target of 2 seconds, before planning, retries and the handlers' own work. Kubernetes' default grace period is 30 seconds, so the whole drain needs measuring, and a node with more replicas needs a longer grace period. A `Close` that runs out of time leaves a reservation that the budget counts until the controller has replaced the node's replicas.
+- An `add` starts only once the agent's watch has delivered the commit that placed the replica, so each move's writer gap includes that delivery, which we have not measured. An agent that cannot watch its cell's scope starts no tenure, and every move to its node aborts.
+- The bounds on transitions in flight trade the speed of a drain for the number of moves in flight, at most `maxTransitions`, 64 by default, per cell. They do not bound the shards that are without a serving writer outside a transition.
 - `router.Do` retries only redirects. An application whose requests fail on a transport error retries them itself, with its own idempotency.
 - A report is a full snapshot of its node's replicas, so its size grows with the replicas per node, and the protocol has no chunking.
 - Every message names its scope and its namespace incarnation, which adds about 40 bytes to each message by our estimate.

@@ -64,11 +64,11 @@ The root's assignment follows the rules of every assignment, with these meanings
 
 The root uses the `primary-only` model, `exclusive` ownership, `break-before-make` handoff and the `planner`, whose count goal balances cells across controller processes. The cell's scope is the root's fenced resource: the controller's acquisition of the scope is its fence acquisition, and the scope's watermark rejects every commit of a replaced controller. Each controller process declares how many cells it can host, as its `cells` capacity in the root, and the `capacity` constraint keeps the root from placing more on it. `controller.WithCellCapacity` sets the capacity, and the default is one cell. In the `embedded` topology, a label constraint places each cell's controller on a node of that cell. The root publishes the cell map, `shard.CellMap`, from its placements: each cell's range, its controller's address, its controller's identity and its controller's epoch, with the namespace incarnation.
 
-A controller process joins the root as a node, with a membership session in the root scope that registers its identity. The root assigns a cell to it with the `add` callback, and the process starts the cell's controller with the cell's epoch. The `drop` callback stops it. The root elects its own leader through `store.Store.Campaign`, the only election in a namespace.
+A controller process joins the root as a node, with a membership session in the root scope that registers the description that `controller.WithNode` gives it: its ID, address, identity and labels. The root assigns a cell to it with the `add` callback, which the process's `Controller` receives as a `protocol.AgentServer`. The `add` starts the cell's controller at the cell's epoch, and returns once that controller's acquisition of the cell's scope has applied. The `drop` callback returns once the cell's controller has stopped. A process serves these callbacks and its agents' callbacks on one endpoint, through `protocol.Dispatch`. The root elects its own leader through `store.Store.Campaign`, the only election in a namespace, and the leader campaigns under its process's identity.
 
 A cell's controller starts in four steps:
 
-1. It reads the head of the cell's scope, `store.Store.Head`, and opens a writer bound to the namespace incarnation and the epoch that the root granted: `store.Store.Writer(scope, incarnation, epoch)`.
+1. It reads the head of the cell's scope, `store.Store.Head`, and opens a writer bound to the namespace incarnation and the epoch that the root granted: `store.Store.Writer(scope, incarnation, epoch)`. It refuses a scope whose `Head.Schema` is above `store.Schema` before any commit, and its `add` returns the refusal to the root.
 2. It commits the cell's record at the head's generation: its address, its identity and its epoch. The commit advances the scope's watermark to its epoch, so every later commit of the controller it replaces fails with `epoch.ErrFenced`. A moved generation repeats the step, and an unknown outcome retries the same commit.
 3. After the acquisition applied, it reads the scope: the placements, the layout version, the transitions in flight, the reservations and the drains.
 4. It continues every transition at its committed phase and step, restores the budget's reservations, and starts its planning loop.
@@ -102,7 +102,7 @@ A router's memory and its load on the store therefore grow with the cells and ro
 
 ### Capacity
 
-Every component that grows with the namespace is per cell, and only the root and the cell map grow with the number of cells:
+Every component that grows with the namespace is per cell. The root's placements and the cell map grow with the number of cells, and the root's membership grows with the number of processes that run a controller:
 
 | Component | Load per cell, at the default bounds | How it scales |
 |---|---|---|
@@ -110,7 +110,9 @@ Every component that grows with the namespace is per cell, and only the root and
 | Store | About 1 GB of placements and about 1,500 lease renewals per second, by our estimate | The store adapter spreads scopes over backend clusters |
 | Membership | One session per node in the cell's scope | Per cell |
 | Routers | One watch of the root scope, and one watch of each cell used | Per cell used |
-| Root | One placement and one controller session per cell | Grows with the number of cells only |
+| Root | One placement per cell, and one membership session and one election candidate per process that runs a controller | Placements with the cells, and sessions and candidates with the processes that run a controller |
+
+In the `embedded` topology, each application process can run a controller, and every process that runs one joins the root. A large cell runs controllers on a subset of its processes: a cell whose 5,000 processes all run one has 5,000 root sessions and election candidates, and adds about 1,500 renewals per second at the default TTL.
 
 A namespace of 100 cells at the default bounds holds 500,000 nodes and 100,000,000 shards, the order of SM's total deployment. We have not built or measured it, and every figure in this table is a target.
 
