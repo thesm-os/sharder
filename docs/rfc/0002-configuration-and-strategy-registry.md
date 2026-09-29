@@ -4,7 +4,7 @@ title: Namespace specs, the strategy registry and validation
 author: Roy Klopper
 status: Draft
 created: 2026-09-27
-updated: 2026-09-28
+updated: 2026-09-29
 discussion: none
 supersedes: none
 superseded-by: none
@@ -829,4 +829,4 @@ None.
 | Redis Cluster specification, hash tags | https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/ |
 | The Update Framework specification, §5.2 and §5.3, the trusted root and its rotation | https://theupdateframework.github.io/specification/latest/ |
 | go.thesmos.sh/core at 8edf26a: `crypto/sign/policy.go`, `crypto/sign/resolver.go`, `crypto/framer.go`, `errs/class.go` | https://github.com/thesmos-ai/core |
-| go.thesmos.sh/ledger RFC-0016, "Configurable integrity": approvers in the strict profiles | `docs/rfc/0016-configurable-integrity.md` in the ledger repository |
+| go.thesmos.sh/ledger RFC-0016, "Configurable Integrity and Profiles": approvers in the strict profiles | `docs/rfc/0016-configurable-integrity.md` in the ledger repository |

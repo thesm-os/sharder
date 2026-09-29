@@ -4,7 +4,7 @@ title: Membership, the assignment store and assignment distribution
 author: Roy Klopper
 status: Draft
 created: 2026-09-27
-updated: 2026-09-28
+updated: 2026-09-29
 discussion: none
 supersedes: none
 superseded-by: none
@@ -445,7 +445,7 @@ A backend qualifies when it provides these mechanisms:
 
 A store needs leases that expire on a timer only when it also provides the membership, or runs the per-shard elections of the leaderless topology. An election can instead come from the backend's own failure detection, such as the leader election of a consensus group, whose term ends when the leader loses the support of its quorum. A candidate waits for the backend to elect it, and never takes a term from a live holder.
 
-The ledger is such a backend. Each shard's voters elect its leader and grant its epoch, and at most one candidate collects a fence quorum for an epoch, so each epoch has one leader. A leader's term ends when a write quorum of its voters stops supporting it, within 3 seconds by default. The ledger commits by compare-and-swap on a stream's head, and a reader in another process polls, because the ledger has no cross-process push.
+The ledger is such a backend. Each shard's voters elect its leader and grant its epoch. A candidate that has fenced a quorum appends its epoch to the metadata ledger, and the compare-and-set on the shard's stream head there makes the epoch's leader unique. A leader's term ends when a write quorum of its voters stops supporting it, within 3 seconds by default. The ledger commits by compare-and-swap on a stream's head. A reader in another process follows it through the ledger's network API without polling. `Feed` pushes each record of a query as it commits, and `WaitStream` returns once a stream is past a sequence number.
 
 #### Commit outcomes
 
@@ -990,5 +990,5 @@ None.
 | Apache Helix wiki, ZooKeeper scalability | https://github.com/apache/helix/wiki/FederatedZkClient |
 | go.thesmos.sh/core at 8edf26a: storage is per kind (ADR-0012), conformance for durable adapters (RFC-0038), `epoch/fence.go`, `version/errors.go`, `crypto/digest.go` | https://github.com/thesmos-ai/core |
 | go.thesmos.sh/ledger, `pkg/storage/errors.go` and `pkg/storage/memory/fault.go`: `ErrOutcomeUnknown` and crash points | The ledger repository |
-| go.thesmos.sh/ledger RFC-0011, "Replicated storage": leases and leader election | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
-| go.thesmos.sh/ledger RFC-0009, "Storage contract": watch and follow | `docs/rfc/0009-storage-contract.md` in the ledger repository |
+| go.thesmos.sh/ledger RFC-0011, "Cluster and Replication": leases and leader election | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
+| go.thesmos.sh/ledger RFC-0020, "Gateway and Network API": `Feed` and `WaitStream` | `docs/rfc/0020-gateway-and-network-api.md` in the ledger repository |

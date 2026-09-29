@@ -4,7 +4,7 @@ title: The replica agent, the router, disruption budgets and the protocol
 author: Roy Klopper
 status: Draft
 created: 2026-09-27
-updated: 2026-09-28
+updated: 2026-09-29
 discussion: none
 supersedes: none
 superseded-by: none
@@ -336,7 +336,7 @@ In a `delegated` namespace, outside the support matrix, the core does not place 
 - `Deposed` returns the replica to the role that `Hosted` last reported, and releases a replica that `Hosted` never reported.
 - `Released` removes the replica.
 
-A ledger member calls `Hosted` for each shard in which it votes or learns, `Elected` and `Deposed` for each change that `Member.Leading` yields, and `Released` when it leaves a shard's voter set. Without `Hosted`, the core sees only the replicas that have led, and a plan chooses the writer among those alone.
+A ledger member reports to its agent each role that `Member.Replicas` yields. It calls `Hosted` for a voter or a learner, `Elected` for a leader at the epoch in which the role took effect, `Deposed` when it no longer leads a shard, and `Released` for a replica that an epoch removed. Without `Hosted`, the core sees only the replicas that have led, and a plan chooses the writer among those alone.
 
 An application reports a replica that cannot serve, such as one on a failed disk or one whose storage rejects every write, with `ReportFault`. Service Fabric offers the same call with the same two kinds of fault. From the report on, the replica counts as unavailable, for the budget and for the model's availability rule:
 
@@ -1244,7 +1244,7 @@ None.
 | Microsoft Learn, Service Fabric `FaultType` | https://learn.microsoft.com/en-us/dotnet/api/system.fabric.faulttype?view=azure-dotnet |
 | Kubernetes API concepts, Protobuf encoding | https://kubernetes.io/docs/reference/using-api/api-concepts/#protobuf-encoding |
 | Protocol Buffers, proto3 language guide: updating a message type and unknown fields | https://protobuf.dev/programming-guides/proto3/#updating |
-| go.thesmos.sh/ledger RFC-0011, "Replicated storage": membership changes and `Member.Leading` | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
+| go.thesmos.sh/ledger RFC-0011, "Cluster and Replication": planned transfers and leadership, and `Member.Replicas` | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
 | Go `net/http`, `Protocols` | https://pkg.go.dev/net/http#Protocols |
 | tidwall/btree v1.8.1 | https://github.com/tidwall/btree |
 | google/btree v1.1.3 | https://github.com/google/btree |

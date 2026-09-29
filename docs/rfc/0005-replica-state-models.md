@@ -4,7 +4,7 @@ title: Replica state models and replica counts
 author: Roy Klopper
 status: Draft
 created: 2026-09-27
-updated: 2026-09-28
+updated: 2026-09-29
 discussion: none
 supersedes: none
 superseded-by: none
@@ -324,6 +324,6 @@ None.
 | Apache Helix, MessageSelectionStage at 48674e6 | https://github.com/apache/helix/blob/48674e6ac2a94fb5365ce69a4b1ee1d57655da1d/helix-core/src/main/java/org/apache/helix/controller/stages/MessageSelectionStage.java |
 | Microsoft Learn, replica roles | https://learn.microsoft.com/en-us/dotnet/api/system.fabric.replicarole?view=azure-dotnet |
 | Ongaro and Ousterhout, "In Search of an Understandable Consensus Algorithm (Extended Version)", 2014, §6: joint consensus, and non-voting members | https://raft.github.io/raft.pdf |
-| go.thesmos.sh/ledger RFC-0011, "Replicated storage": membership changes, region copies | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
-| go.thesmos.sh/ledger RFC-0014, "Operations resilience": upgrades one member at a time | `docs/rfc/0014-operations-resilience.md` in the ledger repository |
+| go.thesmos.sh/ledger RFC-0011, "Cluster and Replication": membership changes, region copies | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
+| go.thesmos.sh/ledger RFC-0014, "Operations, Observability and Resilience": upgrades one member at a time | `docs/rfc/0014-operations-resilience.md` in the ledger repository |
 | go.thesmos.sh/core at 8edf26a: finite state machines (RFC-0031), states that cannot finish (ADR-0024), `fsm/builder.go` | https://github.com/thesmos-ai/core |

@@ -4,7 +4,7 @@ title: Ownership modes, handoff protocols and fencing
 author: Roy Klopper
 status: Draft
 created: 2026-09-27
-updated: 2026-09-28
+updated: 2026-09-29
 discussion: none
 supersedes: none
 superseded-by: none
@@ -635,7 +635,7 @@ The same applies when a namespace's store is restored from a backup, which the s
 
 Delegated ownership is outside the support matrix. The thesmos ledger's integration depends on it. This section records the design.
 
-In the `delegated` mode, the application's authority elects every writer and grants its epoch, and the core follows the writers that agents report. The authority is the application's own election, such as the leader election of a consensus protocol. It must grant each epoch to one writer, the condition under which core's admit-equal law is sound. In the ledger, each voter records one holder per epoch, so at most one candidate collects a fence quorum for an epoch.
+In the `delegated` mode, the application's authority elects every writer and grants its epoch, and the core follows the writers that agents report. The authority is the application's own election, such as the leader election of a consensus protocol. It must grant each epoch to one writer, the condition under which core's admit-equal law is sound. In the ledger, each voter records one holder per epoch, and the compare-and-set that appends an epoch to the metadata ledger makes the epoch's leader unique.
 
 The core applies these rules to a `delegated` namespace:
 
@@ -726,7 +726,7 @@ Let a consensus application follow the core's choice of writer, as the other mod
 
 - Whoever picks a consensus group's new leader, that leader still fences a quorum of the previous epoch's voters and recovers from their replies. A leader that the core picks adds a controller decision, a store commit and a callback to every failover, and removes none of the application's steps.
 - A refusal in `ChangeRole` leaves the shard without a writer in the core's view while the application's writer serves. A failover that the application runs by itself also has no path into the core.
-- An interface to the authority that the controller calls does not fit the ledger, whose members report leadership one member at a time. No member reports the leaders of a whole cell, and each agent already reports the changes of its own node.
+- An interface to the authority that the controller calls would report the writers that the agents already report. Each agent reports the changes of its own node, and a ledger member yields those changes through `Member.Replicas`.
 
 ## Drawbacks
 
@@ -773,4 +773,4 @@ None.
 | Mao et al., "WriteGuards", OSDI '26 | https://www.usenix.org/system/files/osdi26-mao-ziming-writeguards.pdf |
 | Kakivaya et al., "Service Fabric", EuroSys '18, §8.5 | https://dprg.cs.uiuc.edu/data/files/2018/ServiceFabricEuroSys2018.pdf |
 | go.thesmos.sh/core at 8edf26a: ordering and fencing (RFC-0026), `epoch/fence.go`, `coretest/epochtest`, `clock/hlc/hlc.go`, resilience (RFC-0023), `resilience/retrier.go` | https://github.com/thesmos-ai/core |
-| go.thesmos.sh/ledger RFC-0011, "Replicated storage": shards, leases and leader election, planned transfers and leadership | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
+| go.thesmos.sh/ledger RFC-0011, "Cluster and Replication": shards, leases and leader election, planned transfers and leadership | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
