@@ -216,9 +216,10 @@ It needs these from outside this repository:
 - Core's `fsm`, `task` and `coretest/epochtest`, its fence laws, and the `Policy`, `Signature` and `Resolver` of its `crypto/sign`.
 - `version.ErrOutcomeUnknown` in core, which the store returns for a commit whose outcome is unknown.
 - Binary encoding methods on core's `id.ID`, through which every message encodes its namespace incarnation.
+- `resilience.Retrier.Start` and `Retry` in core, with which the transition engine decides each retry of a callback without a wait inside the call.
 - kanon's generator, and its runtime packages `go.thesmos.sh/kanon` and `go.thesmos.sh/kanon/wire`, which the generated codecs import.
 
-Core v0.8.0 contains every core item, and kanon v0.1.0 contains the generator and both runtime packages.
+Core v0.9.0 contains every core item, and kanon v0.1.0 contains the generator and both runtime packages.
 
 Milestones 0002 to 0005 wait for this one.
 
@@ -248,6 +249,7 @@ The scope is the support matrix of the first release and its enforcement: `Resol
 
 | Date | What changed | Why |
 |---|---|---|
+| 2026-10-10 | Added core's `Retrier.Start` and `Retry` to the prerequisites, and named core v0.9.0 as the release that contains every core item | The simulator drives the transition engine on one goroutine, so the engine cannot use the blocking `resilience.Do`. Core v0.9.0 was published on 2026-10-10 |
 | 2026-10-10 | Added the refusal of a missing clock, randomness source, reporter or logger to the checks of `controller.New`, `replica.Start` and `router.New` | The RFCs require these seams, and each constructor refuses a missing one |
 | 2026-10-10 | Named core v0.8.0 and kanon v0.1.0 as the releases that contain the prerequisites, and removed the risks of late core and kanon releases | Both releases were published on 2026-10-10 |
 | 2026-09-28 | Checked removed shards on etcd in place of removal epochs, measured the watch delivery that each `add` waits for, and added a check of an `add` that passes its listing check during a snapshot's installation | The closure review of the fourth revision simplified `Event.Removed` to shard IDs and asked for both checks |
@@ -266,6 +268,6 @@ The scope is the support matrix of the first release and its enforcement: `Resol
 | Third design review of the sharder RFCs, 2026-09-28: 7 findings | `.scratch/review-2026-09-28-r3/review.md` and the four reviews beside it, which are not under version control |
 | Verification of the third revision, 2026-09-28: 1 finding | `.scratch/review-2026-09-28-r4/review.md` and the three reviews beside it, which are not under version control |
 | Closure review of the fourth revision, 2026-09-28: no finding | `.scratch/review-2026-09-28-r5/review.md`, which is not under version control |
-| go.thesmos.sh/core v0.8.0 | https://github.com/thesm-os/core/releases/tag/v0.8.0 |
+| go.thesmos.sh/core v0.9.0 | https://github.com/thesm-os/core/releases/tag/v0.9.0 |
 | go.thesmos.sh/kanon v0.1.0 | https://github.com/thesm-os/kanon/releases/tag/v0.1.0 |
 | etcd v3.6 API guarantees, operation completion | https://etcd.io/docs/v3.6/learning/api_guarantees/ |

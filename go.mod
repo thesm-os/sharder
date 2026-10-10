@@ -6,8 +6,9 @@ module go.thesmos.sh/sharder
 go 1.27.2
 
 require (
+	github.com/cespare/xxhash/v2 v2.3.0
 	go.dokimi.dev/assert v0.1.1
-	go.thesmos.sh/core v0.8.0
+	go.thesmos.sh/core v0.9.0
 	go.thesmos.sh/kanon v0.1.0
 )
 
