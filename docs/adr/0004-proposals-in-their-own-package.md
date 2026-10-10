@@ -1,10 +1,10 @@
 ---
 adr: 0004
 title: Proposals and approvals form package proposal
-status: Accepted
+status: Superseded
 date: 2026-10-10
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0008
 rfc: RFC-0001, RFC-0002, RFC-0007, RFC-0008
 ---
 
@@ -17,7 +17,7 @@ rfc: RFC-0001, RFC-0002, RFC-0007, RFC-0008
 
 ## Status
 
-Accepted
+Superseded by [ADR-0008](0008-declarations-of-the-support-matrix.md)
 
 ## Context
 

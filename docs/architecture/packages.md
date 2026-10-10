@@ -30,7 +30,7 @@ A package may import the packages in its row, and every package that those packa
 | Package | Contains | Imports from sharder |
 |---|---|---|
 | `shard` | The value types that every package shares, such as scopes, nodes, placements and the cell map | Nothing |
-| `proposal` | The proposals of operators, signed proposals, approvals sections and trust anchors | `shard` |
+| `proposal` | The proposals of operators, their kinds and their IDs | `shard` |
 | `config` | Specs, the strategy registry, the support matrix type, presets, `Resolve` and `Change` | `shard`, `proposal` |
 | `builtin` | The names of the 30 built-in strategies, the factories of the built-ins that the support matrix contains, the four presets of the matrix, `Support` and `Registry` | `config` and the built-in strategies |
 
@@ -48,8 +48,8 @@ A package may import the packages in its row, and every package that those packa
 | `placement/constraint` | The six built-in constraints | `placement` |
 | `placement/goal` | The seven built-in goals | `placement` |
 | `placement/placementtest` | The conformance kit of placers, constraints and goals | `placement` |
-| `replication` | State models, their compilation into transition tables, and the built-in models | `shard` |
-| `ownership` | Ownership modes, leases and their configuration | `shard` |
+| `replication` | Replica state models, their compilation into transition tables, and the built-in model `primary-only` | `shard` |
+| `ownership` | The configuration of exclusive ownership and its lease | `shard` |
 | `handoff` | The `Protocol` contract, scripts, transfers and the lifecycle of a transition | `shard`, `ownership`, `protocol` |
 | `handoff/breakbeforemake` | The protocol `break-before-make` | `handoff` |
 | `fence` | Fencing tokens, `fence.Retired`, and the interfaces of fenced storage that an application implements | `shard` |
