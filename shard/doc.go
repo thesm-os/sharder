@@ -14,7 +14,8 @@
 // identifiers, so [NamespaceIncarnation] and [ID] each embed a
 // [go.thesmos.sh/core/id.ID]. Applications, operators, node labels and transports
 // choose the names of namespaces, nodes, cells and processes, so [Namespace],
-// [NodeID], [CellID] and [Identity] are string types.
+// [NodeID], [CellID] and [Identity] are string types. Each strategy package declares
+// its registered name as a [StrategyName].
 //
 // # Enumerations
 //

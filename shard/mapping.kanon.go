@@ -170,7 +170,7 @@ func (m *Mapping) mergeKanon(data []byte, slab string, off, depth int) error {
 				return wire.ReadError(n, "Mapping.Partitioner", 1, off+i)
 			}
 			i += n
-			m.Partitioner = slab[off+i : off+i+int(l)]
+			m.Partitioner = StrategyName(slab[off+i : off+i+int(l)])
 			i += int(l)
 		case 3:
 			if tag != 3<<3|wire.Bytes {
@@ -181,7 +181,7 @@ func (m *Mapping) mergeKanon(data []byte, slab string, off, depth int) error {
 				return wire.ReadError(n, "Mapping.Hash", 3, off+i)
 			}
 			i += n
-			m.Hash = slab[off+i : off+i+int(l)]
+			m.Hash = StrategyName(slab[off+i : off+i+int(l)])
 			i += int(l)
 		case 2:
 			if tag != 2<<3|wire.Bytes {
@@ -252,8 +252,8 @@ func (m *Mapping) CloneKanon() *Mapping {
 // does not set keep their values. CloneKanon and the clone of the structs of
 // the package that contain Mapping call it.
 func (m *Mapping) cloneKanon(c *Mapping) {
-	c.Partitioner = strings.Clone(m.Partitioner)
-	c.Hash = strings.Clone(m.Hash)
+	c.Partitioner = StrategyName(strings.Clone(string(m.Partitioner)))
+	c.Hash = StrategyName(strings.Clone(string(m.Hash)))
 	c.Config = slices.Clone(m.Config)
 	c.HashVersion = m.HashVersion
 }
