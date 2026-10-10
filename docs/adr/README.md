@@ -15,3 +15,4 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0004](0004-proposals-in-their-own-package.md) | Proposals and approvals form package proposal | Accepted |
 | [0005](0005-core-assigns-shard-ids.md) | The core assigns shard IDs from core's identifiers | Accepted |
 | [0006](0006-roles-and-statuses-are-enumerations.md) | Roles and statuses are closed enumerations | Accepted |
+| [0007](0007-partitioners-return-spans.md) | Partitioners divide a range into spans, and the core assigns their IDs | Accepted |
