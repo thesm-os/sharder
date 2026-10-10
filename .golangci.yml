@@ -122,6 +122,42 @@ linters:
               desc: use context of the standard library
             - pkg: github.com/golang/protobuf
               desc: github.com/golang/protobuf is deprecated, so use google.golang.org/protobuf
+        # The root module imports only the standard library, core, kanon, xxhash and its
+        # own packages.
+        root-module:
+          list-mode: strict
+          files:
+            - $all
+            - "!$test"
+          allow:
+            - $gostd
+            - go.thesmos.sh/core
+            - go.thesmos.sh/kanon
+            - github.com/cespare/xxhash/v2
+            - go.thesmos.sh/sharder
+        # The tests of the root module also import assert.
+        root-module-tests:
+          list-mode: strict
+          files:
+            - $test
+          allow:
+            - $gostd
+            - go.thesmos.sh/core
+            - go.thesmos.sh/kanon
+            - github.com/cespare/xxhash/v2
+            - go.thesmos.sh/sharder
+            - go.dokimi.dev/assert
+        # Package shard imports no other package of sharder, so every package can import
+        # it.
+        shard:
+          list-mode: lax
+          files:
+            - "**/shard/*.go"
+          allow:
+            - go.thesmos.sh/sharder/shard
+          deny:
+            - pkg: go.thesmos.sh/sharder
+              desc: package shard imports no other package of sharder
     exhaustive:
       default-signifies-exhaustive: true
       check:

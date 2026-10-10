@@ -3,6 +3,48 @@
 
 # The settings of the sharder, which ergon init merges into .golangci.yml.
 
+linters:
+  settings:
+    # The import rules of the root module.
+    depguard:
+      rules:
+        # The root module imports only the standard library, core, kanon, xxhash and its
+        # own packages.
+        root-module:
+          list-mode: strict
+          files:
+            - $all
+            - "!$test"
+          allow:
+            - $gostd
+            - go.thesmos.sh/core
+            - go.thesmos.sh/kanon
+            - github.com/cespare/xxhash/v2
+            - go.thesmos.sh/sharder
+        # The tests of the root module also import assert.
+        root-module-tests:
+          list-mode: strict
+          files:
+            - $test
+          allow:
+            - $gostd
+            - go.thesmos.sh/core
+            - go.thesmos.sh/kanon
+            - github.com/cespare/xxhash/v2
+            - go.thesmos.sh/sharder
+            - go.dokimi.dev/assert
+        # Package shard imports no other package of sharder, so every package can import
+        # it.
+        shard:
+          list-mode: lax
+          files:
+            - "**/shard/*.go"
+          allow:
+            - go.thesmos.sh/sharder/shard
+          deny:
+            - pkg: go.thesmos.sh/sharder
+              desc: package shard imports no other package of sharder
+
 formatters:
   settings:
     # The packages of the sharder form an import group of their own.
