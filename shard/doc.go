@@ -17,6 +17,11 @@
 // [NodeID], [CellID] and [Identity] are string types. Each strategy package declares
 // its registered name as a [StrategyName].
 //
+// # Durations
+//
+// A configuration writes a span of time as a [Duration]. Its JSON form is a Go
+// duration string, such as "30s".
+//
 // # Enumerations
 //
 // [Role], [Status] and [Fault] are closed enumerations of uint8. Each has a String
@@ -41,8 +46,8 @@
 //
 // # Errors
 //
-// [ErrIncarnation] classifies as errs.Conflict. [ErrUnknownRole], [ErrUnknownStatus]
-// and [ErrUnknownFault] classify as errs.Invalid.
+// [ErrIncarnation] classifies as errs.Conflict. [ErrUnknownRole], [ErrUnknownStatus],
+// [ErrUnknownFault] and [ErrDuration] classify as errs.Invalid.
 //
 // # Concurrency
 //

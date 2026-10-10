@@ -29,4 +29,9 @@ var (
 	// ErrUnknownFault reports a Fault that is not one of the three faults. A codec
 	// returns an error that wraps it for such a Fault. It classifies as errs.Invalid.
 	ErrUnknownFault = errs.WithClass(errors.New("shard: unknown fault"), errs.Invalid)
+
+	// ErrDuration reports text that is not a Go duration string, such as "30s".
+	// Duration.UnmarshalText returns an error that wraps it. It classifies as
+	// errs.Invalid.
+	ErrDuration = errs.WithClass(errors.New("shard: invalid duration"), errs.Invalid)
 )
