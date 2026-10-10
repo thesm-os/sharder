@@ -2,9 +2,9 @@
 rfc: 0001
 title: Pluggable sharding strategies over a fixed correctness core
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-09-27
-updated: 2026-09-28
+updated: 2026-10-10
 discussion: none
 supersedes: none
 superseded-by: none
@@ -366,7 +366,7 @@ The library takes every mechanism below from core and defines none of them itsel
 | Fencing | `epoch.Admissible`, `epoch.ErrFenced`, and the fence laws | Every fenced write: application storage and the store |
 | A conformance suite for fenced writers | `coretest/epochtest` | Every application's fence and every store adapter |
 | Conditional writes | `version.ErrMismatch` | A commit whose generation moved |
-| An error for a write whose outcome is unknown | `version.ErrOutcomeUnknown`, which core does not contain at commit `8edf26a` | A commit whose reply was lost |
+| An error for a write whose outcome is unknown | `version.ErrOutcomeUnknown` | A commit whose reply was lost |
 | Pagination | `page.Page`, `page.Cursor` | Reading a cell's placements from the store |
 | Error classes | `errs.Classify`, `errs.WithClass` | Every sentinel error of the library |
 | Validated state machines | `fsm.Spec` | Replica state models and the transition lifecycle |
@@ -376,7 +376,7 @@ The library takes every mechanism below from core and defines none of them itsel
 | Labels | `tag.Tags` | Node labels and shard labels |
 | Digests | `crypto.Digest`, `crypto/sha256` | Commit receipts, callback fingerprints, disruption reservations, and the anchor of approvals |
 | Signature thresholds | `sign.Policy`, `sign.Resolver`, `crypto.NewFramer` | Approvals of specs and operations, outside the support matrix |
-| Ordered maps with copy-on-write clones | A B-tree, none at commit `8edf26a` | Route caches of range partitioners, outside the support matrix |
+| Ordered maps with copy-on-write clones | `btree.MapFunc` | Route caches of range partitioners, outside the support matrix |
 | Metrics and traces | `telemetry.Reporter` | Every metric of the library |
 
 The fence laws come from core: a write whose epoch is at or above the scope's watermark is admitted, a greater epoch advances the watermark, a zero epoch is unfenced, and validation runs in the same atomic step as the write, against durable state. Logs go through `log/slog`, as in core.
@@ -520,7 +520,7 @@ The simulator in package `sim` runs every process of a namespace on one goroutin
 - Each controller and each agent is a state machine that takes one event at a time, such as a message, a store result, a timer or a handler's result. It returns the calls it makes and does not start a goroutine. In production, a runtime calls the state machine from goroutines under core's `task` package. In the simulator, the scheduler calls it.
 - The scheduler keeps one queue of events, ordered by virtual time and then by the sequence number that the scheduler gave each event when it queued it. When more than one event is due at one virtual time, the scheduler picks the next one with the run's `rand/pcg` source, so a seed selects one interleaving and reproduces it.
 - Every process has its own `clock/fake` clock. The scheduler advances each clock by the virtual time that passed, scaled by the process's clock drift. A paused process handles no events while its clock keeps advancing, as the monotonic clock of a stopped process does. When the pause ends, the process handles its expired timers and the messages that arrived during the pause in an order that the run's seed selects.
-- Faults enter at three boundaries: the `protocol.Network` that connects the processes, the fault hooks of `store/memory`, and a simulated `Handler` that each agent calls. The fault hooks lose a commit before it applies or lose its reply after it applies, and both fail the call with an error that wraps `version.ErrOutcomeUnknown`, as the ledger's memory store does for its appends.
+- Faults enter at three boundaries: the `protocol.Network` that connects the processes, the fault hooks of `store/memory`, and a simulated `Handler` that each agent calls. The fault hooks lose a commit before it applies or lose its reply after it applies, and both fail the call with an error that wraps `version.ErrOutcomeUnknown`, as the ledger's memory engine does for its batches.
 - The planner evaluates candidate moves in parallel in production, and reduces the results in candidate order, so its plan does not depend on the number of goroutines.
 
 The determinism contract is that the same binary, spec, faults and seed produce the same event trace, whatever `GOMAXPROCS` is. CI runs every scenario at `GOMAXPROCS` 1 and 4 and compares the two traces. A failing run prints its seed and its trace, and CI keeps each failing trace as a named regression scenario.
@@ -679,9 +679,7 @@ Define the time seam, the epoch type, the fence rules and the retry loop inside 
 - Generality costs speed on the hot path. A router maps a key to a position before it finds the route. A `fixed-slots` route cache is an array indexed by slot. The range partitioners outside the matrix search a cache instead, which we measured at 241 to 292 ns per lookup at 1,000,000 cached ranges, against a few nanoseconds for a hash.
 - The controller and the agent are state machines that a runtime drives, so that the simulator can drive them on one goroutine. That structure takes more code than goroutines that call each other directly.
 - Cells add a root controller and a second level of lookup, even in a namespace of one cell, which every namespace in the support matrix is. A cell's nodes cannot help another cell's load until an operator moves them.
-- The library depends on core's `fsm`, `task`, `coretest/epochtest`, fence laws, and the `Policy`, `Signature` and `Resolver` of `crypto/sign`, which core contains at commit `8edf26a` and which no core release contains. The latest release, v0.6.1, predates all five.
-- The root module needs an error beside `version.ErrMismatch` for a write whose outcome is unknown, and binary encoding methods on `id.ID`. Core does not contain either at commit `8edf26a`, and the ledger defines the same error as `storage.ErrOutcomeUnknown`. The route caches of range partitioners, outside the matrix, also need a copy-on-write B-tree.
-- The root module depends on kanon's runtime and on `github.com/cespare/xxhash/v2` as well as on core, and every application's binary links both. A kanon release that stops supporting a generator version is a breaking change of sharder's codecs. An application that requires an older version of `cespare/xxhash` moves to v2.3.0.
+- The root module depends on kanon's runtime and on `github.com/cespare/xxhash/v2` as well as on core, and every application's binary links both. A kanon release that stops supporting a generator version is a breaking change of sharder's codecs. Minimal version selection moves an application to core v0.8.0 and to `cespare/xxhash` v2.3.0 when it requires older versions.
 - An adapter module has its own version and its own release. A change to a root interface requires a new release of the adapter modules that implement it.
 
 ## Open questions
@@ -691,7 +689,8 @@ None.
 ## Unresolved and future work
 
 - Strategies, presets and adapters outside the support matrix are designed in these RFCs and are not supported. Each section that designs one lists what it needs before the matrix can include it.
-- Delegated ownership is outside the support matrix. The thesmos ledger's integration depends on it.
+- Delegated ownership is outside the support matrix.
+- Integrating the thesmos ledger through the writer leases that it grants on ranges of ledger IDs is not proposed here.
 - Restoring a store from a backup is not supported. A namespace recovers with a new incarnation, over a fresh application-data namespace or behind an administrative barrier that stops every writer of the old incarnation.
 - Formal models of the handoff and acquisition protocols are not proposed here. The simulator's traces are the evidence for the supported scope.
 - Agents, routers and controllers in languages other than Go are not proposed here.
@@ -711,6 +710,7 @@ None.
 | atoms-co/splitter v1.5.0 | https://github.com/atoms-co/splitter |
 | Apache Helix issue 691, a partitioned participant remains MASTER | https://github.com/apache/helix/issues/691 |
 | DeCandia et al., "Dynamo: Amazon's Highly Available Key-value Store", SOSP '07 | https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf |
-| go.thesmos.sh/core at 8edf26a: ordering and fencing (RFC-0026), finite state machines (RFC-0031), structured concurrency (RFC-0030), resilience (RFC-0023), `id/ulid`, `crypto/digest.go` | https://github.com/thesmos-ai/core |
-| go.thesmos.sh/ledger, `pkg/storage/errors.go` and `pkg/storage/memory/fault.go`: `ErrOutcomeUnknown` and the memory store's crash points | The ledger repository |
+| go.thesmos.sh/core v0.8.0: ordering and fencing (RFC-0026), finite state machines (RFC-0031), structured concurrency (RFC-0030), resilience (RFC-0023), `id/ulid`, `id/binary.go`, `version/errors.go`, `btree/mapfunc.go` and `crypto/digest.go` | https://github.com/thesm-os/core/tree/v0.8.0 |
+| go.thesmos.sh/ledger, `storage/engine/memory/doc.go` and `storage/engine/memory/faults.go`: the memory engine's crash points, and its failures that wrap `version.ErrOutcomeUnknown` | The ledger repository |
+| go.thesmos.sh/ledger ADR-0006, "Fence each host's appends with writer leases, apart from shard leadership" | `docs/adr/0006-writer-leases-for-every-host.md` in the ledger repository |
 | Go Modules Reference, module graph pruning | https://go.dev/ref/mod#graph-pruning |

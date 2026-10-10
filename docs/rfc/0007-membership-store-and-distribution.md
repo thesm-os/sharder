@@ -2,9 +2,9 @@
 rfc: 0007
 title: Membership, the assignment store and assignment distribution
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-09-27
-updated: 2026-09-29
+updated: 2026-10-10
 discussion: none
 supersedes: none
 superseded-by: none
@@ -437,7 +437,7 @@ type Store interface {
 }
 ```
 
-`version.ErrOutcomeUnknown` is the error for a write whose outcome is unknown. It classifies as `errs.Transient`, and core does not contain it at commit `8edf26a`. The ledger defines the same error as `storage.ErrOutcomeUnknown`, which a retry with the same idempotency key settles.
+`version.ErrOutcomeUnknown` is the error for a write whose outcome is unknown. It classifies as `errs.Transient`.
 
 The store keeps one watermark per scope and applies core's fence laws to every commit. A commit is admitted when its writer's epoch is at or above the watermark, a greater epoch advances the watermark, and the check runs in the same transaction as the commit. A cell's controller writes with the epoch that the root granted it, and the root writes with the term that `Campaign` granted it.
 
@@ -449,8 +449,6 @@ A backend qualifies when it provides these mechanisms:
 - an election that grants each term to one candidate, and ends a term within a bounded time after its holder fails
 
 A store needs leases that expire on a timer only when it also provides the membership, or runs the per-shard elections of the leaderless topology. An election can instead come from the backend's own failure detection, such as the leader election of a consensus group, whose term ends when the leader loses the support of its quorum. A candidate waits for the backend to elect it, and never takes a term from a live holder.
-
-The ledger is such a backend. Each shard's voters elect its leader and grant its epoch. A candidate that has fenced a quorum appends its epoch to the metadata ledger, and the compare-and-set on the shard's stream head there makes the epoch's leader unique. A leader's term ends when a write quorum of its voters stops supporting it, within 3 seconds by default. The ledger commits by compare-and-swap on a stream's head. A reader in another process follows it through the ledger's network API without polling. `Feed` pushes each record of a query as it commits, and `WaitStream` returns once a stream is past a sequence number.
 
 #### Commit outcomes
 
@@ -599,7 +597,7 @@ The suite follows core's own conformance suites for storage, which check every a
 
 #### The memory store
 
-`store/memory` is for tests and simulations. It keeps nothing beyond its process, so it does not provide the capability `durable`, and `controller.New` rejects it unless the process passes `controller.WithVolatileStore`. It also implements `membership.Membership`, with leases on its clock. Its fault hooks produce the outcomes that the core has to handle, as the ledger's memory store does for its appends:
+`store/memory` is for tests and simulations. It keeps nothing beyond its process, so it does not provide the capability `durable`, and `controller.New` rejects it unless the process passes `controller.WithVolatileStore`. It also implements `membership.Membership`, with leases on its clock. Its fault hooks produce the outcomes that the core has to handle, as the ledger's memory engine does for its batches:
 
 ```go
 // Package memory is an in-memory store.Store and membership.Membership with hooks that
@@ -721,18 +719,20 @@ type options struct {
 func WithNode(n shard.Node) Option
 
 // WithClock sets the clock that every lease, timer and deadline of the controller
-// reads. The default is a clock/hlc clock.
+// reads. New returns an error of class errs.Invalid without it.
 func WithClock(c clock.Clock) Option
 
-// WithRand sets the source from which the controller seeds each planning pass. The
-// default is a rand/pcg source with a seed from rand/crypto.
+// WithRand sets the source from which the controller seeds each planning pass. New
+// returns an error of class errs.Invalid without it.
 func WithRand(r rand.Rand) Option
 
-// WithTelemetry sets the reporter of the controller's metrics and traces. The default
-// is telemetry/noop.
+// WithTelemetry sets the reporter of the controller's metrics and traces. New returns
+// an error of class errs.Invalid without it. A process without telemetry passes the
+// reporter of package telemetry/noop.
 func WithTelemetry(r telemetry.Reporter) Option
 
-// WithLogger sets the controller's logger. The default is slog.Default.
+// WithLogger sets the controller's logger. New returns an error of class errs.Invalid
+// without it.
 func WithLogger(l *slog.Logger) Option
 
 // WithTrust makes the controller apply only the specs and proposals of namespace ns
@@ -765,8 +765,10 @@ func WithUnauthenticated() Option
 // of each cell through m, and calls agents through agents. It builds each namespace's
 // strategies from the namespace's spec with reg. It returns an error of class
 // errs.Invalid when WithNode is not set, or when st does not provide the capability
-// "durable" and WithVolatileStore is not set. It returns an error of class
-// errs.Unsupported when WithTrust is set and reg's support matrix has no approvals.
+// "durable" and WithVolatileStore is not set. It returns the same class when
+// WithClock, WithRand, WithTelemetry or WithLogger is not set or passes nil. It
+// returns an error of class errs.Unsupported when WithTrust is set and reg's support
+// matrix has no approvals.
 func New(reg *config.Registry, st store.Store, m membership.Membership, agents protocol.AgentClient, opts ...Option) (*Controller, error)
 
 // Run campaigns for the root of the namespace of each spec in specs, and hosts the
@@ -993,7 +995,5 @@ None.
 | Lee et al., "Shard Manager", SOSP '21, §3.2 | https://dl.acm.org/doi/10.1145/3477132.3483546 |
 | Apache Helix issue 1027, double masters from two controller pipelines | https://github.com/apache/helix/issues/1027 |
 | Apache Helix wiki, ZooKeeper scalability | https://github.com/apache/helix/wiki/FederatedZkClient |
-| go.thesmos.sh/core at 8edf26a: storage is per kind (ADR-0012), conformance for durable adapters (RFC-0038), `epoch/fence.go`, `version/errors.go`, `crypto/digest.go` | https://github.com/thesmos-ai/core |
-| go.thesmos.sh/ledger, `pkg/storage/errors.go` and `pkg/storage/memory/fault.go`: `ErrOutcomeUnknown` and crash points | The ledger repository |
-| go.thesmos.sh/ledger RFC-0011, "Cluster and Replication": leases and leader election | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
-| go.thesmos.sh/ledger RFC-0020, "Gateway and Network API": `Feed` and `WaitStream` | `docs/rfc/0020-gateway-and-network-api.md` in the ledger repository |
+| go.thesmos.sh/core v0.8.0: storage is per kind (ADR-0012), conformance for durable adapters (RFC-0038), `epoch/fence.go`, `version/errors.go`, `crypto/digest.go` | https://github.com/thesm-os/core/tree/v0.8.0 |
+| go.thesmos.sh/ledger, `storage/engine/memory/doc.go` and `storage/engine/memory/faults.go`: the memory engine's crash points, and its failures that wrap `version.ErrOutcomeUnknown` | The ledger repository |

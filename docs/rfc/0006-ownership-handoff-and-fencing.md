@@ -2,9 +2,9 @@
 rfc: 0006
 title: Ownership modes, handoff protocols and fencing
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-09-27
-updated: 2026-09-29
+updated: 2026-10-10
 discussion: none
 supersedes: none
 superseded-by: none
@@ -43,7 +43,7 @@ A controller that treats a callback's timeout as a failure can undo a move on a 
 
 Not every application wants exclusivity. A cache needs affinity without the cost of fencing, and SM's post notes that applications choose between availability and consistency when the network partitions. The library makes the mode a choice. It makes the exclusive modes correct under pauses, partitions and controller failure.
 
-Consensus applications elect their own writers, as the thesmos ledger's voters elect each shard's leader and grant its epoch. The ledger replaces a crashed leader in about 3 seconds, where a store lease with the default TTL takes about 10. A core that also elected a writer for the same shard would create two authorities over one role. When their choices differ, the core's writer forwards every write to the application's writer, and the core fences with an epoch that the application never granted.
+Consensus applications elect their own writers, as the voters of a Raft group elect the leader of each term. A core that also elected a writer for the same shard would create two authorities over one role. When their choices differ, the core's writer forwards every write to the application's writer, and the core fences with an epoch that the application never granted.
 
 Core already states the rules a fence must apply, and every thesmos library that fences writes applies the same ones. A sharder fence with rules of its own would admit a write that another library's fence rejects over the same storage.
 
@@ -467,7 +467,7 @@ The core runs each script through one engine, whatever the protocol:
 
 1. Before step 1, the core commits the transition's record to the cell's scope, in phase `Running`, together with the placement's new `Reserved` and `Sequence`. The record has everything a new controller needs to resume the move without planning it again: the operation ID, the protocol's name and version, the spec version the move was planned under, both endpoints with their node incarnations and roles, the old epoch and both reserved epochs, and the fallback. `store.Transition` is its schema.
 2. The core runs a step, waits for its condition, and commits the next step number, or the next phase that `Lifecycle` allows.
-3. A step that times out, or whose callback fails with an error that classifies as `errs.Transient`, is retried through a `resilience.Retrier` from core, with the same idempotency key, because a callback without a reply may have taken effect. By default the Retrier makes at most five attempts, backs off with full jitter from 100 ms up to 10 s, and allows retries for at most 10% of the cell's callbacks over one minute, with a floor of 10. The Retrier stops at once on every other class, as core requires for an error that a retry cannot fix. A node's refusal of a callback for a lower epoch or another incarnation classifies as `errs.Conflict`, so it fails the step at once, for every call. When a step of the forward path fails, the core commits phase `Aborting` and the failed step's number, and runs the abort path through the same loop.
+3. A step that times out, or whose callback fails with an error that classifies as `errs.Transient`, is retried through a `resilience.Retrier` from core, with the same idempotency key, because a callback without a reply may have taken effect. The engine configures the Retrier with five attempts and a backoff with full jitter from 100 ms up to 10 s, because core's Retrier has no defaults. Its budget allows retries for 10% of the cell's callbacks over one minute, and at least 10 retries per minute. The Retrier stops at once on every other class, as core requires for an error that a retry cannot fix. A node's refusal of a callback for a lower epoch or another incarnation classifies as `errs.Conflict`, so it fails the step at once, for every call. When a step of the forward path fails, the core commits phase `Aborting` and the failed step's number, and runs the abort path through the same loop.
 4. A new controller of the cell acquires the cell's scope first, then reads every transition in flight and continues each at its committed phase and step, with the recorded endpoints, epochs and protocol version. It never plans an endpoint of a transition in flight again. Every new protocol version raises the store's schema, so a controller whose release lacks a recorded protocol version refuses to acquire the scope before it commits anything, with an error of class `errs.Unsupported`.
 5. The commit that ends a transition removes its record and keeps the placement's `Reserved` and `Sequence`, so the next transition of the shard starts above them.
 
@@ -638,9 +638,9 @@ The same applies when a namespace's store is restored from a backup, which the s
 
 ### Delegated ownership
 
-Delegated ownership is outside the support matrix. The thesmos ledger's integration depends on it. This section records the design.
+Delegated ownership is outside the support matrix. This section records the design.
 
-In the `delegated` mode, the application's authority elects every writer and grants its epoch, and the core follows the writers that agents report. The authority is the application's own election, such as the leader election of a consensus protocol. It must grant each epoch to one writer, the condition under which core's admit-equal law is sound. In the ledger, each voter records one holder per epoch, and the compare-and-set that appends an epoch to the metadata ledger makes the epoch's leader unique.
+In the `delegated` mode, the application's authority elects every writer and grants its epoch, and the core follows the writers that agents report. The authority is the application's own election, such as the leader election of a consensus protocol. It must grant each epoch to one writer, the condition under which core's admit-equal law is sound. A Raft group meets it, because each voter votes for at most one candidate in a term.
 
 The core applies these rules to a `delegated` namespace:
 
@@ -653,7 +653,7 @@ The core applies these rules to a `delegated` namespace:
 7. The authority splits and merges shards instead of the partitioner, so the core does not call `Reshape`. An agent reports each shard that a split or merge created with its range and its parents. The core applies the change in one generation once the reported children cover their parents' ranges exactly, each child at the epoch that the authority granted.
 8. The disruption budget admits only the moves that the core requests. The authority's own changes of writer, such as its failovers, are outside the budget.
 
-An authority that balances writers by itself must keep a writer that the core requested on the node that the core chose. In the ledger, a host's request for a shard becomes the shard's preferred leader, and the ledger's balancer keeps the shard there.
+An authority that balances writers by itself must keep a writer that the core requested on the node that the core chose.
 
 Validation requires `single-writer` on the replication axis and `delegated-safe` on the handoff axis, which only `elect` provides. Every node must implement the agent's `Elector` interface, and the core refuses to start a transition on a node that does not. Availability in a delegated consensus namespace also needs the voter-aware rule and the authority's effective quorum, which the replication models record as requirements.
 
@@ -670,7 +670,7 @@ Validation requires `single-writer` on the replication axis and `delegated-safe`
 | The new node fails during a move | Callback failure, a refusal from its new incarnation, or lease expiry | The abort path gives the writer role to the fallback at the reserved abort epoch | One abort path |
 | The fallback fails during an abort | A refusal from its new incarnation, the lapse of its session's lease, or an error from its handler that is not transient | The core abandons the abort path, commits the shard without an assigned writer, and places the shard again at epochs above every reserved one | One commit, one planning pass and the new writer's `add` |
 | The application reports a fault in a writer | The agent's next report | Break-before-make to a node other than the faulted one, whatever the namespace's protocol. In the `delegated` mode, `abdicate` on the faulted node | The demotion's acknowledgement plus the new writer's `add` |
-| The authority replaces a writer, in the `delegated` mode | The new writer's report | Commits the reported writer as the cell's next generation | The authority's own failover time, about 3 seconds for the ledger |
+| The authority replaces a writer, in the `delegated` mode | The new writer's report | Commits the reported writer as the cell's next generation | The authority's own failover time |
 | A cell's controller fails during a move | The root, through the controller's lease | The root places the cell on another controller at a higher epoch. The new controller acquires the scope, reads each transition's record and continues it with the same keys and epochs. A node whose watch has not delivered the new controller's record yet returns `errs.Transient`, and the engine retries | The controller's lease plus one step |
 | A replaced cell controller keeps running | Its next commit fails with `epoch.ErrFenced` | It abdicates and stops calling nodes | None: its callbacks contain a lower controller epoch than the new controller's, and a node refuses them once it has seen the new controller's epoch |
 | The store is unavailable | Failed commits and renewals | No new transitions. Writers stop at their deadline under `Stop` and continue under `ContinueFenced` | Until the store returns |
@@ -731,7 +731,7 @@ Let a consensus application follow the core's choice of writer, as the other mod
 
 - Whoever picks a consensus group's new leader, that leader still fences a quorum of the previous epoch's voters and recovers from their replies. A leader that the core picks adds a controller decision, a store commit and a callback to every failover, and removes none of the application's steps.
 - A refusal in `ChangeRole` leaves the shard without a writer in the core's view while the application's writer serves. A failover that the application runs by itself also has no path into the core.
-- An interface to the authority that the controller calls would report the writers that the agents already report. Each agent reports the changes of its own node, and a ledger member yields those changes through `Member.Replicas`.
+- An interface to the authority that the controller calls would report the writers that the agents already report. Each agent reports the changes of its own node.
 
 ## Drawbacks
 
@@ -756,7 +756,8 @@ None.
 
 ## Unresolved and future work
 
-- Delegated ownership and `elect` are outside the support matrix. The thesmos ledger's integration depends on them.
+- Delegated ownership and `elect` are outside the support matrix.
+- Integrating the thesmos ledger through the writer leases that it grants on ranges of ledger IDs is not proposed here.
 - `affinity`, `overlapping` and `exclusive` without a fence are outside the support matrix.
 - `make-before-break`, `graceful` and `staged` are outside the support matrix. `graceful` needs an explicit acquisition barrier, and its abort paths need the requirements of break-before-make's abort path.
 - An administrative barrier that the library runs against the application's storage, for recovery over existing data, is not proposed here.
@@ -777,5 +778,6 @@ None.
 | Lee et al., "Shard Manager", SOSP '21, §4.3 and §8.2 | https://dl.acm.org/doi/10.1145/3477132.3483546 |
 | Mao et al., "WriteGuards", OSDI '26 | https://www.usenix.org/system/files/osdi26-mao-ziming-writeguards.pdf |
 | Kakivaya et al., "Service Fabric", EuroSys '18, §8.5 | https://dprg.cs.uiuc.edu/data/files/2018/ServiceFabricEuroSys2018.pdf |
-| go.thesmos.sh/core at 8edf26a: ordering and fencing (RFC-0026), `epoch/fence.go`, `coretest/epochtest`, `clock/hlc/hlc.go`, resilience (RFC-0023), `resilience/retrier.go` | https://github.com/thesmos-ai/core |
-| go.thesmos.sh/ledger RFC-0011, "Cluster and Replication": shards, leases and leader election, planned transfers and leadership | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
+| go.thesmos.sh/core v0.8.0: ordering and fencing (RFC-0026), `epoch/fence.go`, `coretest/epochtest`, `clock/hlc/hlc.go`, resilience (RFC-0023), `resilience/retrier.go` and `resilience/bulkhead.go` | https://github.com/thesm-os/core/tree/v0.8.0 |
+| Ongaro and Ousterhout, "In Search of an Understandable Consensus Algorithm (Extended Version)", 2014, §5.2: leader election | https://raft.github.io/raft.pdf |
+| go.thesmos.sh/ledger ADR-0006, "Fence each host's appends with writer leases, apart from shard leadership" | `docs/adr/0006-writer-leases-for-every-host.md` in the ledger repository |

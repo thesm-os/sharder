@@ -2,9 +2,9 @@
 rfc: 0004
 title: Placement and rebalancing strategies
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-09-27
-updated: 2026-09-28
+updated: 2026-10-10
 discussion: none
 supersedes: none
 superseded-by: none

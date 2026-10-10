@@ -2,9 +2,9 @@
 rfc: 0005
 title: Replica state models and replica counts
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-09-27
-updated: 2026-09-29
+updated: 2026-10-10
 discussion: none
 supersedes: none
 superseded-by: none
@@ -235,15 +235,15 @@ With `membershipUpdates` set, the core calls the writer's `UpdateMembership` cal
 
 A consensus application that elects its own leaders selects the `delegated` ownership mode instead. Its authority then chooses the replicas and the writer. The core does not call `UpdateMembership` or `ChangeRole`, and the model only declares the roles that agents report.
 
-The thesmos ledger is such an application. A member is the leader, a voter or a learner of each shard it replicates, only a voter can lead, and a learner copies the shard's state before it becomes a voter. Its model:
+A Raft group with non-voting members is such an application. A member is the leader, a voter or a learner of each shard it replicates, only a voter can lead, and a learner copies the shard's state before it becomes a voter. Its model:
 
 - Roles: `leader`, the writer, `voter` and `learner`.
 - Transitions: `voter→leader`, `leader→voter` and `learner→voter`, and each role to and from `offline`.
 - Availability: a majority of the voters serves.
 
-The `majority` rule cannot express the last line. It counts every serving replica, learners included. Take a shard with voters A, B and C and learners D and E, where A has failed. A planned disruption of B leaves C, D and E serving: three of five replicas, and one of three voters. The rule counts the shard as available, and the budget admits the disruption that costs the shard its quorum. `maxConcurrentNodes: 1` does not prevent it, because A's failure was not planned. The ledger's rule of upgrading one member at a time also needs `maxConcurrentNodes: 1`. Agents do not report the ledger's region copies, because the copies do not vote.
+The `majority` rule cannot express the last line. It counts every serving replica, learners included. Take a shard with voters A, B and C and learners D and E, where A has failed. A planned disruption of B leaves C, D and E serving: three of five replicas, and one of three voters. The rule counts the shard as available, and the budget admits the disruption that costs the shard its quorum. `maxConcurrentNodes: 1` does not prevent it, because A's failure was not planned.
 
-Consensus models need three changes before the support matrix can include them, and the ledger's integration through delegated ownership depends on all three:
+Consensus models need three changes before the support matrix can include them:
 
 - **A voter-aware rule.** A role declares whether its replicas vote, and the availability rule counts only the serving voters against a majority of the voters.
 - **The authority's effective quorum.** The voters that count are those of the configuration that the authority applies, which can be newer than its committed configuration. During a joint configuration, a quorum needs a majority of each of the two voter sets. Agents report the authority's effective configuration with a version. The core does not infer the configuration from the replicas that have reported.
@@ -315,7 +315,7 @@ None.
 ## Unresolved and future work
 
 - `secondary-only`, `primary-secondary`, custom models, replica counts other than one, and scaling on load are outside the support matrix. `secondary-only` needs a temporary allowance above its bound during a move.
-- Consensus models need a voter-aware availability rule, the authority's effective quorum, and deferral without a current configuration. Delegated ownership and the ledger's integration depend on them.
+- Consensus models need a voter-aware availability rule, the authority's effective quorum, and deferral without a current configuration. Delegated ownership of a consensus application depends on them.
 - Weighted voting and witness replicas, which vote but do not store data, are not proposed here.
 - Moving the writer role to the replica with the most recent data is not proposed here. Service Fabric's 2018 open-source code picks the first live replica with the highest log sequence number. The application's `ChangeRole` handler can refuse a promotion, and the placer then tries another replica.
 
@@ -329,6 +329,4 @@ None.
 | Apache Helix, MessageSelectionStage at 48674e6 | https://github.com/apache/helix/blob/48674e6ac2a94fb5365ce69a4b1ee1d57655da1d/helix-core/src/main/java/org/apache/helix/controller/stages/MessageSelectionStage.java |
 | Microsoft Learn, replica roles | https://learn.microsoft.com/en-us/dotnet/api/system.fabric.replicarole?view=azure-dotnet |
 | Ongaro and Ousterhout, "In Search of an Understandable Consensus Algorithm (Extended Version)", 2014, §6: joint consensus, and non-voting members | https://raft.github.io/raft.pdf |
-| go.thesmos.sh/ledger RFC-0011, "Cluster and Replication": membership changes, region copies | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
-| go.thesmos.sh/ledger RFC-0014, "Operations, Observability and Resilience": upgrades one member at a time | `docs/rfc/0014-operations-resilience.md` in the ledger repository |
-| go.thesmos.sh/core at 8edf26a: finite state machines (RFC-0031), states that cannot finish (ADR-0024), `fsm/builder.go` | https://github.com/thesmos-ai/core |
+| go.thesmos.sh/core v0.8.0: finite state machines (RFC-0031), states that cannot finish (ADR-0024), `fsm/builder.go` | https://github.com/thesm-os/core/tree/v0.8.0 |

@@ -2,9 +2,9 @@
 rfc: 0008
 title: The replica agent, the router, disruption budgets and the protocol
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-09-27
-updated: 2026-09-29
+updated: 2026-10-10
 discussion: none
 supersedes: none
 superseded-by: none
@@ -176,12 +176,13 @@ type Config struct {
  // support matrix, and Start refuses a Trust when the registry's support matrix has
  // no approvals.
  Trust *config.Trust
- // Clock is the clock of the agent's lease timers and loops. Nil selects a
- // clock/hlc clock.
+ // Clock is the clock of the agent's lease timers and loops. Start refuses a nil
+ // Clock.
  Clock clock.Clock
- // Telemetry reports the agent's metrics. Nil selects telemetry/noop.
+ // Telemetry reports the agent's metrics. Start refuses a nil Telemetry. A process
+ // without telemetry passes the reporter of package telemetry/noop.
  Telemetry telemetry.Reporter
- // Logger receives the agent's logs. Nil selects slog.Default.
+ // Logger receives the agent's logs. Start refuses a nil Logger.
  Logger *slog.Logger
 }
 
@@ -201,9 +202,10 @@ var ErrNotWriter = errs.WithClass(errors.New("replica: not the shard's writer"),
 // and spec from the root scope, and resolves the spec with cfg.Registry. It returns an
 // error of class errs.Invalid when the namespace's ownership is exclusive and cfg.Guard
 // is nil, or when cfg.Node.Cell names a cell that the cell map does not contain. It
-// then joins the node's cell, reads this node's placements from the cell's scope,
-// restores the node's non-writer replicas through h, and runs the agent's loops until
-// ctx ends.
+// returns the same class without waiting when cfg.Clock, cfg.Telemetry or cfg.Logger
+// is nil. It then joins the node's cell, reads this node's placements from the cell's
+// scope, restores the node's non-writer replicas through h, and runs the agent's loops
+// until ctx ends.
 func Start(ctx context.Context, cfg Config, h Handler) (*Agent, error)
 
 // Token returns the fencing token of a shard that this node writes. It returns
@@ -341,7 +343,7 @@ In a `delegated` namespace, outside the support matrix, the core does not place 
 - `Deposed` returns the replica to the role that `Hosted` last reported, and releases a replica that `Hosted` never reported.
 - `Released` removes the replica.
 
-A ledger member reports to its agent each role that `Member.Replicas` yields. It calls `Hosted` for a voter or a learner, `Elected` for a leader at the epoch in which the role took effect, `Deposed` when it no longer leads a shard, and `Released` for a replica that an epoch removed. Without `Hosted`, the core sees only the replicas that have led, and a plan chooses the writer among those alone.
+A member of a Raft group calls `Hosted` when it joins as a voter or a learner, `Elected` when it becomes the leader of a term, `Deposed` when it stops leading, and `Released` when a configuration change removes it. Without `Hosted`, the core sees only the replicas that have led, and a plan chooses the writer among those alone.
 
 An application reports a replica that cannot serve, such as one on a failed disk or one whose storage rejects every write, with `ReportFault`. Service Fabric offers the same call with the same two kinds of fault. From the report on, the replica counts as unavailable, for the budget and for the model's availability rule:
 
@@ -464,11 +466,12 @@ type Config struct {
  // Registry builds the namespace's partitioner from the spec that the root scope
  // stores.
  Registry *config.Registry
- // Clock is the clock of the router's loops. Nil selects a clock/hlc clock.
+ // Clock is the clock of the router's loops. New refuses a nil Clock.
  Clock clock.Clock
- // Telemetry reports the router's metrics. Nil selects telemetry/noop.
+ // Telemetry reports the router's metrics. New refuses a nil Telemetry. A process
+ // without telemetry passes the reporter of package telemetry/noop.
  Telemetry telemetry.Reporter
- // Logger receives the router's logs. Nil selects slog.Default.
+ // Logger receives the router's logs. New refuses a nil Logger.
  Logger *slog.Logger
 }
 
@@ -496,7 +499,9 @@ var _ Router = (*Watcher)(nil)
 // scope, builds the partitioner with cfg.Registry, and compares the partitioner's
 // Mapping with the recorded one. It returns an error of class errs.Unsupported when
 // the two differ. Its watches run under task.Run until Close, and a watch that
-// returns shard.ErrIncarnation makes the router read the root scope again.
+// returns shard.ErrIncarnation makes the router read the root scope again. It returns
+// an error of class errs.Invalid without waiting when cfg.Clock, cfg.Telemetry or
+// cfg.Logger is nil.
 func New(ctx context.Context, cfg Config) (*Watcher, error)
 
 // Route implements Router.
@@ -536,7 +541,7 @@ The range partitioners cache ranges in a copy-on-write B-tree: one goroutine app
 | `github.com/google/btree` v1.1.3 | 291 ns | 3.6 to 3.7 µs | 52 bytes |
 | `github.com/tidwall/btree` v1.8.1 | 292 ns | 2.9 to 3.0 µs | 36 bytes |
 
-A cache that changes one route at a time must publish cheaply, so the router would use core's copy-on-write B-tree. The measured B-trees give the figures it has to match: about 290 ns per lookup, about 3 µs per published change, and 36 bytes per entry. The router needs four operations from it: a clone in constant time, a seek to the largest key at or below a position, iteration in order from a key, and a lookup without an allocation. A sorted slice remains the right structure for data that is rebuilt whole, such as a layout.
+A cache that changes one route at a time must publish cheaply, so the router uses the copy-on-write B-tree of core's `btree` package. The measured B-trees give the figures it has to match: about 290 ns per lookup, about 3 µs per published change, and 36 bytes per entry. We have not measured core's B-tree against them. The router builds it with `btree.NewMapFunc` and `bytes.Compare`, because a position is a byte string. `btree.MapFunc` has the four operations that the router needs: `Clone` in constant time, `Floor` for the largest key at or below a position, `Ascend` for iteration in order from a key, and `Get` for a lookup. `Floor` and `Get` do not allocate. A sorted slice remains the right structure for data that is rebuilt whole, such as a layout.
 
 The lookup mode needs ordering rules before the support matrix can include it. Two lookups can complete in reverse order, and the older reply can overlap ranges that a newer reply split. The cache has to reject a reply older than every cached entry it overlaps, replace overlapping ranges atomically, and never compare the generations of two cells.
 
@@ -572,7 +577,7 @@ Each package generates the codecs of its own types, because kanon's `-type` flag
 - `config` generates them for `Proposal` and `Signed`, which `Submit` sends, and `budget` for `Disruption`, `Decision` and `Reservation`.
 - `shard` generates them for the value types that the messages contain, and `store` for its records.
 
-A field whose type has a kanon codec is encoded through that codec's methods, also when another package declares the type. A type that encodes itself, such as one with `MarshalBinary`, is encoded through its own methods: `crypto.Digest`, and `shard.NamespaceIncarnation` through the methods of `id.ID`. kanon inlines only a struct that has neither, and every package whose messages contain it gets its own copy of the inline functions. Two such structs occur here, both from core: `tag.Tag` inside `shard.Node`, and `sign.Signature` inside `config.Signed`. `Metadata` has no codec, because every transport sends it in its own framing.
+A field whose type has a kanon codec is encoded through that codec's methods, also when another package declares the type. The messages contain two such types from core: `tag.Tag` inside `shard.Node` and `sign.Signature` inside `config.Signed`. A type that encodes itself, such as one with `MarshalBinary`, is encoded through its own methods: `crypto.Digest`, and `shard.NamespaceIncarnation` through the methods of `id.ID`. kanon inlines only a struct that has neither, and every package whose messages contain it gets its own copy of the inline functions. `Metadata` has no codec, because every transport sends it in its own framing.
 
 A transport adapter implements both clients, and serves both servers on the embedder's server with the embedder's credentials. sharder includes two:
 
@@ -1213,7 +1218,7 @@ The controller still persists what it accepts: it commits each admitted disrupti
 - The library ships two transport adapters, and each maps the protocol's Go types and metadata to its own encoding. Both must keep their field numbers, their metadata and the error classes stable across releases.
 - Operator identities are part of each controller process's configuration. Adding or removing an operator changes the configuration of every controller process of the namespace.
 - A router in `lookup` mode, outside the matrix, pays a lookup round trip for each cold route, and `batch.Loader` adds its accumulation window to that round trip. `batch.Loader` also passes the lookup function a context without any caller's values, so a lookup's trace does not join the trace of the request that missed.
-- The route cache of the range partitioners, outside the matrix, needs core's copy-on-write B-tree, which core does not contain at commit `8edf26a`.
+- We have not measured core's `btree.MapFunc` against `google/btree` and `tidwall/btree`, so the lookup and publish costs of the range partitioners' route cache are unknown. The range partitioners are outside the matrix.
 
 ## Open questions
 
@@ -1249,9 +1254,9 @@ None.
 | Microsoft Learn, Service Fabric `FaultType` | https://learn.microsoft.com/en-us/dotnet/api/system.fabric.faulttype?view=azure-dotnet |
 | Kubernetes API concepts, Protobuf encoding | https://kubernetes.io/docs/reference/using-api/api-concepts/#protobuf-encoding |
 | Protocol Buffers, proto3 language guide: updating a message type and unknown fields | https://protobuf.dev/programming-guides/proto3/#updating |
-| go.thesmos.sh/ledger RFC-0011, "Cluster and Replication": planned transfers and leadership, and `Member.Replicas` | `docs/rfc/0011-replicated-storage.md` in the ledger repository |
+| Ongaro and Ousterhout, "In Search of an Understandable Consensus Algorithm (Extended Version)", 2014, §5.2 and §6: leader election, and membership changes with non-voting members | https://raft.github.io/raft.pdf |
 | Go `net/http`, `Protocols` | https://pkg.go.dev/net/http#Protocols |
 | tidwall/btree v1.8.1 | https://github.com/tidwall/btree |
 | google/btree v1.1.3 | https://github.com/google/btree |
-| go.thesmos.sh/core at 8edf26a: request coalescing (RFC-0024), telemetry (RFC-0004), structured concurrency (RFC-0030), error classes and `resilience/retrier.go` | https://github.com/thesmos-ai/core |
+| go.thesmos.sh/core v0.8.0: request coalescing (RFC-0024), telemetry (RFC-0004), structured concurrency (RFC-0030), error classes, `resilience/retrier.go`, `btree/mapfunc.go`, `tag/tag.kanon.go` and `crypto/sign/signature.kanon.go` | https://github.com/thesm-os/core/tree/v0.8.0 |
 | Our measurement of sorted slices and B-trees, 2026-09-27 | Research-0003 |
