@@ -1,15 +1,4 @@
-# Binaries and build artefacts
-bin/
-dist/
-artifacts/
-
-# Tests and coverage
-*.test
-*.out
-.ergon/
-
-# Dependencies
-vendor/
+# Managed by ergon init, with .ergon/local/.gitignore merged in. Change the repository's settings there and run ergon init sync.
 
 # Editors and IDEs
 .idea/
@@ -18,16 +7,15 @@ vendor/
 *.swo
 *~
 
-# Agentic / LLM
+# Agents
 .claude/
 .codex/
 .gemini/
-superpowers/
 AGENT.md
 CLAUDE.md
 GEMINI.md
 
-# OS
+# Operating systems
 .DS_Store
 Thumbs.db
 
@@ -35,3 +23,26 @@ Thumbs.db
 .env
 *.local
 secrets.json
+
+# ergon release
+# The publish plan of the release workflow, which a build of a release must not see as a change
+/publish-plan.json
+
+# Go
+bin/
+coverage.out
+*.test
+# The artifacts of ergon release pack, which a build of a release must not see as changes
+/dist/
+
+# Drafts that stay out of the repository
+.scratch/
+
+# The output of builds and of coverage, and the coverage directory of the earlier ergon
+artifacts/
+*.out
+/.ergon/coverage/
+vendor/
+
+# Agents
+superpowers/
