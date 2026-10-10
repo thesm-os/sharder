@@ -13,6 +13,11 @@ research: Research-0001, Research-0002, Research-0003
 related: RFC-0001, RFC-0003, RFC-0005, RFC-0006, RFC-0007, RFC-0009
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: BUSL-1.1
+-->
+
 # RFC-0008: The replica agent, the router, disruption budgets and the protocol
 
 ## Summary

@@ -1,3 +1,8 @@
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: BUSL-1.1
+-->
+
 # Research
 
 Each file answers one question about systems outside this repository and lists the sources behind the answer.

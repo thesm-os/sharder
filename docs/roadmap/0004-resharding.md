@@ -10,6 +10,11 @@ prd: none
 rfc: RFC-0002, RFC-0003, RFC-0006, RFC-0007
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: BUSL-1.1
+-->
+
 # Milestone 0004: Shards that split and merge
 
 ## Goal

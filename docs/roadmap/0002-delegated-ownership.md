@@ -10,6 +10,11 @@ prd: none
 rfc: RFC-0001, RFC-0002, RFC-0003, RFC-0005, RFC-0006, RFC-0008
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: BUSL-1.1
+-->
+
 # Milestone 0002: Delegated ownership for consensus applications
 
 ## Goal

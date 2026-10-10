@@ -10,6 +10,11 @@ prd: none
 rfc: RFC-0005, RFC-0006
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: BUSL-1.1
+-->
+
 # Milestone 0003: Replication models beyond primary-only
 
 ## Goal

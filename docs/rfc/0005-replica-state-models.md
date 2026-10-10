@@ -13,6 +13,11 @@ research: Research-0001, Research-0002
 related: RFC-0001, RFC-0002, RFC-0004, RFC-0006
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: BUSL-1.1
+-->
+
 # RFC-0005: Replica state models and replica counts
 
 ## Summary

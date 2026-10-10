@@ -10,6 +10,11 @@ supersedes: none
 superseded-by: none
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: BUSL-1.1
+-->
+
 # Research-0002: Along which axes do sharding systems differ, and how do configurable systems select and validate strategies?
 
 Note: this research of 2026-09-27 predates the design, and its conclusions are historical. The strategies of the design, and the subset that the first release supports, are in [the RFCs](../rfc/README.md).

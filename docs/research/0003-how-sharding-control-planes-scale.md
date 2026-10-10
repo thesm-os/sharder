@@ -10,6 +10,11 @@ supersedes: none
 superseded-by: none
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: BUSL-1.1
+-->
+
 # Research-0003: How do sharding control planes, stores and routers scale to huge deployments, and which structure should a route cache use?
 
 Note: this research of 2026-09-27 predates the design, and its conclusions about scale are historical estimates. The cells of the design are in [the RFCs](../rfc/README.md), and the supported limits come from the measurements that [the roadmap](../roadmap/README.md) requires.

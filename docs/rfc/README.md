@@ -1,3 +1,8 @@
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: BUSL-1.1
+-->
+
 # RFCs
 
 Each RFC proposes one part of the design of `sharder` and records the alternatives it rejected.

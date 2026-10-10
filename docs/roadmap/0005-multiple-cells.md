@@ -10,6 +10,11 @@ prd: none
 rfc: RFC-0007, RFC-0009
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: BUSL-1.1
+-->
+
 # Milestone 0005: Namespaces of more than one cell
 
 ## Goal

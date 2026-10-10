@@ -1,3 +1,8 @@
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: BUSL-1.1
+-->
+
 # C4 model
 
 The C4 model describes sharder at three levels of zoom, and deploys it once per topology.
