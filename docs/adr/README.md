@@ -9,3 +9,7 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 
 | ADR | Title | Status |
 |---|---|---|
+| [0001](0001-conformance-kits-per-contract.md) | Conformance kits for every contract with more than one implementation | Accepted |
+| [0002](0002-store-reader-for-readers.md) | Readers of the store take store.Reader | Accepted |
+| [0003](0003-implementations-below-contracts.md) | Built-in implementations are subpackages of their contracts | Accepted |
+| [0004](0004-proposals-in-their-own-package.md) | Proposals and approvals form package proposal | Accepted |
