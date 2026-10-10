@@ -9,23 +9,25 @@ linters:
     depguard:
       rules:
         # The root module imports only the standard library, core, kanon, xxhash and its
-        # own packages.
+        # own packages. A conformance kit is a package whose name ends in test.
         root-module:
           list-mode: strict
           files:
             - $all
             - "!$test"
+            - "!**/*test/*.go"
           allow:
             - $gostd
             - go.thesmos.sh/core
             - go.thesmos.sh/kanon
             - github.com/cespare/xxhash/v2
             - go.thesmos.sh/sharder
-        # The tests of the root module also import assert.
+        # The tests and the conformance kits of the root module also import assert.
         root-module-tests:
           list-mode: strict
           files:
             - $test
+            - "**/*test/*.go"
           allow:
             - $gostd
             - go.thesmos.sh/core
@@ -44,6 +46,43 @@ linters:
           deny:
             - pkg: go.thesmos.sh/sharder
               desc: package shard imports no other package of sharder
+        # The strategy packages and their subpackages do not import the registry, the
+        # components or an internal package, so an application uses a strategy without
+        # them. The entry replica$ and the entry replica/ leave replication allowed.
+        strategies:
+          list-mode: lax
+          files:
+            - "**/partition/**.go"
+            - "**/placement/**.go"
+            - "**/replication/**.go"
+            - "**/ownership/**.go"
+            - "**/handoff/**.go"
+            - "**/fence/**.go"
+            - "**/budget/**.go"
+            - "!$test"
+          deny:
+            - pkg: go.thesmos.sh/sharder/builtin
+              desc: a strategy package does not import the registry of the built-ins
+            - pkg: go.thesmos.sh/sharder/config
+              desc: a strategy package does not import the registry
+            - pkg: go.thesmos.sh/sharder/controller
+              desc: a strategy package does not import a component
+            - pkg: go.thesmos.sh/sharder/replica$
+              desc: a strategy package does not import a component
+            - pkg: go.thesmos.sh/sharder/replica/
+              desc: a strategy package does not import a component
+            - pkg: go.thesmos.sh/sharder/router
+              desc: a strategy package does not import a component
+            - pkg: go.thesmos.sh/sharder/sim
+              desc: a strategy package does not import a component
+            - pkg: go.thesmos.sh/sharder/internal
+              desc: a strategy package does not import an internal package
+    # G115 analyses each function alone. The sharder bounds each count where it validates a
+    # configuration or a range, so G115 reports conversions of values that an earlier check
+    # bounds.
+    gosec:
+      excludes:
+        - G115
 
 formatters:
   settings:

@@ -11,7 +11,7 @@ The repository has five Go modules. The root module is the library, and the othe
 
 | Module | Directory | Contains | Requires |
 |---|---|---|---|
-| `go.thesmos.sh/sharder` | `.` | The library | `go.thesmos.sh/core`, `go.thesmos.sh/kanon` and `github.com/cespare/xxhash/v2`. Its tests also require `go.dokimi.dev/assert` |
+| `go.thesmos.sh/sharder` | `.` | The library | `go.thesmos.sh/core`, `go.thesmos.sh/kanon` and `github.com/cespare/xxhash/v2`. Its tests and its conformance kits also require `go.dokimi.dev/assert` |
 | `go.thesmos.sh/sharder/etcd` | `etcd/` | `store.Store` and `membership.Membership` over etcd | The root module and the etcd client |
 | `go.thesmos.sh/sharder/httptransport` | `httptransport/` | The clients of the protocol, and an HTTP/2 handler that calls its servers | The root module |
 | `go.thesmos.sh/sharder/cmd` | `cmd/` | `sharderctl` | The root module, `etcd` and `httptransport` |
@@ -104,7 +104,7 @@ Each internal package has at least two callers, so the logic that two components
 
 ## Import rules
 
-1. The root module imports only the standard library, `go.thesmos.sh/core`, `go.thesmos.sh/kanon`, `github.com/cespare/xxhash/v2` and its own packages. Its tests also import `go.dokimi.dev/assert`.
+1. The root module imports only the standard library, `go.thesmos.sh/core`, `go.thesmos.sh/kanon`, `github.com/cespare/xxhash/v2` and its own packages. Its tests and its conformance kits also import `go.dokimi.dev/assert`.
 2. `shard` does not import another package of sharder.
 3. A subpackage may import the package above it. A package never imports a package below it.
 4. The strategy packages and their subpackages do not import `config`, `builtin`, `controller`, `replica`, `router`, `sim` or an internal package. The strategy packages are `partition`, `placement`, `replication`, `ownership`, `handoff`, `fence` and `budget`.
