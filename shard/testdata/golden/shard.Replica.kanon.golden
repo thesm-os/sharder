@@ -1,0 +1,34 @@
+the zero value: 
+table sample 0: 0a056b616e6f6e
+table sample 1: 0a07c3a9e29c93cf89
+table sample 2: 0a7f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161
+table sample 3: 0a800162626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262621002
+table sample 4: 0a0100
+table sample 5: 0aac02636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363
+table sample 6: 0a02fffe
+table sample 7: 1001
+the sample of field Node: 0a056b616e6f6e
+the sample of field Role: 1001
+table sample 0 that fails at value 0: fails: kanon: Replica.Role (field 2): shard: unknown role: 127
+table sample 1 that fails at value 0: fails: kanon: Replica.Role (field 2): shard: unknown role: 127
+table sample 2 that fails at value 0: fails: kanon: Replica.Role (field 2): shard: unknown role: 127
+table sample 3 that fails at value 0: fails: kanon: Replica.Role (field 2): shard: unknown role: 127
+table sample 4 that fails at value 0: fails: kanon: Replica.Role (field 2): shard: unknown role: 127
+table sample 5 that fails at value 0: fails: kanon: Replica.Role (field 2): shard: unknown role: 127
+table sample 6 that fails at value 0: fails: kanon: Replica.Role (field 2): shard: unknown role: 127
+table sample 7 that fails at value 0: fails: kanon: Replica.Role (field 2): shard: unknown role: 127
+wide sample 0: 0a0277311002
+wide sample 1: 0a0277321003
+the key sample: 0a07c3a9e29c93cf89
+DecodeKanon/decodes each prefix of a field between unknown fields as the reference decode: 1001 probes, digest fd9d1ab3b907c4d0
+DecodeKanon/decodes a field between unknown fields with one value written wrong as the reference decode: 581 probes, digest 70713832941a35ed
+DecodeKanon/decodes a field between unknown fields with a value that its ValidateKanon rejects as the reference decode: 3 probes, digest 94abd0b8483bd31d
+DecodeKanon/decodes a field between unknown fields with one changed byte as the reference decode: 1782 probes, digest 8f3b8137b8be4f1
+DecodeKanon/decodes a field between unknown fields with its tag in another wire format as the reference decode: 33 probes, digest 7450b6da2f57bc50
+DecodeKanon/decodes a field between unknown fields written twice as the reference decode: 11 probes, digest e508c2658d20d800
+DecodeKanon/decodes a field between unknown fields under each depth limit as the reference decode: 70 probes, digest 86b2b76dcb5489e5
+DecodeKanon/decodes an encoding that writes every field twice as the reference decode: 14 probes, digest e603258a1e6c56e3
+DecodeKanon/decodes two concatenated encodings as the reference decode: 64 probes, digest 39a9c0332cb84004
+DecodeKanon/decodes an encoding in a slab at its offset as the reference decode: 14 probes, digest 7b0959e987544cbc
+the samples that the encode allocation checks measure: 11 samples, digest 8ad2a27d0bd50037
+the samples that the decode allocation check measures: 11 samples, digest 8ad2a27d0bd50037

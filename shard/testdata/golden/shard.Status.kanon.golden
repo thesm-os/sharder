@@ -1,0 +1,8 @@
+value 0: fails: shard: unknown status: 0
+value 1: 0801
+value 2: fails: shard: unknown status: 127
+value 3: fails: shard: unknown status: 128
+value 4: fails: shard: unknown status: 255
+value 5: 0802
+value 6: fails: shard: unknown status: 64
+value 7: fails: shard: unknown status: 200
