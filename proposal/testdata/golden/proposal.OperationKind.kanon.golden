@@ -1,0 +1,8 @@
+value 0: fails: proposal: unknown operation kind: 0
+value 1: 0801
+value 2: fails: proposal: unknown operation kind: 127
+value 3: fails: proposal: unknown operation kind: 128
+value 4: fails: proposal: unknown operation kind: 255
+value 5: 0802
+value 6: fails: proposal: unknown operation kind: 64
+value 7: fails: proposal: unknown operation kind: 200
