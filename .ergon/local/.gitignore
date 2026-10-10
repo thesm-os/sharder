@@ -1,0 +1,14 @@
+# Copyright ThesmOS B.V. 2026
+# SPDX-License-Identifier: BUSL-1.1
+
+# Drafts that stay out of the repository
+.scratch/
+
+# The output of builds and of coverage, and the coverage directory of the earlier ergon
+artifacts/
+*.out
+/.ergon/coverage/
+vendor/
+
+# Agents
+superpowers/

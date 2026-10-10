@@ -1,0 +1,14 @@
+# Copyright ThesmOS B.V. 2026
+# SPDX-License-Identifier: BUSL-1.1
+
+# The settings of the sharder, which ergon init merges into .golangci.yml.
+
+formatters:
+  settings:
+    # The packages of the sharder form an import group of their own.
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(go.thesmos.sh/sharder)
+      custom-order: true
