@@ -33,7 +33,7 @@ An application can embed sharder to spread exclusive shards over its processes, 
 - [ ] `Resolve` rejects a store that has leases paired with `membership/static`, and a value below one for `maxTransitions`, `maxNodeTransitions` or `nodeCallbacks`.
 - [ ] A live spec edit that selects a factory of the wrong type, or one whose `New` fails, leaves the accepted version unchanged, and `Submit` returns the spec path.
 - [ ] A spec that places shards with `match-label` leaves every shard unplaced, with the constraint as the reason, because the supported partitioners label no shard.
-- [ ] `controller.New` rejects `store/memory` without `WithVolatileStore`, and a controller without `WithNode`. `replica.Start` rejects an `exclusive` namespace without a fence guard. Each rejection is an error of class `errs.Invalid`.
+- [ ] `controller.New` rejects `store/memory` without `WithVolatileStore`, and a controller without `WithNode`, `WithClock`, `WithRand`, `WithTelemetry` or `WithLogger`. `replica.Start` rejects an `exclusive` namespace without a fence guard. `replica.Start` and `router.New` reject a `Config` without a clock, a reporter or a logger. Each rejection is an error of class `errs.Invalid`.
 - [ ] `examples/` contains one runnable example per supported preset. Each example's handler records its callback keys in the transactions of its storage. It reads its shard's data only from a state that contains the acquisition: a new transaction on its authoritative store, or a replica that has applied the acquisition. Its tests replay every callback of a move. They also pause a replica before it applies the old writer's last write, and check that the handler does not read the shard from that replica.
 - [ ] A test fails when the README's support table and `builtin.Support` differ.
 
@@ -213,10 +213,12 @@ This milestone is the first code of the library, and every other milestone exten
 
 It needs these from outside this repository:
 
-- A core release that contains `fsm`, `task`, `coretest/epochtest`, the fence laws and the `Policy`, `Signature` and `Resolver` of `crypto/sign`, as core does at commit `8edf26a`. The latest release, v0.6.1, predates all five.
+- Core's `fsm`, `task` and `coretest/epochtest`, its fence laws, and the `Policy`, `Signature` and `Resolver` of its `crypto/sign`.
 - `version.ErrOutcomeUnknown` in core, which the store returns for a commit whose outcome is unknown.
 - Binary encoding methods on core's `id.ID`, through which every message encodes its namespace incarnation.
 - kanon's generator, and its runtime packages `go.thesmos.sh/kanon` and `go.thesmos.sh/kanon/wire`, which the generated codecs import.
+
+Core v0.8.0 contains every core item, and kanon v0.1.0 contains the generator and both runtime packages.
 
 Milestones 0002 to 0005 wait for this one.
 
@@ -240,14 +242,14 @@ The scope is the support matrix of the first release and its enforcement: `Resol
 
 | Risk | What it delays | What we would do |
 |---|---|---|
-| Core releases `version.ErrOutcomeUnknown` and the encoding of `id.ID` after the library's own work is done | This milestone, and milestones 0002 to 0005 | Develop against core through a replace directive, as the ledger does, and release once a core release contains both |
-| kanon's generator is not released when the library needs its codecs | This milestone, and milestones 0002 to 0005 | Keep the `go:generate` directives, and generate the codecs from kanon's development tree until it releases |
 | The etcd feasibility check shows that a supported transaction shape does not fit etcd's default limits | This milestone, and milestones 0002 to 0005 | Split the shape into smaller commits, or publish lower limits for a cell |
 
 ## Changes
 
 | Date | What changed | Why |
 |---|---|---|
+| 2026-10-10 | Added the refusal of a missing clock, randomness source, reporter or logger to the checks of `controller.New`, `replica.Start` and `router.New` | The RFCs require these seams, and each constructor refuses a missing one |
+| 2026-10-10 | Named core v0.8.0 and kanon v0.1.0 as the releases that contain the prerequisites, and removed the risks of late core and kanon releases | Both releases were published on 2026-10-10 |
 | 2026-09-28 | Checked removed shards on etcd in place of removal epochs, measured the watch delivery that each `add` waits for, and added a check of an `add` that passes its listing check during a snapshot's installation | The closure review of the fourth revision simplified `Event.Removed` to shard IDs and asked for both checks |
 | 2026-09-28 | Added the acceptance criteria and the disposition of the verification's finding | The verification of the third revision found that cleanup did not survive a replacement snapshot, and the fourth revision closed it |
 | 2026-09-28 | Added the acceptance criteria and the dispositions of the third design review, and described the disposition tables as acceptance coverage | The third design review of 2026-09-28 found 7 contract gaps in the second revision, and the third revision closed each one |
@@ -264,5 +266,6 @@ The scope is the support matrix of the first release and its enforcement: `Resol
 | Third design review of the sharder RFCs, 2026-09-28: 7 findings | `.scratch/review-2026-09-28-r3/review.md` and the four reviews beside it, which are not under version control |
 | Verification of the third revision, 2026-09-28: 1 finding | `.scratch/review-2026-09-28-r4/review.md` and the three reviews beside it, which are not under version control |
 | Closure review of the fourth revision, 2026-09-28: no finding | `.scratch/review-2026-09-28-r5/review.md`, which is not under version control |
-| Feature requests to core for `version.ErrOutcomeUnknown` and the encoding of `id.ID` | `feat-version-outcome-unknown.md` and `feat-id-binary-encoding.md` at the root of the core repository |
+| go.thesmos.sh/core v0.8.0 | https://github.com/thesm-os/core/releases/tag/v0.8.0 |
+| go.thesmos.sh/kanon v0.1.0 | https://github.com/thesm-os/kanon/releases/tag/v0.1.0 |
 | etcd v3.6 API guarantees, operation completion | https://etcd.io/docs/v3.6/learning/api_guarantees/ |

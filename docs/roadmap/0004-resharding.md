@@ -47,12 +47,11 @@ The scope is the two range partitioners, the fresh identities of new shards, a p
 
 ## Risks to the sequence
 
-| Risk | What it delays | What we would do |
-|---|---|---|
-| The ledger's integration needs splits and merges by its authority | The ledger's integration, after milestone 0002 | Move the fresh-identity rule into milestone 0002 |
+None. The other milestones do not depend on this one.
 
 ## Changes
 
 | Date | What changed | Why |
 |---|---|---|
+| 2026-10-10 | Removed the risk that the ledger's integration needs splits and merges by its authority | Ledger ADR-0006 separates the ledger's writer leases from its shards, so a split of a ledger shard does not change a writer |
 | 2026-09-28 | Created as deferred | The design review of 2026-09-28 found that a split reuses retired shard IDs, and that a large layout change does not fit one commit |
