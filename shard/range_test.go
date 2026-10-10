@@ -16,10 +16,16 @@ import (
 	"go.thesmos.sh/sharder/shard"
 )
 
-// recordedRangeHex pins the encoding of recordedRange, which every placement and
-// every cell persists: field 1 is the start a, and field 2 the end m.
-const recordedRangeHex = "0a01" + "61" +
-	"1201" + "6d"
+const (
+	// recordedRangeHex pins the encoding of recordedRange, which every placement and
+	// every cell persists: field 1 is the start a, and field 2 the end m.
+	recordedRangeHex = "0a01" + "61" +
+		"1201" + "6d"
+	// labelStart labels the start of a range that a property generates.
+	labelStart = "start"
+	// labelEnd labels the end of a range that a property generates.
+	labelEnd = "end"
+)
 
 // recordedRange is the range whose encoding recordedRangeHex pins.
 var recordedRange = shard.Range{Start: []byte("a"), End: []byte("m")}
@@ -82,8 +88,8 @@ func TestRange(t *testing.T) {
 		t.Run("reports true for the start of a range and false for its end", func(t *testing.T) {
 			t.Parallel()
 			prop.ForAll(t, "a range contains its start and does not contain its end", func(c *prop.Case) {
-				start := c.Draw(prop.Bytes(prop.MaxSize(8)), "start")
-				end := c.Draw(prop.Bytes(prop.MaxSize(8)), "end")
+				start := c.Draw(prop.Bytes(prop.MaxSize(8)), labelStart)
+				end := c.Draw(prop.Bytes(prop.MaxSize(8)), labelEnd)
 				if bytes.Equal(start, end) {
 					end = append(bytes.Clone(end), 0)
 				}

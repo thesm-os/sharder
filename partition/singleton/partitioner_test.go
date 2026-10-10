@@ -24,8 +24,11 @@ const (
 	// recordedConfig is the configuration of the partitioner, which the mappings of
 	// namespaces record.
 	recordedConfig = "{}"
-	// key is a key whose position the allocation tests and the benchmark measure.
-	key = "user:42"
+	// measuredKey is a key whose position the allocation tests and the benchmark
+	// measure.
+	measuredKey = "user:42"
+	// labelKey labels the key that a property generates.
+	labelKey = "key"
 )
 
 // TestPartitioner checks the position, the mapping and the span of singleton.
@@ -38,7 +41,7 @@ func TestPartitioner(t *testing.T) {
 		t.Run("returns the empty position for every key", func(t *testing.T) {
 			t.Parallel()
 			prop.ForAll(t, "Position returns the empty position for every key", func(c *prop.Case) {
-				key := c.Draw(prop.Bytes(prop.MaxSize(64)), "key")
+				key := c.Draw(prop.Bytes(prop.MaxSize(64)), labelKey)
 				assert.Empty(c, singleton.Partitioner{}.Position(nil, key), "Position must return the empty position")
 			})
 		})
@@ -82,7 +85,7 @@ func TestPartitionerConformance(t *testing.T) {
 // whole process, so the test does not run in parallel.
 func TestPartitionerAllocs(t *testing.T) {
 	var p partition.Partitioner = singleton.Partitioner{}
-	k := []byte(key)
+	k := []byte(measuredKey)
 	dst := make([]byte, 0, 4)
 
 	t.Run("Position", func(t *testing.T) {
@@ -95,7 +98,7 @@ func TestPartitionerAllocs(t *testing.T) {
 // BenchmarkPartitioner reports the cost of Position, and fails when it allocates.
 func BenchmarkPartitioner(b *testing.B) {
 	var p partition.Partitioner = singleton.Partitioner{}
-	k := []byte(key)
+	k := []byte(measuredKey)
 	dst := make([]byte, 0, 4)
 
 	b.Run("Position", func(b *testing.B) {

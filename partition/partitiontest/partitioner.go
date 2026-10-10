@@ -15,6 +15,19 @@ import (
 	"go.thesmos.sh/sharder/shard"
 )
 
+// The labels of the values that the laws generate. A counterexample shows each value
+// under its label.
+const (
+	// labelPrefix labels the bytes that dst contains before Position appends.
+	labelPrefix = "prefix"
+	// labelKey labels a key.
+	labelKey = "key"
+	// labelFirst labels the index of the first span of a range.
+	labelFirst = "first"
+	// labelLast labels the index of the last span of a range.
+	labelLast = "last"
+)
+
 // AssertPartitioner checks the laws of partition.Partitioner against p, and fails t
 // when p breaks one. It runs each law as a parallel subtest of t. The subtest of a
 // law has the name of the method that the law constrains.
@@ -33,8 +46,8 @@ func AssertPartitioner(t *testing.T, p partition.Partitioner) {
 		t.Run("appends the position of the key to dst", func(t *testing.T) {
 			t.Parallel()
 			prop.ForAll(t, "Position appends the position of the key to dst", func(c *prop.Case) {
-				prefix := c.Draw(prop.Bytes(prop.MaxSize(8)), "prefix")
-				key := c.Draw(prop.Bytes(prop.MaxSize(64)), "key")
+				prefix := c.Draw(prop.Bytes(prop.MaxSize(8)), labelPrefix)
+				key := c.Draw(prop.Bytes(prop.MaxSize(64)), labelKey)
 				want := append(bytes.Clone(prefix), p.Position(nil, key)...)
 				assert.Equal(c, p.Position(bytes.Clone(prefix), key), want,
 					"Position must append the position of the key to dst", assert.EquateEmpty())
@@ -85,8 +98,8 @@ func AssertPartitioner(t *testing.T, p partition.Partitioner) {
 		t.Run("returns spans that partition a range between the bounds of two spans", func(t *testing.T) {
 			t.Parallel()
 			prop.ForAll(t, "Initial partitions a range between the bounds of two of its spans", func(c *prop.Case) {
-				first := c.Draw(prop.Integer(0, len(spans)-1), "first")
-				last := c.Draw(prop.Integer(first, len(spans)-1), "last")
+				first := c.Draw(prop.Integer(0, len(spans)-1), labelFirst)
+				last := c.Draw(prop.Integer(first, len(spans)-1), labelLast)
 				r := shard.Range{Start: spans[first].Range.Start, End: spans[last].Range.End}
 				got, err := p.Initial(r)
 				assert.NoError(c, err, "Initial must divide a range between the bounds of two of its spans")

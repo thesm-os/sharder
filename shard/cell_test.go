@@ -18,16 +18,24 @@ import (
 	"go.thesmos.sh/sharder/shard"
 )
 
-// recordedCellHex pins the encoding of recordedCell, which the root scope and the
-// scope of every cell persist: field 1 is the ID c1, field 2 the range, field 3 the
-// controller's address h:1, field 4 its identity i1, field 5 the epoch 2, and field
-// 6 the spec version 3.
-const recordedCellHex = "0a02" + "6331" +
-	"1206" + recordedRangeHex +
-	"1a03" + "683a31" +
-	"2202" + "6931" +
-	"2802" +
-	"3003"
+const (
+	// recordedCellHex pins the encoding of recordedCell, which the root scope and the
+	// scope of every cell persist: field 1 is the ID c1, field 2 the range, field 3
+	// the controller's address h:1, field 4 its identity i1, field 5 the epoch 2, and
+	// field 6 the spec version 3.
+	recordedCellHex = "0a02" + "6331" +
+		"1206" + recordedRangeHex +
+		"1a03" + "683a31" +
+		"2202" + "6931" +
+		"2802" +
+		"3003"
+	// labelPos labels the position that a property generates.
+	labelPos = "pos"
+	// labelEnds labels the ends of the cells of a generated cover.
+	labelEnds = "ends"
+	// lastCell is the ID of the last cell of a generated cover.
+	lastCell shard.CellID = "last"
+)
 
 // recordedCell is the cell whose encoding recordedCellHex pins.
 var recordedCell = shard.Cell{
@@ -143,7 +151,7 @@ func TestCell(t *testing.T) {
 				prop.ForAll(t, "Locate finds the one cell of a cover whose range contains the position",
 					func(c *prop.Case) {
 						m := drawCover(c)
-						pos := c.Draw(prop.Bytes(prop.MaxSize(4)), "pos")
+						pos := c.Draw(prop.Bytes(prop.MaxSize(4)), labelPos)
 						want := slices.IndexFunc(
 							m.Cells,
 							func(cell shard.Cell) bool { return cell.Range.Contains(pos) },
@@ -227,11 +235,11 @@ func BenchmarkCell(b *testing.B) {
 	})
 }
 
-// drawCover draws a cell map whose cells cover the position space: the first cell
+// drawCover generates a cell map whose cells cover the position space: the first cell
 // starts at the empty position, each cell ends where the next one starts, and the
 // last cell has no end.
 func drawCover(c *prop.Case) shard.CellMap {
-	ends := c.Draw(prop.List(prop.Bytes(prop.MinSize(1), prop.MaxSize(3)), prop.MaxSize(8)), "ends")
+	ends := c.Draw(prop.List(prop.Bytes(prop.MinSize(1), prop.MaxSize(3)), prop.MaxSize(8)), labelEnds)
 	slices.SortFunc(ends, bytes.Compare)
 	ends = slices.CompactFunc(ends, bytes.Equal)
 
@@ -242,7 +250,7 @@ func drawCover(c *prop.Case) shard.CellMap {
 		start = end
 	}
 
-	return shard.CellMap{Cells: append(cells, shard.Cell{ID: "last", Range: shard.Range{Start: start}})}
+	return shard.CellMap{Cells: append(cells, shard.Cell{ID: lastCell, Range: shard.Range{Start: start}})}
 }
 
 // evenCover returns a cell map of n cells. Cell i starts at the big-endian encoding
