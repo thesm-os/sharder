@@ -13,3 +13,5 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0002](0002-store-reader-for-readers.md) | Readers of the store take store.Reader | Accepted |
 | [0003](0003-implementations-below-contracts.md) | Built-in implementations are subpackages of their contracts | Accepted |
 | [0004](0004-proposals-in-their-own-package.md) | Proposals and approvals form package proposal | Accepted |
+| [0005](0005-core-assigns-shard-ids.md) | The core assigns shard IDs from core's identifiers | Accepted |
+| [0006](0006-roles-and-statuses-are-enumerations.md) | Roles and statuses are closed enumerations | Accepted |
