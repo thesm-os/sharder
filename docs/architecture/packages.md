@@ -43,8 +43,8 @@ A package may import the packages in its row, and every package that those packa
 | `partition/singleton` | The partitioner `singleton` | `partition` |
 | `partition/xxhash64` | The hash `xxhash64`, which is XXH64 with seed 0 | `partition` |
 | `partition/partitiontest` | The conformance kit of partitioners and hashes | `partition` |
-| `placement` | The `Placer`, `Function`, `Constraint` and `Goal` contracts, the planner's `State`, moves and plans | `shard`, `partition`, `replication` |
-| `placement/planner` | The planner, with repair, its two modes and its three searches | `placement` |
+| `placement` | The `Placer`, `Constraint` and `Goal` contracts, the planner's `State`, moves, plans and `Validate` | `shard`, `partition`, `replication` |
+| `placement/planner` | The planner, with repair, its two modes and its local search | `placement` |
 | `placement/constraint` | The six built-in constraints | `placement` |
 | `placement/goal` | The seven built-in goals | `placement` |
 | `placement/placementtest` | The conformance kit of placers, constraints and goals | `placement` |
@@ -115,6 +115,6 @@ Each internal package has at least two callers, so the logic that two components
 
 - Every hand-written source file except `doc.go` has a test file beside it, in the package `<name>_test`.
 - Every implementation of a contract runs the conformance kit of the contract in its tests. Every fenced writer runs core's `coretest/epochtest`.
-- These hot paths have a benchmark and a `Test<Unit>Allocs` test: `shard.CellMap.Locate`, `partition.Layout.Locate`, `Position` of each partitioner, `Sum64` of `xxhash64`, `router.Watcher.Route`, `protocol.Metadata.Check`, and `Key` and `Digest` of `protocol.Request`.
+- These hot paths have a benchmark and a `Test<Unit>Allocs` test: `shard.CellMap.Locate`, `partition.Layout.Locate`, `Position` of each partitioner, `Sum64` of `xxhash64`, `Replicas`, `Utilisation` and `PeakCounts` of `placement.State`, `Check` of each built-in constraint, `Delta` of each built-in goal, `router.Watcher.Route`, `protocol.Metadata.Check`, and `Key` and `Digest` of `protocol.Request`.
 - kanon generates `<file>.kanon.go` and `<file>.kanon_test.go` beside each source file whose types have codecs. The codec tests keep their golden files in `testdata/golden/<package>.<Type>.kanon.golden`. The root module lists kanon in the `tool` directive of its `go.mod`.
 - stringer generates `<file>.string_gen.go` for the integer enumerations of a source file.

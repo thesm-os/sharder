@@ -23,3 +23,4 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0012](0012-config-and-budget-declare-the-matrix.md) | Config and budget declare only the capabilities of the support matrix | Accepted |
 | [0013](0013-store-membership-protocol-declare-the-matrix.md) | Store, membership and protocol declare only the capabilities of the support matrix | Accepted |
 | [0014](0014-cell-ids-are-root-shard-ids.md) | The ID of a cell is the canonical text of its shard ID in the root | Accepted |
+| [0015](0015-placement-declares-the-planner-of-the-matrix.md) | Placement declares only the planner of the support matrix, with sparse plans and a concrete state | Accepted |
