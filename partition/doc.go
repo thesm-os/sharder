@@ -10,6 +10,10 @@
 // first placement of the shard. A [Hash] is the function that a hashing partitioner
 // applies to a key.
 //
+// A [Layout] lists the shards of one cell, each a [Shard] with the ID that the core
+// assigned. [Layout.Locate] returns the ID of the shard whose range contains a
+// position.
+//
 // # Implementations
 //
 //   - go.thesmos.sh/sharder/partition/fixedslots is the partitioner fixed-slots, which
@@ -27,12 +31,13 @@
 //
 // # Concurrency
 //
-// A Partitioner and a Hash are safe for concurrent use. A Span is a value type.
+// A Partitioner and a Hash are safe for concurrent use. A Span, a Shard and a Layout
+// are value types.
 //
 // # Allocation contract
 //
-// [Partitioner.Position] does not allocate when dst has room for the position, and
-// [Hash.Sum64] does not allocate.
+// [Partitioner.Position] does not allocate when dst has room for the position.
+// [Hash.Sum64] and [Layout.Locate] do not allocate.
 //
 // # Dependency position
 //
