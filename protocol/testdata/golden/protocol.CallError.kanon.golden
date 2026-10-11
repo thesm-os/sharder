@@ -1,0 +1,34 @@
+the zero value: 
+table sample 0: 08011207c3a9e29c93cf89
+table sample 1: 127f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161
+table sample 2: 1280016262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262
+table sample 3: 120100
+table sample 4: 080212ac02636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363
+table sample 5: 1202fffe
+table sample 6: 
+table sample 7: 12056b616e6f6e
+the sample of field ErrorClass: 0801
+the sample of field Message: 12056b616e6f6e
+table sample 0 that fails at value 0: fails: kanon: CallError.ErrorClass (field 1): errs: unknown class
+table sample 1 that fails at value 0: fails: kanon: CallError.ErrorClass (field 1): errs: unknown class
+table sample 2 that fails at value 0: fails: kanon: CallError.ErrorClass (field 1): errs: unknown class
+table sample 3 that fails at value 0: fails: kanon: CallError.ErrorClass (field 1): errs: unknown class
+table sample 4 that fails at value 0: fails: kanon: CallError.ErrorClass (field 1): errs: unknown class
+table sample 5 that fails at value 0: fails: kanon: CallError.ErrorClass (field 1): errs: unknown class
+table sample 6 that fails at value 0: fails: kanon: CallError.ErrorClass (field 1): errs: unknown class
+table sample 7 that fails at value 0: fails: kanon: CallError.ErrorClass (field 1): errs: unknown class
+wide sample 0: 080112027732
+wide sample 1: 080212027733
+the key sample: 127f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161
+DecodeKanon/decodes each prefix of a field between unknown fields as the reference decode: 1001 probes, digest dee94bb4db6e8cb0
+DecodeKanon/decodes a field between unknown fields with one value written wrong as the reference decode: 581 probes, digest e6a16659d4edb279
+DecodeKanon/decodes a field between unknown fields with a value that its ValidateKanon rejects as the reference decode: 3 probes, digest 5fa72a95fb2e7d55
+DecodeKanon/decodes a field between unknown fields with one changed byte as the reference decode: 1782 probes, digest 2ae1738e7a1a1df9
+DecodeKanon/decodes a field between unknown fields with its tag in another wire format as the reference decode: 33 probes, digest 20fdcd6fbcdb6d5c
+DecodeKanon/decodes a field between unknown fields written twice as the reference decode: 11 probes, digest 44114ea849aa70c2
+DecodeKanon/decodes a field between unknown fields under each depth limit as the reference decode: 65 probes, digest b4d64ca18acc0741
+DecodeKanon/decodes an encoding that writes every field twice as the reference decode: 14 probes, digest 5d18ee17c370b8d5
+DecodeKanon/decodes two concatenated encodings as the reference decode: 64 probes, digest 76f1e95c30a070ee
+DecodeKanon/decodes an encoding in a slab at its offset as the reference decode: 14 probes, digest c5dcbf01602e14a5
+the samples that the encode allocation checks measure: 11 samples, digest 7384d3949a67f93a
+the samples that the decode allocation check measures: 11 samples, digest 7384d3949a67f93a

@@ -1,0 +1,8 @@
+value 0: fails: protocol: unknown path: 0
+value 1: 0801
+value 2: fails: protocol: unknown path: 127
+value 3: fails: protocol: unknown path: 128
+value 4: fails: protocol: unknown path: 255
+value 5: 0802
+value 6: fails: protocol: unknown path: 64
+value 7: fails: protocol: unknown path: 200

@@ -1,0 +1,27 @@
+the zero value: 
+table sample 0: 0801107f188001
+table sample 1: 087f10800118808080808001
+table sample 2: 0880011080808080800118808080808080808001
+table sample 3: 08808080808001108080808080808080011880808080808080808001
+table sample 4: 08808080808080808001108080808080808080800118ffffffffffffffffff01
+table sample 5: 088080808080808080800110ffffffffffffffffff01
+table sample 6: 08ffffffffffffffffff011801
+table sample 7: 1001187f
+the sample of field Sequence: 0801
+the sample of field Generation: 1001
+the sample of field ControllerEpoch: 1801
+wide sample 0: 080110021803
+wide sample 1: 080210031804
+the key sample: 087f10800118808080808001
+DecodeKanon/decodes each prefix of a field between unknown fields as the reference decode: 1032 probes, digest 516b5f99f6ac9825
+DecodeKanon/decodes a field between unknown fields with one value written wrong as the reference decode: 24 probes, digest 8f04798f9402d775
+DecodeKanon/decodes a field between unknown fields with a value that its ValidateKanon rejects as the reference decode: 0 probes, digest cbf29ce484222325
+DecodeKanon/decodes a field between unknown fields with one changed byte as the reference decode: 432 probes, digest e91948694a5f32ca
+DecodeKanon/decodes a field between unknown fields with its tag in another wire format as the reference decode: 72 probes, digest 52fd2a736f627ea2
+DecodeKanon/decodes a field between unknown fields written twice as the reference decode: 24 probes, digest cffed61398acfe10
+DecodeKanon/decodes a field between unknown fields under each depth limit as the reference decode: 145 probes, digest 1404c89ee5803c8b
+DecodeKanon/decodes an encoding that writes every field twice as the reference decode: 15 probes, digest 5c5a2be064961189
+DecodeKanon/decodes two concatenated encodings as the reference decode: 64 probes, digest e0d5f53744b48399
+DecodeKanon/decodes an encoding in a slab at its offset as the reference decode: 15 probes, digest e87e672b70946715
+the samples that the encode allocation checks measure: 12 samples, digest 9049bb59c9ec6795
+the samples that the decode allocation check measures: 12 samples, digest 9049bb59c9ec6795
