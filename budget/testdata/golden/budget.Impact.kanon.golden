@@ -1,0 +1,8 @@
+value 0: fails: budget: unknown impact: 0
+value 1: 0801
+value 2: fails: budget: unknown impact: 127
+value 3: fails: budget: unknown impact: 128
+value 4: fails: budget: unknown impact: 255
+value 5: 0802
+value 6: fails: budget: unknown impact: 64
+value 7: fails: budget: unknown impact: 200
