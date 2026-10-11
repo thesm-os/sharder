@@ -38,12 +38,17 @@ func (Stickiness) Name() shard.StrategyName {
 }
 
 // Cost returns the number of replicas that differ from the initial replicas of their
-// shards.
+// shards. It returns 0 without reading the shards of a state to which Apply applied no
+// move, because every replica of such a state is an initial replica.
 func (Stickiness) Cost(st *placement.State) float64 {
+	//dokimi:mutate-skip sbr-delete,ror-false: the loop counts no replica of a state without moves, so it returns the same 0
+	if st.Moved() == 0 {
+		return 0
+	}
 	cost := 0
-	for _, sh := range st.Shards() {
-		initial := st.Initial(sh)
-		for _, r := range st.Replicas(sh) {
+	for i := range st.Shards() {
+		initial := st.InitialAt(i)
+		for _, r := range st.ReplicasAt(i) {
 			if !slices.Contains(initial, r) {
 				cost++
 			}

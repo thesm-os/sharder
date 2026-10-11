@@ -175,9 +175,10 @@ func TestSpread(t *testing.T) {
 		t.Parallel()
 
 		blanks := []struct {
-			name string
-			give placement.Move
-			want float64
+			name  string
+			nodes []shard.NodeID
+			give  placement.Move
+			want  float64
 		}{
 			{
 				name: "returns 0 for a replica under the empty value beside a replica on a draining node",
@@ -188,11 +189,26 @@ func TestSpread(t *testing.T) {
 				give: placement.Move{From: n3, To: n4, Shard: s1, Role: shard.RoleSecondary},
 				want: -1,
 			},
+			{
+				name:  "returns 0 for a move off a node without the label after a replica under the empty value",
+				nodes: []shard.NodeID{n2, n4},
+				give:  placement.Move{From: n4, To: n1, Shard: s6, Role: shard.RoleSecondary},
+			},
+			{
+				name:  "returns 0 for a move off a node without the label before a replica under the empty value",
+				nodes: []shard.NodeID{n4, n2},
+				give:  placement.Move{From: n4, To: n1, Shard: s6, Role: shard.RolePrimary},
+			},
+			{
+				name:  "returns 0 for a replica beside a replica under the empty value",
+				nodes: []shard.NodeID{n2},
+				give:  placement.Move{To: n1, Shard: s6, Role: shard.RoleSecondary},
+			},
 		}
 		for _, tt := range blanks {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				assert.Equal(t, newSpread(t).Delta(newState(t, blank()), tt.give), tt.want,
+				assert.Equal(t, newSpread(t).Delta(newState(t, blank(tt.nodes...)), tt.give), tt.want,
 					"Delta must not read a missing label as the empty value")
 			})
 		}

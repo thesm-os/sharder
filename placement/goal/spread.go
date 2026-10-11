@@ -49,7 +49,7 @@ func (c SpreadConfig) Validate() error {
 //
 // # Allocation contract
 //
-// Delta does not allocate.
+// Delta does not allocate. Cost allocates a map of the values of the accepting nodes.
 type Spread struct {
 	// label is the key of the label of nodes.
 	label string
@@ -74,11 +74,34 @@ func (*Spread) Name() shard.StrategyName {
 }
 
 // Cost returns the number of replicas that share a value of the label with an earlier
-// replica of their shard.
+// replica of their shard. It reads the value of each accepting node once, before it
+// reads the replicas of the shards.
+//
+// # Allocation contract
+//
+// Cost allocates a map of the values of the accepting nodes.
 func (g *Spread) Cost(st *placement.State) float64 {
+	values := make(map[shard.NodeID]string, len(st.Nodes()))
+	for _, n := range st.Nodes() {
+		if v, ok := g.value(st, n); ok {
+			values[n] = v
+		}
+	}
 	cost := 0
-	for _, sh := range st.Shards() {
-		cost += g.shared(st, st.Replicas(sh), "", "")
+	for k := range st.Shards() {
+		replicas := st.ReplicasAt(k)
+		for i, r := range replicas {
+			v, ok := values[r.Node]
+			if !ok {
+				continue
+			}
+			for _, earlier := range replicas[:i] {
+				if w, ok := values[earlier.Node]; ok && w == v {
+					cost++
+					break
+				}
+			}
+		}
 	}
 	return float64(cost)
 }
