@@ -61,6 +61,9 @@ type pass struct {
 	// deltas contains the weighted delta of each tier of each candidate of the last
 	// step. The delta of tier t of candidate i is at i*len(tiers)+t.
 	deltas []float64
+	// bestDeltas contains the weighted delta of each tier of the best move that the
+	// running call of improveFrom has found.
+	bestDeltas []float64
 	// perm is a permutation of the positions of the accepting nodes. Each sample
 	// shuffles a part of it.
 	perm []int
@@ -107,12 +110,8 @@ func newPass(pl *Planner, in *placement.Input, st *placement.State) *pass {
 	}
 	scale := make([]float64, len(st.Metrics()))
 	for k, m := range st.Metrics() {
-		sum := 0.0
-		for _, sh := range st.Shards() {
-			sum += st.ShardLoad(sh)[m.Name]
-		}
-		if sum > 0 {
-			scale[k] = 1 / sum
+		if total := st.TotalLoad(m.Name); total > 0 {
+			scale[k] = 1 / total
 		}
 	}
 	return &pass{
@@ -127,6 +126,7 @@ func newPass(pl *Planner, in *placement.Input, st *placement.State) *pass {
 		improved:   map[shard.ID]bool{},
 		costs:      make([]float64, len(pl.tiers)),
 		tolerances: make([]float64, len(pl.tiers)),
+		bestDeltas: make([]float64, len(pl.tiers)),
 		scale:      scale,
 		perm:       perm,
 		repairNext: in.RepairFrom,
@@ -134,8 +134,8 @@ func newPass(pl *Planner, in *placement.Input, st *placement.State) *pass {
 	}
 }
 
-// run runs the repair of the pass, and then the improvement of each tier. It skips the
-// improvement in an emergency, and when the triggers do not report a node at risk.
+// run runs the repair of the pass, and then the improvement. It skips the improvement
+// in an emergency, and when the triggers do not report a node at risk.
 //
 // Error modes:
 //   - the errors of measure, repair and improve.
@@ -147,14 +147,8 @@ func (p *pass) run(ctx context.Context) (placement.Plan, error) {
 		return placement.Plan{}, err
 	}
 	if !p.in.Emergency && p.triggered() {
-		for t := range p.pl.tiers {
-			//dokimi:mutate-skip sbr-delete: improve returns at its first check once the pass has stopped, so a later tier does not move a replica
-			if p.stopped {
-				break
-			}
-			if err := p.improve(ctx, t); err != nil {
-				return placement.Plan{}, err
-			}
+		if err := p.improve(ctx); err != nil {
+			return placement.Plan{}, err
 		}
 	}
 	return p.plan()
@@ -193,7 +187,7 @@ func (p *pass) repair(ctx context.Context) error {
 	start, _ := slices.BinarySearchFunc(ids, p.in.RepairFrom, func(a, b shard.ID) int { return a.Compare(b.ID) })
 	for k := range ids {
 		i := (start + k) % len(ids)
-		if !p.needsRepair(ids[i]) {
+		if !p.needsRepair(ids[i], p.st.ReplicasAt(i)) {
 			continue
 		}
 		if err := p.check(ctx); err != nil || p.stopped {
@@ -208,15 +202,15 @@ func (p *pass) repair(ctx context.Context) error {
 	return nil
 }
 
-// needsRepair reports whether shard id needs repair. A shard needs repair when it has
-// fewer replicas than the model gives each shard, or a replica that bad reports. A
-// shard with a transition in flight does not need repair, because the pass does not
-// plan a move for it.
-func (p *pass) needsRepair(id shard.ID) bool {
-	if _, ok := p.st.InFlight(id); ok {
+// needsRepair reports whether shard id of the layout, with replicas in the state, needs
+// repair. A shard needs repair when it has fewer replicas than the model gives each
+// shard, or a replica that bad reports. A shard with a transition in flight does not
+// need repair, because the pass does not plan a move for it. Input.Transitions lists
+// such a shard, and a lookup there does not read the index of every shard of the state.
+func (p *pass) needsRepair(id shard.ID, replicas []shard.Replica) bool {
+	if _, ok := p.in.Transitions[id]; ok {
 		return false
 	}
-	replicas := p.st.Replicas(id)
 	return len(replicas) < p.st.Desired() ||
 		slices.ContainsFunc(replicas, func(r shard.Replica) bool { return p.bad(id, r) })
 }
@@ -315,10 +309,10 @@ func (p *pass) place(ctx context.Context, id shard.ID, from shard.NodeID, role s
 			p.candidates = append(p.candidates, placement.Move{From: from, To: n, Shard: id, Role: role})
 		}
 	}
-	tiers := len(p.pl.tiers)
-	if err := p.evaluate(ctx, p.candidates, tiers); err != nil {
+	if err := p.evaluate(ctx, p.candidates); err != nil {
 		return false, err
 	}
+	tiers := len(p.pl.tiers)
 	best := -1
 	for i, m := range p.candidates {
 		if p.results[i].rejection != nil {
@@ -326,7 +320,7 @@ func (p *pass) place(ctx context.Context, id shard.ID, from shard.NodeID, role s
 		}
 		order := 1
 		if best >= 0 {
-			order = p.compare(i, best, tiers)
+			order = p.compare(p.deltas[i*tiers:(i+1)*tiers], p.deltas[best*tiers:(best+1)*tiers])
 		}
 		if best < 0 || order < 0 || (order == 0 && p.placed[m.To] < p.placed[p.candidates[best].To]) {
 			best = i
@@ -340,7 +334,7 @@ func (p *pass) place(ctx context.Context, id shard.ID, from shard.NodeID, role s
 	}
 	m := p.candidates[best]
 	p.placed[m.To]++
-	return true, p.apply(m)
+	return true, p.apply(m, p.deltas[best*tiers:(best+1)*tiers])
 }
 
 // reason returns the error that explains why no candidate of the last step for shard
@@ -359,20 +353,21 @@ func (p *pass) reason(id shard.ID) error {
 	return errors.Join(errs...)
 }
 
-// improve lowers the cost of tier t with a local search. It sweeps the accepting nodes
-// in the order that order returns, and applies at most one move from each node per
-// sweep. It sweeps again until a sweep does not apply a move, or until the pass stops.
+// improve lowers the costs of the tiers with a local search. It sweeps the accepting
+// nodes in the order that order returns, and applies at most one move from each node
+// per sweep. It sweeps again until a sweep does not apply a move, or until the pass
+// stops.
 //
 // Error modes:
 //   - the errors of improveFrom.
-func (p *pass) improve(ctx context.Context, t int) error {
+func (p *pass) improve(ctx context.Context) error {
 	for {
 		moved := false
 		for _, n := range p.order() {
 			if p.out[n] >= p.pl.churn.PerNode {
 				continue
 			}
-			applied, err := p.improveFrom(ctx, n, t)
+			applied, err := p.improveFrom(ctx, n)
 			if err != nil {
 				return err
 			}
@@ -388,19 +383,24 @@ func (p *pass) improve(ctx context.Context, t int) error {
 	}
 }
 
-// improveFrom evaluates the move of each shard of node n to a sample of the accepting
-// nodes, from the largest shard to the smallest. It applies the move that lowers the
-// cost of tier t the most without raising the cost of a lower tier. It breaks a tie of
-// two moves in favour of the lower shard ID, and then of the lower node ID. It reports
-// whether it applied a move.
+// improveFrom examines up to Search.Sample shards of node n that the improvement may
+// move, from the largest shard to the smallest. It evaluates the move of each examined
+// shard to a sample of the accepting nodes, in every tier. Among the moves that improve
+// the costs, it applies the move whose deltas compare lowest, so a move that lowers a
+// lower tier takes precedence over every move that lowers only a higher tier.
+// improveFrom breaks a tie of two moves in favour of the lower shard ID, and then of the
+// lower node ID. It reports whether it applied a move.
 //
 // Error modes:
 //   - the errors of check, evaluate and apply.
-func (p *pass) improveFrom(ctx context.Context, n shard.NodeID, t int) (bool, error) {
+func (p *pass) improveFrom(ctx context.Context, n shard.NodeID) (bool, error) {
 	tiers := len(p.pl.tiers)
 	var best placement.Move
-	bestDelta, found := 0.0, false
+	found, examined := false, 0
 	for _, id := range p.largest(n) {
+		if examined == p.pl.search.Sample {
+			break
+		}
 		if !p.movable(id) {
 			continue
 		}
@@ -410,6 +410,7 @@ func (p *pass) improveFrom(ctx context.Context, n shard.NodeID, t int) (bool, er
 		if p.stopped {
 			break
 		}
+		examined++
 		p.sources++
 		replicas := p.st.Replicas(id)
 		role := replicas[slices.IndexFunc(replicas, func(r shard.Replica) bool { return r.Node == n })].Role
@@ -417,31 +418,30 @@ func (p *pass) improveFrom(ctx context.Context, n shard.NodeID, t int) (bool, er
 		for _, to := range p.sample(id) {
 			p.candidates = append(p.candidates, placement.Move{From: n, To: to, Shard: id, Role: role})
 		}
-		if err := p.evaluate(ctx, p.candidates, t+1); err != nil {
+		if err := p.evaluate(ctx, p.candidates); err != nil {
 			return false, err
 		}
 		for i, m := range p.candidates {
-			if p.results[i].rejection != nil || !p.lowers(i, t) {
+			deltas := p.deltas[i*tiers : (i+1)*tiers]
+			if p.results[i].rejection != nil || !p.improves(deltas) {
 				continue
 			}
-			// A candidate lowers the tier by more than its tolerance, so the first one
-			// differs from the zero bestDelta by more than the tolerance. The candidates
-			// of one shard are in the order of their nodes, so a tie keeps the lower
-			// node.
-			delta := p.deltas[i*tiers+t]
-			//dokimi:mutate-skip ror-boundary: the tolerance absorbs rounding error, so a difference of exactly the tolerance is noise
-			tie := math.Abs(delta-bestDelta) <= p.tolerances[t]
-			first := m.Shard.Compare(best.Shard.ID) < 0
-			//dokimi:mutate-skip ror-boundary: outside a tie the two deltas differ, so they are never equal
-			if (!tie && delta < bestDelta) || (tie && first) {
-				best, bestDelta, found = m, delta, true
+			// The candidates of one shard are in the order of their nodes, so a tie keeps
+			// the lower node.
+			order := -1
+			if found {
+				order = p.compare(deltas, p.bestDeltas)
+			}
+			if order < 0 || (order == 0 && m.Shard.Compare(best.Shard.ID) < 0) {
+				best, found = m, true
+				copy(p.bestDeltas, deltas)
 			}
 		}
 	}
 	if !found {
 		return false, nil
 	}
-	if err := p.apply(best); err != nil {
+	if err := p.apply(best, p.bestDeltas); err != nil {
 		return false, err
 	}
 	p.out[n]++
@@ -462,41 +462,42 @@ func (p *pass) movable(id shard.ID) bool {
 		return false
 	}
 	_, frozen := p.st.InFlight(id)
-	return !frozen && !p.needsRepair(id)
+	return !frozen && !p.needsRepair(id, p.st.Replicas(id))
 }
 
-// lowers reports whether the candidate at position i of the last step lowers the cost
-// of tier t by more than its tolerance. The candidate must not raise the cost of a
-// lower tier by more than the tolerance of that tier.
-func (p *pass) lowers(i, t int) bool {
-	tiers := len(p.pl.tiers)
-	for lower := range t {
+// improves reports whether a move with the weighted delta of each tier in deltas
+// improves the costs. Such a move lowers the cost of a tier by more than the tolerance
+// of the tier. It does not raise the cost of a lower tier by more than the tolerance of
+// that tier.
+func (p *pass) improves(deltas []float64) bool {
+	for t, d := range deltas {
 		//dokimi:mutate-skip ror-boundary: the tolerance absorbs rounding error, so a delta of exactly the tolerance is noise
-		if p.deltas[i*tiers+lower] > p.tolerances[lower] {
+		if d < -p.tolerances[t] {
+			return true
+		}
+		//dokimi:mutate-skip ror-boundary: the tolerance absorbs rounding error, so a delta of exactly the tolerance is noise
+		if d > p.tolerances[t] {
 			return false
 		}
 	}
-	//dokimi:mutate-skip ror-boundary: the tolerance absorbs rounding error, so a delta of exactly the tolerance is noise
-	return p.deltas[i*tiers+t] < -p.tolerances[t]
+	return false
 }
 
-// compare compares the deltas of the candidates at positions i and j of the last step
-// in the tiers below upto, from the lowest tier up. It compares them in the first tier
-// where they differ by more than the tolerance of the tier, and returns:
+// compare compares a and b, the weighted deltas of each tier of two moves, from the
+// lowest tier up. It compares them in the first tier where they differ by more than the
+// tolerance of the tier, and returns:
 //
-//   - -1 when the delta of i is lower there.
-//   - 1 when the delta of j is lower there.
+//   - -1 when the delta of a is lower there.
+//   - 1 when the delta of b is lower there.
 //   - 0 when the deltas do not differ by more than the tolerance in any tier.
-func (p *pass) compare(i, j, upto int) int {
-	width := len(p.pl.tiers)
-	for t := range upto {
-		a, b := p.deltas[i*width+t], p.deltas[j*width+t]
+func (p *pass) compare(a, b []float64) int {
+	for t := range a {
 		//dokimi:mutate-skip ror-boundary: the tolerance absorbs rounding error, so a difference of exactly the tolerance is noise
-		if a < b-p.tolerances[t] {
+		if a[t] < b[t]-p.tolerances[t] {
 			return -1
 		}
 		//dokimi:mutate-skip ror-boundary: the tolerance absorbs rounding error, so a difference of exactly the tolerance is noise
-		if a > b+p.tolerances[t] {
+		if a[t] > b[t]+p.tolerances[t] {
 			return 1
 		}
 	}
@@ -504,16 +505,15 @@ func (p *pass) compare(i, j, upto int) int {
 }
 
 // evaluate checks each candidate against the constraints, in their order, and adds up
-// the weighted deltas of each feasible candidate in the tiers below upto. It counts
-// each candidate as an evaluation, and runs the evaluations on up to
-// Input.Parallelism goroutines. The results do not depend on the number of
-// goroutines.
+// the weighted deltas of each feasible candidate in each tier. It counts each candidate
+// as an evaluation, and runs the evaluations on up to Input.Parallelism goroutines. The
+// results do not depend on the number of goroutines.
 //
 // Error modes:
 //   - an error that wraps the cause of ctx when ctx ends while goroutines evaluate.
 //   - an error that wraps placement.ErrCost when a goal returns a delta that is not
 //     finite. The error of the first such candidate is returned.
-func (p *pass) evaluate(ctx context.Context, candidates []placement.Move, upto int) error {
+func (p *pass) evaluate(ctx context.Context, candidates []placement.Move) error {
 	p.evaluations += len(candidates)
 	p.results = slices.Grow(p.results[:0], len(candidates))[:len(candidates)]
 	width := len(candidates) * len(p.pl.tiers)
@@ -521,11 +521,11 @@ func (p *pass) evaluate(ctx context.Context, candidates []placement.Move, upto i
 	//dokimi:mutate-skip ror-false: task.Each with a limit of 1 evaluates the candidates on one goroutine, as the loop does
 	if p.in.Parallelism == 1 {
 		for i, m := range candidates {
-			p.evaluateOne(i, m, upto)
+			p.evaluateOne(i, m)
 		}
 	} else if err := task.Each(ctx, p.in.Parallelism, candidates,
 		func(_ context.Context, i int, m placement.Move) error {
-			p.evaluateOne(i, m, upto)
+			p.evaluateOne(i, m)
 			return nil
 		}); err != nil {
 		return fmt.Errorf("planner: evaluation of %d candidate moves: %w", len(candidates), err)
@@ -538,10 +538,10 @@ func (p *pass) evaluate(ctx context.Context, candidates []placement.Move, upto i
 	return nil
 }
 
-// evaluateOne evaluates the candidate m at position i of the step in the tiers below
-// upto, and writes its result and its deltas at position i. It only reads the state,
-// so many goroutines run it at once.
-func (p *pass) evaluateOne(i int, m placement.Move, upto int) {
+// evaluateOne evaluates the candidate m at position i of the step in every tier, and
+// writes its result and its deltas at position i. It only reads the state, so many
+// goroutines run it at once.
+func (p *pass) evaluateOne(i int, m placement.Move) {
 	r := &p.results[i]
 	*r = result{}
 	for k, c := range p.pl.constraints {
@@ -551,37 +551,30 @@ func (p *pass) evaluateOne(i int, m placement.Move, upto int) {
 		}
 	}
 	width := len(p.pl.tiers)
-	for t := range upto {
+	for t, tr := range p.pl.tiers {
 		sum := 0.0
-		for g, goal := range p.pl.tiers[t].goals {
+		for g, goal := range tr.goals {
 			delta := goal.Delta(p.st, m)
 			if math.IsNaN(delta) || math.IsInf(delta, 0) {
 				r.fault = fmt.Errorf("%w: goal %s returned the delta %v", placement.ErrCost, goal.Name(), delta)
 				return
 			}
-			sum += p.pl.tiers[t].weights[g] * delta
+			sum += tr.weights[g] * delta
 		}
 		p.deltas[i*width+t] = sum
 	}
 }
 
-// apply applies m to the state, adds its deltas to the cost of each tier, and records
-// its shard as touched.
+// apply applies m to the state and records the shard of m as touched. It adds deltas to
+// the cost of each tier. deltas contains the weighted delta of each tier of m, as
+// evaluate computed it before the move.
 //
 // Error modes:
-//   - an error that wraps placement.ErrCost when a goal returns a delta that is not
-//     finite.
 //   - an error that wraps placement.ErrMove when the state refuses m, which happens
 //     only when a constraint or a goal changed the state.
-func (p *pass) apply(m placement.Move) error {
-	for t, tr := range p.pl.tiers {
-		for g, goal := range tr.goals {
-			delta := goal.Delta(p.st, m)
-			if math.IsNaN(delta) || math.IsInf(delta, 0) {
-				return fmt.Errorf("%w: goal %s returned the delta %v", placement.ErrCost, goal.Name(), delta)
-			}
-			p.costs[t] += tr.weights[g] * delta
-		}
+func (p *pass) apply(m placement.Move, deltas []float64) error {
+	for t, d := range deltas {
+		p.costs[t] += d
 		p.tolerances[t] = precision * max(1, math.Abs(p.costs[t]))
 	}
 	if err := p.st.Apply(m); err != nil {
@@ -737,13 +730,16 @@ func (p *pass) sample(id shard.ID) []shard.NodeID {
 
 // plan returns the plan of the pass. The plan has a target for each shard whose
 // replicas differ from the start of the pass, and for each shard with a deficit. Its
-// Costs are the final costs of the tiers.
+// Costs are the final costs of the tiers. plan measures them again when the pass applied
+// a move, and a pass without a move keeps the costs of its start.
 //
 // Error modes:
 //   - the errors of measure.
 func (p *pass) plan() (placement.Plan, error) {
-	if err := p.measure(); err != nil {
-		return placement.Plan{}, err
+	if p.moves > 0 {
+		if err := p.measure(); err != nil {
+			return placement.Plan{}, err
+		}
 	}
 	targets := make(map[shard.ID]placement.Target, len(p.touched))
 	for id := range p.touched {

@@ -65,8 +65,9 @@ type GoalSelection struct {
 	// Config is the JSON encoding of the configuration of the goal, such as a
 	// goal.BalanceConfig.
 	Config json.RawMessage `json:"config,omitempty"`
-	// Tier is the priority of the goal. The planner improves the tiers in ascending
-	// order, and never worsens a lower tier to improve a higher one. It is at least 0.
+	// Tier is the priority of the goal. A lower tier has priority over a higher one,
+	// and the planner never worsens a lower tier to improve a higher one. It is at
+	// least 0.
 	Tier int `json:"tier"`
 	// Weight is the factor of the cost of the goal in the sum of its tier. It is
 	// above 0.
@@ -84,8 +85,9 @@ type Search struct {
 	// MaxSourceShards is the most shards that a pass examines as the source of a move.
 	// It is at least 1.
 	MaxSourceShards int `json:"maxSourceShards"`
-	// Sample is the number of target nodes that the improvement evaluates for each
-	// shard that it examines. It is at least 1.
+	// Sample is the number of shards of a node that the improvement examines in a
+	// sweep, and the number of target nodes that it evaluates for each of them. It is
+	// at least 1.
 	Sample int `json:"sample"`
 	// Timeout is the most time that a pass takes on the clock of the input. It is
 	// above 0.

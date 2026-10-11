@@ -8,6 +8,7 @@ import (
 	"errors"
 	"math"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,6 +82,7 @@ const (
 	avoidName      shard.StrategyName = "avoid"
 	rejectingName  shard.StrategyName = "rejecting"
 	rolesName      shard.StrategyName = "roles"
+	countedName    shard.StrategyName = "counted"
 )
 
 // The metrics of the cells of the tests besides cpu.
@@ -402,6 +404,28 @@ func (c roles) Check(_ *placement.State, m placement.Move) error {
 	return c.errs[m.Role]
 }
 
+// counted is a goal with a cost of 0 and a delta of 0 that counts the calls of Cost.
+type counted struct {
+	// calls counts the calls of Cost.
+	calls *atomic.Int32
+}
+
+// Name returns the name counted.
+func (counted) Name() shard.StrategyName {
+	return countedName
+}
+
+// Cost counts the call, and returns 0.
+func (g counted) Cost(*placement.State) float64 {
+	g.calls.Add(1)
+	return 0
+}
+
+// Delta returns 0.
+func (counted) Delta(*placement.State, placement.Move) float64 {
+	return 0
+}
+
 // cell returns the input of a cell under primary-only on the accepting nodes n0 to n3
 // and the draining node d9. Shard i has its primary on hosts[i], or no placement for
 // an empty element. Each node has a capacity of cpu roomy, and no shard reports a load.
@@ -494,6 +518,8 @@ func TestPass(t *testing.T) {
 	for _, id := range ids {
 		everyMove.deltas[id] = -1
 	}
+	// still is a goal whose delta is 0 for every move.
+	still := scripted{deltas: map[shard.ID]float64{}}
 	// emergency marks an input as an emergency, so a pass only repairs.
 	emergency := func(in *placement.Input) { in.Emergency = true }
 	// skewed puts two heavy shards on n0 and two light shards on each other node.
@@ -657,10 +683,60 @@ func TestPass(t *testing.T) {
 				goals: []tiered{{goal: goal.Stickiness{}, weight: 1}, {goal: count, tier: 1, weight: 1}},
 			},
 			{
-				name:  "improves the lower tier before a higher one",
+				name:  "applies a move that lowers a lower tier and raises a higher one",
 				hosts: imbalanced,
 				goals: []tiered{{goal: count, weight: 1}, {goal: goal.Stickiness{}, tier: 1, weight: 1}},
 				want:  map[shard.ID]placement.Target{ids[0]: onN3},
+			},
+			{
+				name:  "does not move a shard whose move lowers a lower tier within its tolerance and raises a higher one",
+				hosts: []shard.NodeID{n0, n0, n1},
+				goals: []tiered{
+					{goal: scripted{deltas: map[shard.ID]float64{ids[0]: -0.5e-9}}, weight: 1},
+					{goal: scripted{deltas: map[shard.ID]float64{ids[0]: 1}}, tier: 1, weight: 1},
+				},
+			},
+			{
+				name:  "moves a shard whose move raises a lower tier within its tolerance and lowers a higher one",
+				hosts: []shard.NodeID{n0, n0, n1},
+				goals: []tiered{
+					{goal: scripted{deltas: map[shard.ID]float64{ids[0]: 0.5e-9}}, weight: 1},
+					{goal: scripted{deltas: map[shard.ID]float64{ids[0]: -1}}, tier: 1, weight: 1},
+				},
+				want: map[shard.ID]placement.Target{ids[0]: onN1},
+			},
+			{
+				name:  "moves the shard that lowers a lower tier over a shard that lowers a higher tier more",
+				hosts: []shard.NodeID{n0, n0, n1},
+				goals: []tiered{
+					{goal: scripted{deltas: map[shard.ID]float64{ids[1]: -1}}, weight: 1},
+					{goal: scripted{deltas: map[shard.ID]float64{ids[0]: -100}}, tier: 1, weight: 1},
+				},
+				input: loaded(5, light, light),
+				want:  map[shard.ID]placement.Target{ids[1]: onN1},
+			},
+			{
+				name:   "moves a shard by a higher tier within MaxSourceShards when a lower tier cannot improve",
+				hosts:  crowded,
+				goals:  []tiered{{goal: still, weight: 1}, {goal: count, tier: 1, weight: 1}},
+				config: func(cfg *planner.Config) { cfg.Search.MaxSourceShards = len(crowded) },
+				want:   map[shard.ID]placement.Target{ids[0]: onN1},
+			},
+			{
+				name:  "examines at most Sample shards of a node in a sweep",
+				hosts: crowded,
+				goals: []tiered{{goal: still, weight: 1}},
+				config: func(cfg *planner.Config) {
+					cfg.Search.Sample = 2
+					cfg.Search.MaxSourceShards = 2
+				},
+			},
+			{
+				name:   "examines the Sample largest shards of a node in a sweep",
+				hosts:  []shard.NodeID{n0, n0},
+				goals:  []tiered{{goal: scripted{deltas: map[shard.ID]float64{ids[0]: -1}}, weight: 1}},
+				input:  loaded(light, 5),
+				config: func(cfg *planner.Config) { cfg.Search.Sample = 1 },
 			},
 			{
 				name:  "does not improve the assignment in an emergency",
@@ -802,7 +878,7 @@ func TestPass(t *testing.T) {
 				},
 			},
 			{
-				name:  "improves the lower tier first whatever the order of the goals",
+				name:  "applies a move that lowers a lower tier whatever the order of the goals",
 				hosts: imbalanced,
 				goals: []tiered{{goal: goal.Stickiness{}, tier: 1, weight: 1}, {goal: count, weight: 1}},
 				want:  map[shard.ID]placement.Target{ids[0]: onN3},
@@ -1020,12 +1096,12 @@ func TestPass(t *testing.T) {
 				cfg := defaults()
 				cfg.Search.Sample = 1
 				cfg.Search.MaxEvaluations = 2
-				g := scripted{deltas: map[shard.ID]float64{ids[0]: -1, ids[1]: -2, ids[2]: -5}}
-				plan, err := newPlanner(t, cfg, nil, tiered{goal: g, weight: 1}).Place(t.Context(), cell(n0, n0, n0))
+				cfg.Churn.PerNode = 10
+				cfg.Churn.MaxShardFraction = 1
+				p := newPlanner(t, cfg, nil, tiered{goal: everyMove, weight: 1})
+				plan, err := p.Place(t.Context(), cell(n0, n0, n0))
 				assert.NoError(t, err, "Place must plan the cell")
-				assert.Length(t, plan.Targets, 1, "Place must move one shard")
-				_, ok := plan.Targets[ids[1]]
-				expect.True(t, ok, "Place must move the better of the two shards that it examined")
+				expect.Length(t, plan.Targets, 2, "Place must move the two shards that it examined")
 				expect.True(t, plan.Incomplete, "the plan must report that the pass ended on its limit")
 			},
 		)
@@ -1071,6 +1147,25 @@ func TestPass(t *testing.T) {
 			assert.Equal(t, plan.Costs, []float64{0.1875, 1},
 				"Place must return the variance of the counts and the one moved replica")
 		})
+
+		measures := []struct {
+			name  string
+			hosts []shard.NodeID
+			want  int32
+		}{
+			{name: "measures the costs once in a pass without a move", hosts: []shard.NodeID{n0, n1, n2, n3}, want: 1},
+			{name: "measures the costs again after a move", hosts: imbalanced, want: 2},
+		}
+		for _, tt := range measures {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				g := counted{calls: new(atomic.Int32)}
+				p := newPlanner(t, defaults(), nil, tiered{goal: count, weight: 1}, tiered{goal: g, tier: 1, weight: 1})
+				_, err := p.Place(t.Context(), cell(tt.hosts...))
+				assert.NoError(t, err, "Place must plan the cell")
+				assert.Equal(t, g.calls.Load(), tt.want, "Place must call Cost once for each measure of the costs")
+			})
+		}
 
 		t.Run("returns one cost for the goals of one tier", func(t *testing.T) {
 			t.Parallel()
@@ -1144,36 +1239,6 @@ func TestPass(t *testing.T) {
 			_, err := p.Place(t.Context(), in)
 			assert.ErrorIs(t, err, placement.ErrCost, "Place must refuse a cost that is not finite")
 			assert.Equal(t, clock.Time(), origin, "Place must not check a move before it measures the costs")
-		})
-
-		t.Run("returns ErrCost for an infinite delta of a higher tier of the last move", func(t *testing.T) {
-			t.Parallel()
-			cfg := defaults()
-			cfg.Search.MaxMoves = 1
-			p := newPlanner(t, cfg, nil, tiered{goal: count, weight: 1},
-				tiered{goal: faulty{delta: math.Inf(1)}, tier: 1, weight: 1})
-			_, err := p.Place(t.Context(), cell(imbalanced...))
-			assert.ErrorIs(t, err, placement.ErrCost, "Place must refuse an infinite delta of a higher tier")
-		})
-
-		t.Run("ends on MaxMoves before its higher tiers", func(t *testing.T) {
-			t.Parallel()
-			cfg := defaults()
-			cfg.Search.MaxMoves = 1
-			cfg.Churn.PerNode = 10
-			cfg.Churn.MaxShardFraction = 1
-			p := newPlanner(
-				t,
-				cfg,
-				nil,
-				tiered{goal: count, weight: 1},
-				tiered{goal: goal.Stickiness{}, tier: 1, weight: 1},
-			)
-			plan, err := p.Place(t.Context(), cell(crowded...))
-			assert.NoError(t, err, "Place must plan the cell")
-			expect.Equal(t, plan.Targets, map[shard.ID]placement.Target{ids[0]: onN1},
-				"Place must apply the move of the lowest tier before the limit")
-			expect.True(t, plan.Incomplete, "the plan must report that the pass ended on its limit")
 		})
 
 		t.Run("returns no target for a shard that the pass moves away and back", func(t *testing.T) {

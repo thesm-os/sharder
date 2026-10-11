@@ -4,9 +4,9 @@
 // Package planner provides the planner, the placer of the support matrix.
 //
 // A pass of the [Planner] builds a placement.State from its input, repairs the
-// replicas that need repair, and then improves the assignment one tier of goals at a
-// time with a local search. Every constraint filters the moves, and the goals of each
-// tier score them. A pass is a function of its input. It visits shards and nodes in
+// replicas that need repair, and then improves the assignment with a local search over
+// the tiers of goals. Every constraint filters the moves, and the goals of each tier
+// score them. A pass is a function of its input. It visits shards and nodes in
 // the order of their IDs, and reads randomness only from Input.Rand on one goroutine.
 // It reduces the evaluations of each step in the order of the candidates, so the plan
 // does not depend on Input.Parallelism.
@@ -28,11 +28,14 @@
 // count when the cell is busy on the metric and the load is imbalanced. [Triggers]
 // contains the thresholds of both.
 //
-// For each tier in ascending order, the local search sweeps the accepting nodes by
-// pressure. It evaluates the move of each shard of a node to a sample of
-// [Search.Sample] nodes, and applies the best move that lowers the cost of the tier
-// without raising the cost of a lower tier. It sweeps again until a sweep does not
-// apply a move. [Churn] contains the limits of the moves of the improvement.
+// The local search sweeps the accepting nodes by pressure. On each node it examines
+// the [Search.Sample] largest shards that it may move, and evaluates the move of each
+// to a sample of [Search.Sample] nodes. A move improves the assignment when it lowers
+// the cost of a tier without raising the cost of a lower tier. The search applies the
+// improving move with the lowest delta in the lowest tier where two moves differ, so a
+// move that lowers a lower tier takes precedence over a move that lowers only a higher
+// tier. It sweeps again until a sweep does not apply a move. [Churn] contains the
+// limits of the moves of the improvement.
 //
 // # Limits
 //

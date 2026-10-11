@@ -18,8 +18,8 @@ import (
 const Name shard.StrategyName = "planner"
 
 // Planner is the planner. A pass repairs the replicas that need repair, and then
-// improves the assignment one tier of goals at a time with a local search. [New]
-// returns a Planner, and the zero Planner is not ready for use.
+// improves the assignment with a local search over the tiers of goals. [New] returns a
+// Planner, and the zero Planner is not ready for use.
 //
 // # Concurrency
 //
@@ -120,7 +120,7 @@ func New(cfg *Config, constraints []placement.Constraint, goals []placement.Goal
 // Place returns the plan of one pass over in. The pass repairs first. In an emergency
 // it repairs only the replicas that are missing or on a gone node, and the replicas
 // with a fault. Otherwise it also repairs the replicas on a draining node and the
-// replicas that a constraint rejects, and then improves each tier of goals when the
+// replicas that a constraint rejects, and then improves the assignment when the
 // triggers report a node at risk.
 //
 // Error modes:
