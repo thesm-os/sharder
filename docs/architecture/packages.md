@@ -59,11 +59,11 @@ A package may import the packages in its row, and every package that those packa
 
 | Package | Contains | Imports from sharder |
 |---|---|---|
-| `store` | The `Reader`, `Store` and `Writer` contracts, the records of a scope, and the errors of a commit | `shard`, `budget` |
-| `store/memory` | The in-memory store and membership, with fault hooks for tests and simulations | `store`, `membership` |
-| `store/storetest` | The conformance kit of stores | `store` |
+| `store` | The `Reader`, `Store` and `Writer` contracts, the records of a scope, and the errors of a commit | `shard`, `budget`, `proposal` |
+| `store/memory` | The in-memory store and membership, with fault hooks for tests and simulations | `store`, `membership`, `config` |
+| `store/storetest` | The conformance kit of stores | `store`, `internal/streamtest` |
 | `membership` | The `Membership` contract, views and sessions | `shard`, `ownership` |
-| `membership/membershiptest` | The conformance kit of memberships | `membership` |
+| `membership/membershiptest` | The conformance kit of memberships | `membership`, `store`, `internal/streamtest` |
 | `protocol` | Messages, metadata, the server and client contracts, and `Dispatch` | `shard`, `proposal`, `budget` |
 | `protocol/local` | The in-process transport, `Network` and `Local` | `protocol` |
 | `protocol/protocoltest` | The conformance kit of transports | `protocol` |
@@ -94,6 +94,7 @@ Each internal package has at least two callers, so the logic that two components
 | `internal/scope` | The acquisition of a scope, commits with receipts, and the settlement of unknown outcomes | `internal/machine/root`, `internal/machine/cell` |
 | `internal/follow` | The state of a scope, kept from a snapshot and a watch of the store | `internal/machine/agent`, `internal/machine/routes` |
 | `internal/driver` | The production driver, which performs the effects of a machine under core's `task` and bounds the callbacks to each node with a bulkhead | `controller`, `replica`, `router` |
+| `internal/streamtest` | The receive of the items of iterators and channels with a bound on each wait, for the tests and the conformance kits | `store/storetest`, `membership/membershiptest`, and the tests of `store/memory` |
 
 ## Adapters, the command and the examples
 
@@ -114,6 +115,6 @@ Each internal package has at least two callers, so the logic that two components
 
 - Every hand-written source file except `doc.go` has a test file beside it, in the package `<name>_test`.
 - Every implementation of a contract runs the conformance kit of the contract in its tests. Every fenced writer runs core's `coretest/epochtest`.
-- These hot paths have a benchmark and a `Test<Unit>Allocs` test: `shard.CellMap.Locate`, `partition.Layout.Locate`, `Position` of each partitioner, `Sum64` of `xxhash64` and `router.Watcher.Route`.
+- These hot paths have a benchmark and a `Test<Unit>Allocs` test: `shard.CellMap.Locate`, `partition.Layout.Locate`, `Position` of each partitioner, `Sum64` of `xxhash64`, `router.Watcher.Route`, `protocol.Metadata.Check`, and `Key` and `Digest` of `protocol.Request`.
 - kanon generates `<file>.kanon.go` and `<file>.kanon_test.go` beside each source file whose types have codecs. The codec tests keep their golden files in `testdata/golden/<package>.<Type>.kanon.golden`. The root module lists kanon in the `tool` directive of its `go.mod`.
 - stringer generates `<file>.string_gen.go` for the integer enumerations of a source file.

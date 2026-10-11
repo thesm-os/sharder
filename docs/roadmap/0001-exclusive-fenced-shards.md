@@ -61,9 +61,11 @@ CI runs each trace over every supported preset from fixed seeds, at `GOMAXPROCS`
 - [ ] Two planning passes that each fit a move into a node's last free capacity start one transition to it, also with the first source's drop paused, after an abort, and after a controller restart.
 - [ ] A permanent fault in one replica on a live node moves that shard to another node, and the node's other shards remain in place.
 - [ ] A drain in a cell below the load thresholds completes, also when it needs more than one pass. A node with 200 replicas drains with at most `maxNodeTransitions` of its transitions in flight, and at most `maxTransitions` transitions of the cell are in flight at once.
+- [ ] A node that joins a cell of evenly loaded nodes above `activeAbove` receives replicas from the next periodic pass, also when the cell grows by fewer than a tenth of its nodes. Each other node gives up at most `churn.perNode` replicas in one pass, and the new node has at most `maxNodeTransitions` transitions in flight. A draining node and a cell below `activeAbove` do not start the improvement.
 - [ ] A terminal abort under `maxTransitions` of 1, followed by a move of another shard, reports one transition in flight and two shards without a serving writer, as two separate counts.
 - [ ] Repair with `maxSourceShards` of 1 moves shard 1 and then shard 0, where shard 0 can move only to the node that shard 1 fills. Repair behind a shard that can never be placed still examines the other shards, and completes a drain. Each pass replays exactly from its recorded input, at `GOMAXPROCS` 1 and 4.
-- [ ] Two planned disruptions that race an unplanned failure are admitted one at a time, each unavailable replica counts once, and the repair of the failure proceeds.
+- [ ] Two planned disruptions that race an unplanned failure are each admitted once their nodes are empty, each unavailable replica counts once, and the repair of the failure proceeds.
+- [ ] Three nodes that stop at once drain in parallel from their first deferrals, within `maxTransitions` and `maxNodeTransitions`. The budget admits each of them once its own replicas have moved.
 - [ ] The first move of each supported preset completes under the preset's default budget.
 - [ ] Reports that arrive twice and in reverse order return neither the controller's view of a node nor a router's route to an older state.
 - [ ] Two namespaces that reuse every node, cell, shard and disruption ID on one controller and one network remain isolated. Each call affects only its own namespace, and a delayed message of a deleted incarnation is refused.
@@ -101,7 +103,7 @@ CI runs each trace over every supported preset from fixed seeds, at `GOMAXPROCS`
 
 ### The transport
 
-- [ ] Over `httptransport` and through `protocol.Local`, a call of another major version, or one that requires an unknown feature, is refused with an error of class `errs.Unsupported` before any effect.
+- [ ] Over `httptransport` and through the `Local` of `protocol/local`, a call of another major version, or one that requires an unknown feature, is refused with an error of class `errs.Unsupported` before any effect.
 - [ ] Over `httptransport`, a server returns `NotOwnerError` only for a request that it did not start, and `router.Do` returns a transport error without a retry.
 - [ ] `httptransport`'s framing is specified and tested: the endpoint of each call, the encoding of its message and of `CallError`, the metadata headers, the largest message that a server accepts, and cancellation through the request's context. Each supported call round-trips through its encoding.
 - [ ] The report of a node with the most replicas that the supported limits allow fits in one message within the transport's largest message.
@@ -110,6 +112,7 @@ CI runs each trace over every supported preset from fixed seeds, at `GOMAXPROCS`
 
 - [ ] The operator documentation describes recovery with a new namespace incarnation, over a fresh application-data namespace or behind an administrative barrier, and states that restoring a store from a backup is not supported.
 - [ ] The operator documentation lists the store credentials of every process role, and states that the processes of a namespace that can run a controller trust each other.
+- [ ] The operator documentation gives the drain time of a planned stop: the writer gap times the rounds in which `maxNodeTransitions` and `maxTransitions` let the replicas of its node move. It gives the termination grace period and the scale-down rate of an autoscaler that a deployment needs for that time.
 - [ ] The release notes publish the writer gap of planned moves on etcd at p50, p95 and p99, against its target of 2 seconds at p99. They publish the delay of the watch delivery that each `add` waits for at the same percentiles, and the planner's six benchmark cases at increasing cell sizes.
 - [ ] The release notes publish the supported limits of a cell, from the etcd feasibility measurements.
 - [ ] The feasibility workload and the published limits count the root's membership sessions, election candidates and watches as well as the cells' sessions, and state any lease that sessions share.
@@ -249,6 +252,8 @@ The scope is the support matrix of the first release and its enforcement: `Resol
 
 | Date | What changed | Why |
 |---|---|---|
+| 2026-10-11 | Named the `Local` of `protocol/local` in the check of the refused versions and features | ADR-0013 moves `Network` and `Local` into package `protocol/local` |
+| 2026-10-11 | Added the checks of a node that joins an evenly loaded cell and of nodes that stop at once, and the documentation of the drain time of a planned stop. Changed the check of two racing disruptions to admit each once its nodes are empty | ADR-0009 runs the improvement when the least loaded node is far below the mean, ADR-0010 counts only the disrupted nodes that host a replica, and ADR-0011 limits only the moves out of a node. A review of scale-in found that the nodes of one step drain in parallel, and that a stop whose drain outlasts the platform's grace period fails over as after a crash |
 | 2026-10-10 | Added core's `Retrier.Start` and `Retry` to the prerequisites, and named core v0.9.0 as the release that contains every core item | The simulator drives the transition engine on one goroutine, so the engine cannot use the blocking `resilience.Do`. Core v0.9.0 was published on 2026-10-10 |
 | 2026-10-10 | Added the refusal of a missing clock, randomness source, reporter or logger to the checks of `controller.New`, `replica.Start` and `router.New` | The RFCs require these seams, and each constructor refuses a missing one |
 | 2026-10-10 | Named core v0.8.0 and kanon v0.1.0 as the releases that contain the prerequisites, and removed the risks of late core and kanon releases | Both releases were published on 2026-10-10 |

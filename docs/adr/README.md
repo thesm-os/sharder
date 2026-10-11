@@ -17,3 +17,9 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0006](0006-roles-and-statuses-are-enumerations.md) | Roles and statuses are closed enumerations | Accepted |
 | [0007](0007-partitioners-return-spans.md) | Partitioners divide a range into spans, and the core assigns their IDs | Accepted |
 | [0008](0008-declarations-of-the-support-matrix.md) | Replication, ownership, fence and proposal declare only the capabilities of the support matrix | Accepted |
+| [0009](0009-improvement-toward-underloaded-nodes.md) | The planner improves a cell whose least loaded node is far below the mean | Accepted |
+| [0010](0010-budget-counts-nodes-with-replicas.md) | The budget counts only the disrupted nodes that host a replica | Accepted |
+| [0011](0011-churn-limits-moves-out-of-a-node.md) | The churn budget limits the moves out of a node | Accepted |
+| [0012](0012-config-and-budget-declare-the-matrix.md) | Config and budget declare only the capabilities of the support matrix | Accepted |
+| [0013](0013-store-membership-protocol-declare-the-matrix.md) | Store, membership and protocol declare only the capabilities of the support matrix | Accepted |
+| [0014](0014-cell-ids-are-root-shard-ids.md) | The ID of a cell is the canonical text of its shard ID in the root | Accepted |
