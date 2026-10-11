@@ -155,6 +155,11 @@ const (
 	confirming = 1
 	// expects is the highest generation that a commit of the machine of commits expects.
 	expects = 4
+	// maxLost is the most commits that the machine of commits loses in one case. A lost
+	// commit remains pending until the end of its history, and the check of
+	// linearizability can linearize it at any later point or never. The steps of the
+	// check grow exponentially with the number of lost commits.
+	maxLost = 2
 	// candidates is the number of clients of the law of terms.
 	candidates = 3
 	// rounds is the number of terms that each client of the law of terms leads.
@@ -323,8 +328,8 @@ func WithReopen(reopen func(tb assert.TB, s store.Store) store.Store) Option {
 
 // WithLostCommits gives the suite a way to make the next commit to s fail with an error
 // that wraps version.ErrOutcomeUnknown, at the point that l selects. The suite then checks
-// that Outcome and a retry settle both outcomes, and adds the lost commits to the steps of
-// the machine of commits.
+// that Outcome and a retry settle both outcomes, and adds up to two lost commits to each
+// case of the machine of commits.
 func WithLostCommits(lose func(tb assert.TB, s store.Store, l Loss)) Option {
 	return func(c *config) { c.lose = lose }
 }
@@ -745,7 +750,7 @@ func newTable(tb assert.TB) *table {
 }
 
 // machine is the subject of the machine of commits in one case. It has a store, the scope
-// of its calls, and the table of their mutations.
+// of its calls, the table of their mutations, and the count of the commits that it lost.
 type machine struct {
 	// s is the store of the case.
 	s store.Store
@@ -755,6 +760,8 @@ type machine struct {
 	lose func(tb assert.TB, s store.Store, l Loss)
 	// sc is the scope of the calls.
 	sc shard.Scope
+	// lost counts the calls of loseNext in the case.
+	lost atomic.Int32
 }
 
 // actions returns the actions of the machine. They call Head, Read and Outcome, Commit at
@@ -858,7 +865,11 @@ func (m *machine) commit(c *prop.Case, client int, cc commitCall) {
 }
 
 // loseNext makes the next commit to the store fail at the point that the input selects.
+// It arms no fault after the first maxLost calls of a case.
 func (m *machine) loseNext(c *prop.Case, _ int, in any) {
+	if m.lost.Add(1) > maxLost {
+		return
+	}
 	l, _ := in.(Loss)
 	m.lose(c, m.s, l)
 }
