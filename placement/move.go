@@ -53,8 +53,8 @@ type Constraint interface {
 }
 
 // Goal is a soft objective of placement. The planner minimises the weighted sum of
-// the costs of the goals of each tier. It minimises the tiers one at a time, in
-// ascending tier order.
+// the costs of the goals of each tier. A lower tier has priority over a higher one, so
+// the planner never raises the cost of a lower tier to lower the cost of a higher one.
 //
 // # Concurrency
 //

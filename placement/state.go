@@ -41,7 +41,9 @@ import (
 //
 // Shards, Nodes and OnNode return IDs in ascending order. Replicas returns the
 // replicas of a shard in the order of Input.Current. A move that relocates a replica
-// keeps its position, and a move that adds a replica appends it.
+// keeps its position, and a move that adds a replica appends it. ReplicasAt and
+// InitialAt take the position of a shard in Shards, and read the shard without a
+// lookup of its ID.
 //
 // # Concurrency
 //
@@ -95,6 +97,9 @@ type State struct {
 	// capacious counts the accepting nodes with a positive capacity for each metric,
 	// in the order of metrics.
 	capacious []int
+	// totals is the sum of the loads of the shards on each metric, in the order of
+	// metrics.
+	totals []float64
 	// max is the Max of each role of the model, and zero for a role that the model
 	// does not declare.
 	max [shard.RoleCount]int
@@ -240,6 +245,17 @@ func (st *State) Replicas(id shard.ID) []shard.Replica {
 	return st.shards[i].replicas
 }
 
+// ReplicasAt returns the replicas in the state of the shard at position i of Shards. It
+// does not look up an ID, so a scan of the shards in the order of Shards reads each
+// shard without a lookup. It panics when i is not a position of Shards.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (st *State) ReplicasAt(i int) []shard.Replica {
+	return st.shards[i].replicas
+}
+
 // Initial returns the replicas of shard id at the start of the pass, as Input.Current
 // lists them. It returns nil for a shard without a placement, and for a shard that the
 // layout does not list.
@@ -252,6 +268,16 @@ func (st *State) Initial(id shard.ID) []shard.Replica {
 	if !ok {
 		return nil
 	}
+	return st.shards[i].initial
+}
+
+// InitialAt returns the replicas at the start of the pass of the shard at position i of
+// Shards. It does not look up an ID. It panics when i is not a position of Shards.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (st *State) InitialAt(i int) []shard.Replica {
 	return st.shards[i].initial
 }
 
@@ -490,6 +516,21 @@ func (st *State) UtilisationSum(metric string) (float64, int) {
 		return 0, 0
 	}
 	return st.utilisation[k], st.capacious[k]
+}
+
+// TotalLoad returns the sum of the loads of the shards of the layout on metric. Each
+// shard counts once, with its entry of Input.ShardLoad or the mean load. It returns 0
+// for a metric that the input does not list.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (st *State) TotalLoad(metric string) float64 {
+	k := slices.IndexFunc(st.metrics, func(m Metric) bool { return m.Name == metric })
+	if k < 0 {
+		return 0
+	}
+	return st.totals[k]
 }
 
 // Labelled returns the number of replicas on node n of the shards with the label t.
@@ -828,8 +869,9 @@ func (st *State) checkReplicas(id shard.ID, replicas []shard.Replica) error {
 	return nil
 }
 
-// indexLoads records the load of each shard on each metric. A shard without an entry
-// in Input.ShardLoad gets the mean load of the shards with one.
+// indexLoads records the load of each shard on each metric, and the total of each
+// metric. A shard without an entry in Input.ShardLoad gets the mean load of the shards
+// with one. The totals add the loads in the order of the IDs of the shards.
 //
 // Error modes:
 //   - an error that wraps ErrInput for a load of a metric that is negative or not
@@ -864,10 +906,14 @@ func (st *State) indexLoads() error {
 		}
 		st.mean[m.Name] = sums[k]
 	}
+	st.totals = make([]float64, width)
 	for i := range st.ids {
 		if !reported[i] {
 			st.shards[i].load = st.mean
 			copy(st.loads[i*width:(i+1)*width], sums)
+		}
+		for k, v := range st.loads[i*width : (i+1)*width] {
+			st.totals[k] += v
 		}
 	}
 	return nil

@@ -404,6 +404,35 @@ func TestState(t *testing.T) {
 		})
 	})
 
+	t.Run("ReplicasAt", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the replicas of the shard at a position of Shards", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, st.ReplicasAt(1), st.Replicas(s2), "ReplicasAt must return the replicas of s2")
+		})
+
+		t.Run("panics for a position that Shards does not have", func(t *testing.T) {
+			t.Parallel()
+			assert.Panics(t, func() { _ = st.ReplicasAt(len(st.Shards())) },
+				"ReplicasAt must panic for a position after the last shard")
+		})
+	})
+
+	t.Run("InitialAt", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the initial replicas of the shard at a position of Shards", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, st.InitialAt(2), st.Initial(s3), "InitialAt must return the initial replicas of s3")
+		})
+
+		t.Run("panics for a position that Shards does not have", func(t *testing.T) {
+			t.Parallel()
+			assert.Panics(t, func() { _ = st.InitialAt(-1) }, "InitialAt must panic for a negative position")
+		})
+	})
+
 	t.Run("Initial", func(t *testing.T) {
 		t.Parallel()
 
@@ -833,6 +862,34 @@ func TestState(t *testing.T) {
 		})
 	})
 
+	t.Run("TotalLoad", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name   string
+			metric string
+			want   float64
+		}{
+			{
+				name:   "returns the reported loads and the mean load of a shard without a report",
+				metric: placementtest.CPU,
+				want:   12.5,
+			},
+			{
+				name:   "counts a load of 0 for a metric that a report leaves out",
+				metric: placementtest.Bytes,
+				want:   56.25,
+			},
+			{name: "returns 0 for a metric that the cell does not have", metric: mem},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, st.TotalLoad(tt.metric), tt.want, "TotalLoad must add the load of every shard once")
+			})
+		}
+	})
+
 	t.Run("Labelled", func(t *testing.T) {
 		t.Parallel()
 
@@ -1097,8 +1154,8 @@ func TestStateAllocs(t *testing.T) {
 		// replicas.
 		in := scaled(1_000, 5)
 		in.Nodes = in.Nodes[:4]
-		expect.MaxAllocs(t, func() { _, _ = placement.NewState(in) }, 63,
-			"NewState must allocate 63 objects for a cell of 1,000 shards on 4 accepting nodes and a gone node")
+		expect.MaxAllocs(t, func() { _, _ = placement.NewState(in) }, 64,
+			"NewState must allocate 64 objects for a cell of 1,000 shards on 4 accepting nodes and a gone node")
 	})
 
 	st := newState(t, cell())
@@ -1109,7 +1166,9 @@ func TestStateAllocs(t *testing.T) {
 		{name: "Shards", call: func() { _ = st.Shards() }},
 		{name: "Shard", call: func() { _, _ = st.Shard(s2) }},
 		{name: "Replicas", call: func() { _ = st.Replicas(s1) }},
+		{name: "ReplicasAt", call: func() { _ = st.ReplicasAt(0) }},
 		{name: "Initial", call: func() { _ = st.Initial(s1) }},
+		{name: "InitialAt", call: func() { _ = st.InitialAt(0) }},
 		{name: "InFlight", call: func() { _, _ = st.InFlight(s5) }},
 		{name: "ShardLoad", call: func() { _ = st.ShardLoad(s4) }},
 		{name: "Desired", call: func() { _ = st.Desired() }},
@@ -1127,6 +1186,7 @@ func TestStateAllocs(t *testing.T) {
 		{name: "Capacity", call: func() { _, _ = st.Capacity(n1, placementtest.Bytes) }},
 		{name: "Utilisation", call: func() { _, _ = st.Utilisation(n1, placementtest.Bytes) }},
 		{name: "UtilisationSum", call: func() { _, _ = st.UtilisationSum(placementtest.Bytes) }},
+		{name: "TotalLoad", call: func() { _ = st.TotalLoad(placementtest.Bytes) }},
 		{name: "Labelled", call: func() { _ = st.Labelled(t0, n2) }},
 		{name: "LabelledNodes", call: func() { _ = st.LabelledNodes(t0) }},
 		{name: "Moved", call: func() { _ = st.Moved() }},
@@ -1257,8 +1317,10 @@ func assertIndexes(
 
 	nodes := map[shard.NodeID]bool{}
 	labels := map[tag.Tag]bool{}
-	for _, id := range st.Shards() {
+	for i, id := range st.Shards() {
 		assert.Equal(tb, st.Replicas(id), replicas[id], "Replicas must follow the moves", assert.EquateEmpty())
+		assert.Equal(tb, st.ReplicasAt(i), st.Replicas(id), "ReplicasAt must return the replicas of the shard at i")
+		assert.Equal(tb, st.InitialAt(i), st.Initial(id), "InitialAt must return the initial replicas at i")
 		assert.Equal(tb, st.MovedShard(id), moves.shards[id], "MovedShard must count the moves of the shard")
 		for _, r := range slices.Concat(st.Initial(id), replicas[id]) {
 			nodes[r.Node] = true
@@ -1344,6 +1406,11 @@ func assertIndexes(
 	for _, m := range st.Metrics() {
 		sum, _ := st.UtilisationSum(m.Name)
 		assert.CloseTo(tb, sum, sums[m.Name], 1e-9, "UtilisationSum must sum the utilisation")
+		total := 0.0
+		for _, id := range st.Shards() {
+			total += st.ShardLoad(id)[m.Name]
+		}
+		assert.Equal(tb, st.TotalLoad(m.Name), total, "TotalLoad must add the loads of the shards in ID order")
 	}
 	applied := 0
 	for _, count := range moves.shards {
