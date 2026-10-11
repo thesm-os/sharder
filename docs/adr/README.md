@@ -24,3 +24,4 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0013](0013-store-membership-protocol-declare-the-matrix.md) | Store, membership and protocol declare only the capabilities of the support matrix | Accepted |
 | [0014](0014-cell-ids-are-root-shard-ids.md) | The ID of a cell is the canonical text of its shard ID in the root | Accepted |
 | [0015](0015-placement-declares-the-planner-of-the-matrix.md) | Placement declares only the planner of the support matrix, with sparse plans and a concrete state | Accepted |
+| [0016](0016-improvement-weighs-every-tier-at-once.md) | The improvement weighs every tier at once and examines a sample of the shards of each node | Accepted |
