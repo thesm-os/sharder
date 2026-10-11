@@ -1,0 +1,28 @@
+the zero value: 
+table sample 0: 0a140000000000000000000000000000000000000000107f18800120808001
+table sample 1: 0a206161616161616161616161616161616161616161616161616161616161616161108001188080808080012080808001
+table sample 2: 0a2062626262626262626262626262626262626262626262626262626262626262621080808080800118808080808080808001208080808001
+table sample 3: 0a200102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2010808080808080808001188080808080808080800120ffffffff0f
+table sample 4: 0a1063636363636363636363636363636363108080808080808080800118ffffffffffffffffff01
+table sample 5: 0a10ffffffffffffffffffffffffffffffff10ffffffffffffffffff012001
+table sample 6: 1801207f
+table sample 7: 0a14deadbeefdeadbeefdeadbeefdeadbeefdeadbeef1001187f208001
+the sample of field Incarnation: 0a140000000000000000000000000000000000000000
+the sample of field Generation: 1001
+the sample of field Watermark: 1801
+the sample of field Schema: 2001
+wide sample 0: 0a207732773277327732773277327732773277327732773277327732773277327732100218032004
+wide sample 1: 0a1077337733773377337733773377337733100318042005
+the key sample: 0a206161616161616161616161616161616161616161616161616161616161616161108001188080808080012080808001
+DecodeKanon/decodes each prefix of a field between unknown fields as the reference decode: 1494 probes, digest aaa9fe17e1ba31e6
+DecodeKanon/decodes a field between unknown fields with one value written wrong as the reference decode: 200 probes, digest 432720ae2d25d1ef
+DecodeKanon/decodes a field between unknown fields with a value that its ValidateKanon rejects as the reference decode: 0 probes, digest cbf29ce484222325
+DecodeKanon/decodes a field between unknown fields with one changed byte as the reference decode: 930 probes, digest e0fdba2b493a62cf
+DecodeKanon/decodes a field between unknown fields with its tag in another wire format as the reference decode: 96 probes, digest 26d188f73f5953a4
+DecodeKanon/decodes a field between unknown fields written twice as the reference decode: 32 probes, digest eec02a36e123a00f
+DecodeKanon/decodes a field between unknown fields under each depth limit as the reference decode: 200 probes, digest 68331a207a336631
+DecodeKanon/decodes an encoding that writes every field twice as the reference decode: 16 probes, digest d6ded13ed80ba51d
+DecodeKanon/decodes two concatenated encodings as the reference decode: 64 probes, digest 832413d719a69dec
+DecodeKanon/decodes an encoding in a slab at its offset as the reference decode: 16 probes, digest 3884f63b5f4fd1d2
+the samples that the encode allocation checks measure: 13 samples, digest 254ea3aa9d747dee
+the samples that the decode allocation check measures: 0 samples, digest cbf29ce484222325
