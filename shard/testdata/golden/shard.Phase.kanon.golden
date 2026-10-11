@@ -1,0 +1,8 @@
+value 0: fails: shard: unknown phase: 0
+value 1: 0801
+value 2: fails: shard: unknown phase: 127
+value 3: fails: shard: unknown phase: 128
+value 4: fails: shard: unknown phase: 255
+value 5: 0802
+value 6: fails: shard: unknown phase: 64
+value 7: fails: shard: unknown phase: 200

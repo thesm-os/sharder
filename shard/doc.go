@@ -12,10 +12,12 @@
 //
 // The core assigns the identities of namespace incarnations and shards with core's
 // identifiers, so [NamespaceIncarnation] and [ID] each embed a
-// [go.thesmos.sh/core/id.ID]. Applications, operators, node labels and transports
-// choose the names of namespaces, nodes, cells and processes, so [Namespace],
-// [NodeID], [CellID] and [Identity] are string types. Each strategy package declares
-// its registered name as a [StrategyName].
+// [go.thesmos.sh/core/id.ID]. A cell is a shard of the root, and the root gives the
+// cell the canonical text of that shard's ID as its [CellID]. Applications, operators
+// and transports choose the names of namespaces, nodes and processes. [Namespace],
+// [NodeID], [CellID] and [Identity] are string types, because node labels and messages
+// contain them as text. Each strategy package declares its registered name as a
+// [StrategyName].
 //
 // # Durations
 //
@@ -24,7 +26,7 @@
 //
 // # Enumerations
 //
-// [Role], [Status] and [Fault] are closed enumerations of uint8. Each has a String
+// [Role], [Status], [Fault] and [Phase] are closed enumerations of uint8. Each has a String
 // method that returns the spelling of a value in configurations and telemetry, and a
 // Valid method that reports whether a value is one of its constants. The numbers of
 // the constants are persisted: a constant keeps its number, and a new constant takes
@@ -39,15 +41,16 @@
 // field takes a new number. A process of an older release decodes a message of a
 // newer one, because a decode skips the fields that it does not know.
 //
-// The codecs return an error for a [Role], a [Status] or a [Fault] that is not Valid,
-// on encode and on decode. An encoding leaves out every field of a zero value, so a
-// codec does not check the zero [Status], which is not Valid. [NamespaceIncarnation]
-// and [ID] encode through the binary methods of the identifier that they embed.
+// The codecs return an error for a [Role], a [Status], a [Fault] or a [Phase] that is
+// not Valid, on encode and on decode. An encoding leaves out every field of a zero
+// value, so a codec does not check the zero [Status] or the zero [Phase], which are not
+// Valid. [NamespaceIncarnation] and [ID] encode through the binary methods of the
+// identifier that they embed.
 //
 // # Errors
 //
 // [ErrIncarnation] classifies as errs.Conflict. [ErrUnknownRole], [ErrUnknownStatus],
-// [ErrUnknownFault] and [ErrDuration] classify as errs.Invalid.
+// [ErrUnknownFault], [ErrUnknownPhase] and [ErrDuration] classify as errs.Invalid.
 //
 // # Concurrency
 //

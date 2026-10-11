@@ -21,7 +21,9 @@ import "fmt"
 // kanon encodes a Role as an unsigned varint of its number. A codec returns an error
 // that wraps [ErrUnknownRole] for a Role that is not Valid, on encode and on decode.
 // [Role.String] returns the spelling of a Role, such as "primary", and the form
-// "Role(n)" for a value that is not Valid.
+// "Role(n)" for a value that is not Valid. The text methods write and read the
+// spelling, so encoding/json writes a Role as a string. kanon checks for ValidateKanon
+// before it checks for text methods, so a codec still writes a Role as its number.
 //
 // # Concurrency
 //
@@ -65,6 +67,32 @@ const (
 // Zero alloc.
 func (r Role) Valid() bool {
 	return r <= RoleLearner
+}
+
+// MarshalText returns the spelling of r, such as "primary".
+//
+// Error modes:
+//   - an error that wraps [ErrUnknownRole] when r is not Valid.
+func (r Role) MarshalText() ([]byte, error) {
+	if err := r.valid(); err != nil {
+		return nil, err
+	}
+	return []byte(r.String()), nil
+}
+
+// UnmarshalText sets r to the role whose spelling is text. It leaves r unchanged when
+// it returns an error.
+//
+// Error modes:
+//   - an error that wraps [ErrUnknownRole] when text is not the spelling of a role.
+func (r *Role) UnmarshalText(text []byte) error {
+	for v := RoleNone; v <= RoleLearner; v++ {
+		if string(text) == v.String() {
+			*r = v
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %q", ErrUnknownRole, text)
 }
 
 // valid returns nil for a Valid role, and an error that wraps [ErrUnknownRole] and

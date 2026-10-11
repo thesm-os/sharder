@@ -12,8 +12,10 @@ import (
 	"go.thesmos.sh/core/epoch"
 )
 
-// CellID is the identity of a cell of a namespace, the value of the "cell" label of
-// its nodes. The empty CellID is no cell, and a [Scope] with an empty CellID is the
+// CellID is the identity of a cell of a namespace. A cell is a shard of the root, and
+// the root gives the cell the canonical text of that shard's [ID], which
+// [go.thesmos.sh/core/id/ulid.Format] returns. The "cell" label of a node contains the
+// same text. The empty CellID is no cell, and a [Scope] with an empty CellID is the
 // root of a namespace.
 type CellID string
 

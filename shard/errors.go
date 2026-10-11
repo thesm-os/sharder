@@ -17,8 +17,10 @@ var (
 	// the root scope again.
 	ErrIncarnation = errs.WithClass(errors.New("shard: namespace incarnation mismatch"), errs.Conflict)
 
-	// ErrUnknownRole reports a Role that is not one of the eight roles. A codec
-	// returns an error that wraps it for such a Role. It classifies as errs.Invalid.
+	// ErrUnknownRole reports a Role that is not one of the eight roles. A codec and
+	// Role.MarshalText return an error that wraps it for such a Role.
+	// Role.UnmarshalText returns one for text that is not the spelling of a role. It
+	// classifies as errs.Invalid.
 	ErrUnknownRole = errs.WithClass(errors.New("shard: unknown role"), errs.Invalid)
 
 	// ErrUnknownStatus reports a Status that is not one of the four statuses. A codec
@@ -29,6 +31,11 @@ var (
 	// ErrUnknownFault reports a Fault that is not one of the three faults. A codec
 	// returns an error that wraps it for such a Fault. It classifies as errs.Invalid.
 	ErrUnknownFault = errs.WithClass(errors.New("shard: unknown fault"), errs.Invalid)
+
+	// ErrUnknownPhase reports a Phase that is not one of the four phases. A codec
+	// returns an error that wraps it for such a Phase other than zero. It classifies as
+	// errs.Invalid.
+	ErrUnknownPhase = errs.WithClass(errors.New("shard: unknown phase"), errs.Invalid)
 
 	// ErrDuration reports text that is not a Go duration string, such as "30s".
 	// Duration.UnmarshalText returns an error that wraps it. It classifies as
