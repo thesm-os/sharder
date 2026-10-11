@@ -50,7 +50,7 @@ A package may import the packages in its row, and every package that those packa
 | `placement/placementtest` | The conformance kit of placers, constraints and goals | `placement` |
 | `replication` | Replica state models, their compilation into transition tables, and the built-in model `primary-only` | `shard` |
 | `ownership` | The configuration of exclusive ownership and its lease | `shard` |
-| `handoff` | The `Protocol` contract, scripts, transfers and the lifecycle of a transition | `shard`, `ownership`, `protocol` |
+| `handoff` | The `Protocol` contract, scripts, transfers and the lifecycle of a transition | `shard` |
 | `handoff/breakbeforemake` | The protocol `break-before-make` | `handoff` |
 | `fence` | Fencing tokens, `fence.Retired`, and the interfaces of fenced storage that an application implements | `shard` |
 | `budget` | Disruptions, decisions, reservations, and the `Budget` interface that admits disruptions | `shard`, `replication` |
