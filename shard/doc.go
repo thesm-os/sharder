@@ -30,7 +30,8 @@
 // method that returns the spelling of a value in configurations and telemetry, and a
 // Valid method that reports whether a value is one of its constants. The numbers of
 // the constants are persisted: a constant keeps its number, and a new constant takes
-// the next number.
+// the next number. [RoleCount] is the number of roles, so an array with one element
+// per role has RoleCount elements.
 //
 // # Encoding
 //

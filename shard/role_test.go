@@ -43,6 +43,13 @@ func TestRole(t *testing.T) {
 			prop.False(t, shard.Role.Valid, "a value above the last constant must not be Valid",
 				prop.Using(prop.Integer[shard.Role](shard.RoleLearner+1, 255)))
 		})
+
+		t.Run("reports true for each value below RoleCount", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, shard.Role.Valid, func(r shard.Role) bool { return int(r) < shard.RoleCount },
+				"a role must be Valid exactly when it indexes an array of RoleCount elements",
+				prop.Using(prop.Integer[shard.Role](0, 255)))
+		})
 	})
 
 	t.Run("String", func(t *testing.T) {

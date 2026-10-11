@@ -60,6 +60,10 @@ const (
 	RoleLearner Role = 7 // learner
 )
 
+// RoleCount is the number of roles, from RoleNone to RoleLearner. An array with one
+// element per role has this length, and a Valid Role indexes it.
+const RoleCount = 8
+
 // Valid reports whether r is one of the eight roles, [RoleNone] included.
 //
 // # Allocation contract
