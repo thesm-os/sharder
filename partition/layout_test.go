@@ -31,9 +31,9 @@ const (
 // threeShards is a layout whose shards cover the position space in three ranges:
 // below g, from g to below t, and from t on.
 var threeShards = partition.Layout{Cell: cell, Shards: []partition.Shard{
-	{Range: shard.Range{End: []byte("g")}, ID: shard.ID{ID: id.New128([16]byte{15: 1})}},
-	{Range: shard.Range{Start: []byte("g"), End: []byte("t")}, ID: shard.ID{ID: id.New128([16]byte{15: 2})}},
-	{Range: shard.Range{Start: []byte("t")}, ID: shard.ID{ID: id.New128([16]byte{15: 3})}},
+	{Range: shard.Range{End: []byte("g")}, ID: shard.ID{ID128: id.ID128{15: 1}}},
+	{Range: shard.Range{Start: []byte("g"), End: []byte("t")}, ID: shard.ID{ID128: id.ID128{15: 2}}},
+	{Range: shard.Range{Start: []byte("t")}, ID: shard.ID{ID128: id.ID128{15: 3}}},
 }}
 
 // TestLayout checks the zero Shard and Layout.Locate.
@@ -199,7 +199,7 @@ func BenchmarkLayout(b *testing.B) {
 
 // drawCover generates a layout whose shards cover the position space. The first shard
 // starts at the empty position, each shard ends where the next one starts, and the
-// last shard has no end. Shard i has the ID whose last byte is i.
+// last shard has no end. Shard i has the ID whose last byte is i+1.
 func drawCover(c *prop.Case) partition.Layout {
 	ends := c.Draw(prop.List(prop.Bytes(prop.MinSize(1), prop.MaxSize(3)), prop.MaxSize(8)), labelEnds)
 	slices.SortFunc(ends, bytes.Compare)
@@ -214,7 +214,7 @@ func drawCover(c *prop.Case) partition.Layout {
 		}
 		shards[i] = partition.Shard{
 			Range: shard.Range{Start: start, End: end},
-			ID:    shard.ID{ID: id.New128([16]byte{15: byte(i)})},
+			ID:    shard.ID{ID128: id.ID128{15: byte(i + 1)}},
 		}
 		start = end
 	}
@@ -223,7 +223,8 @@ func drawCover(c *prop.Case) partition.Layout {
 
 // evenCover returns a layout of n shards, n at most 65,536. Shard i starts at the
 // big-endian encoding of i in two bytes, except the first shard, which starts at the
-// empty position, and ends where shard i+1 starts. Its ID has i in its last two bytes.
+// empty position, and ends where shard i+1 starts. Its ID has i+1 in its last three
+// bytes.
 func evenCover(n int) partition.Layout {
 	shards := make([]partition.Shard, n)
 	for i := range n {
@@ -231,12 +232,13 @@ func evenCover(n int) partition.Layout {
 		if i > 0 {
 			start = []byte{byte(i >> 8), byte(i)}
 		}
-		if i+1 < n {
-			end = []byte{byte((i + 1) >> 8), byte(i + 1)}
+		next := i + 1
+		if next < n {
+			end = []byte{byte(next >> 8), byte(next)}
 		}
 		shards[i] = partition.Shard{
 			Range: shard.Range{Start: start, End: end},
-			ID:    shard.ID{ID: id.New128([16]byte{14: byte(i >> 8), 15: byte(i)})},
+			ID:    shard.ID{ID128: id.ID128{13: byte(next >> 16), 14: byte(next >> 8), 15: byte(next)}},
 		}
 	}
 	return partition.Layout{Cell: cell, Shards: shards}
