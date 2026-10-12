@@ -168,8 +168,8 @@ type Metric struct {
 	Capacity string `json:"capacity,omitempty"`
 }
 
-// CellPolicy bounds the size of each cell of the namespace. The root reports a cell
-// above either bound.
+// CellPolicy bounds the size of each cell of the namespace. The controller of each cell
+// logs a warning when the cell rises above either bound.
 //
 // # Concurrency
 //

@@ -227,8 +227,8 @@ func register[T any](t *testing.T, r *config.Registry, axis config.Axis, f confi
 	assert.NoError(t, config.Register(r, axis, f), "a factory of the tests must register")
 }
 
-// TestRegistry checks the registration of factories, and the strategies that Build and
-// BuildNamed build with them.
+// TestRegistry checks the registration of factories, the strategies that Build and
+// BuildNamed build with them, and the configurations that ParseNamed parses with them.
 func TestRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -498,5 +498,100 @@ func TestRegistry(t *testing.T) {
 			}, "BuildNamed must call the factory without the lock of the registry")
 			assert.NoError(t, err, "the factory must register and build while it builds")
 		})
+	})
+
+	t.Run("ParseNamed", func(t *testing.T) {
+		t.Parallel()
+
+		withGoal := func(parse func(json.RawMessage) (config.Parsed, error)) *config.Registry {
+			r := config.NewRegistry(newSupport())
+			register(t, r, config.Goal, &testFactory[struct{}]{name: zoneName, parse: parse})
+			return r
+		}
+
+		t.Run("returns the configuration that the factory parses", func(t *testing.T) {
+			t.Parallel()
+			got, err := config.ParseNamed(withGoal(nil), config.Goal, zoneName, json.RawMessage(plannerConfig))
+			assert.NoError(t, err, "ParseNamed must parse the configuration of a registered goal")
+			assert.Equal(t, got, config.Parsed(rawConfig(plannerConfig)),
+				"ParseNamed must return the configuration that the factory parsed")
+		})
+
+		tests := []struct {
+			name     string
+			registry *config.Registry
+			axis     config.Axis
+			wantErrs []error
+		}{
+			{
+				name:     "returns ErrRegistration for the zero axis",
+				registry: withGoal(nil),
+				axis:     0,
+				wantErrs: []error{config.ErrRegistration},
+			},
+			{
+				name:     "returns ErrRegistration for the role of the membership",
+				registry: withGoal(nil),
+				axis:     config.Membership,
+				wantErrs: []error{config.ErrRegistration},
+			},
+			{
+				name:     "returns ErrUnknown for a name without a factory",
+				registry: config.NewRegistry(newSupport()),
+				axis:     config.Goal,
+				wantErrs: []error{config.ErrUnknown},
+			},
+			{
+				name: "returns ErrSpec with the error of Parse",
+				registry: withGoal(func(json.RawMessage) (config.Parsed, error) {
+					return nil, errTest
+				}),
+				axis:     config.Goal,
+				wantErrs: []error{config.ErrSpec, errTest},
+			},
+			{
+				name: "returns ErrSpec when Parse returns no configuration",
+				registry: withGoal(func(json.RawMessage) (config.Parsed, error) {
+					return nil, nil
+				}),
+				axis:     config.Goal,
+				wantErrs: []error{config.ErrSpec},
+			},
+			{
+				name: "returns ErrSpec with the error of Validate",
+				registry: withGoal(func(json.RawMessage) (config.Parsed, error) {
+					return invalidConfig{}, nil
+				}),
+				axis:     config.Goal,
+				wantErrs: []error{config.ErrSpec, errTest},
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, err := config.ParseNamed(tt.registry, tt.axis, zoneName, nil)
+				for _, want := range tt.wantErrs {
+					assert.ErrorIs(t, err, want, "ParseNamed must return the error of the case")
+				}
+				assert.Equal(t, errs.Classify(err), errs.Invalid, "the error of ParseNamed must classify as Invalid")
+			})
+		}
+
+		bounds := []struct {
+			name string
+			give config.Axis
+		}{
+			{name: "parses a configuration on the first axis of strategies", give: config.Partitioning},
+			{name: "parses a configuration on the last axis of strategies", give: config.Hash},
+		}
+		for _, tt := range bounds {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				r := config.NewRegistry(newSupport())
+				register(t, r, tt.give, &testFactory[struct{}]{name: zoneName})
+				_, err := config.ParseNamed(r, tt.give, zoneName, nil)
+				assert.NoError(t, err, "ParseNamed must parse on every axis of strategies")
+			})
+		}
 	})
 }

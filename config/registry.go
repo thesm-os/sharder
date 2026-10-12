@@ -203,6 +203,28 @@ func BuildNamed[T any](r *Registry, axis Axis, name shard.StrategyName, raw json
 	return s, nil
 }
 
+// ParseNamed parses raw with the factory registered as name on axis, and returns the
+// configuration that Validate accepts. The factories of placers and partitioners call
+// it to parse the configurations of the constraints, goals and hash functions that
+// their own configurations select. The encoding of the result contains every default.
+//
+// Error modes:
+//   - an error that wraps ErrRegistration when axis is not one of the ten axes of
+//     strategies.
+//   - an error that wraps ErrUnknown when axis has no factory of the name.
+//   - an error that wraps ErrSpec and the error of the factory when Parse or Validate
+//     fails, or when Parse returns no configuration.
+func ParseNamed(r *Registry, axis Axis, name shard.StrategyName, raw json.RawMessage) (Parsed, error) {
+	if axis < Partitioning || axis > Hash {
+		return nil, fmt.Errorf("%w: %s takes no strategies", ErrRegistration, axis)
+	}
+	e, ok := r.entryOf(axis, name)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s %q", ErrUnknown, axis, name)
+	}
+	return parse(e.parser, raw, fmt.Sprintf("%s %q", axis, name))
+}
+
 // factoryOf returns the factory registered as name on axis, as a Factory[T]. It
 // returns an error that wraps ErrUnknown when r has no such factory, and one that
 // wraps ErrRegistration when the factory does not build a T.

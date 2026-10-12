@@ -19,8 +19,10 @@
 // axis, such as a factory of partition.Partitioner on [Partitioning]. The factory
 // parses and validates the configuration of the strategy. It also returns the
 // [Capabilities] that the strategy provides and requires with that configuration. The
-// strategy packages do not import config, so an application uses a strategy without a
-// registry. No package registers anything from an init function.
+// factory of a placer or a partitioner parses the constraints, goals and hash functions
+// that its configuration selects with [ParseNamed], and builds them with [BuildNamed].
+// The strategy packages do not import config, so an application uses a strategy without
+// a registry. No package registers anything from an init function.
 //
 // # Merging over a preset
 //
