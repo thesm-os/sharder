@@ -14,7 +14,9 @@ import "time"
 // # Encoding
 //
 // kanon generates the codec of Decision. Allowed is field 1, Reason is field 2, and
-// RetryAfter is field 3.
+// RetryAfter is field 3. encoding/json encodes a Decision as an object with the keys
+// reason, retryAfter and allowed, and RetryAfter as a count of nanoseconds. The receipt of
+// a drain proposal contains that form.
 //
 // # Concurrency
 //
@@ -22,10 +24,10 @@ import "time"
 type Decision struct {
 	// Reason is the cause of a deferral, for the operator. It is empty in a Decision
 	// that allows the disruption.
-	Reason string
+	Reason string `json:"reason"`
 	// RetryAfter is the time that a caller waits after a deferral before it calls
 	// Admit again.
-	RetryAfter time.Duration
+	RetryAfter time.Duration `json:"retryAfter"`
 	// Allowed is true when the disruption may start now.
-	Allowed bool
+	Allowed bool `json:"allowed"`
 }

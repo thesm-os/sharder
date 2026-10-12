@@ -5,6 +5,7 @@ package budget_test
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -12,6 +13,10 @@ import (
 
 	"go.thesmos.sh/sharder/budget"
 )
+
+// recordedDeferralJSON pins the JSON of recordedDeferral, which the receipt of a drain
+// proposal contains. The time to wait is a count of nanoseconds.
+const recordedDeferralJSON = `{"reason":"draining","retryAfter":1000000000,"allowed":false}`
 
 // The recorded encodings of decisions.
 const (
@@ -83,5 +88,24 @@ func TestDecision(t *testing.T) {
 				assert.Equal(t, got, tt.give, "UnmarshalBinary must return the recorded Decision")
 			})
 		}
+	})
+
+	t.Run("Decision", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("encodes a deferral as the recorded JSON", func(t *testing.T) {
+			t.Parallel()
+			got, err := json.Marshal(&recordedDeferral)
+			assert.NoError(t, err, "encoding/json must encode a Decision")
+			assert.Equal(t, string(got), recordedDeferralJSON, "a Decision must keep its recorded JSON")
+		})
+
+		t.Run("decodes a deferral from its recorded JSON", func(t *testing.T) {
+			t.Parallel()
+			var got budget.Decision
+			err := json.Unmarshal([]byte(recordedDeferralJSON), &got)
+			assert.NoError(t, err, "encoding/json must decode a Decision")
+			assert.Equal(t, got, recordedDeferral, "a Decision must decode from its recorded JSON")
+		})
 	})
 }
