@@ -56,9 +56,9 @@ type Proposal struct {
 	// Base is the version of the state that the proposal changes, such as the epoch
 	// of a shard for a move.
 	Base epoch.Epoch
-	// Incarnation is the namespace incarnation that the proposal changes. It is zero
-	// only in the spec proposal that creates the namespace, and a controller refuses
-	// a proposal for another incarnation.
+	// Incarnation is the namespace incarnation that the proposal changes. A controller
+	// refuses a proposal for another incarnation. The root creates a namespace from the
+	// spec of its process, so every proposal has an incarnation.
 	Incarnation shard.NamespaceIncarnation
 	// ID is unique within the namespace incarnation. A controller refuses an ID that
 	// its scope has applied.

@@ -21,6 +21,16 @@
 // applies [Move], [Drain], [Undrain] and [Explain], which act on the shards and the
 // nodes of the cell.
 //
+// # Operations
+//
+// The Body of each kind that a cell applies is JSON:
+//
+//   - A [MoveArgs] for a Move.
+//   - A [NodeArgs] for a Drain and an Undrain.
+//   - A [ShardArgs] for an Explain.
+//
+// The receipt of an Explain contains an [Explanation] as JSON.
+//
 // # Encoding
 //
 // kanon generates the binary codecs of [Proposal] and [OperationKind]. A field keeps
