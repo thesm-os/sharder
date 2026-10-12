@@ -72,10 +72,12 @@ var (
 	// instants generates an instant in UTC, in whole seconds.
 	instants = prop.Integer[int64](0, maxSeconds).Map(func(s int64) time.Time { return time.Unix(s, 0).UTC() })
 	// ids generates an identifier of 16 bytes.
-	ids = prop.Bytes(prop.MinSize(16), prop.MaxSize(16)).Map(func(b []byte) id.ID {
-		var a [16]byte
-		copy(a[:], b)
-		return id.New128(a)
+	ids = prop.Bytes(prop.MinSize(id.Size128), prop.MaxSize(id.Size128)).Map(func(b []byte) id.ID {
+		return id.ID128(b).ID()
+	})
+	// shards generates a shard ID. A draw of 16 zero bytes is the zero ID.
+	shards = prop.Bytes(prop.MinSize(id.Size128), prop.MaxSize(id.Size128)).Map(func(b []byte) shard.ID {
+		return shard.ID{ID128: id.ID128(b)}
 	})
 	// payloads generates a position, a body or a result.
 	payloads = prop.Bytes(prop.MaxSize(maxBytes))
@@ -96,7 +98,7 @@ var (
 			NodeIncarnation: c.Draw(epochs, "node incarnation"),
 			Epoch:           c.Draw(epochs, "epoch"),
 			ControllerEpoch: c.Draw(epochs, "controller epoch"),
-			Shard:           shard.ID{ID: c.Draw(ids, "shard")},
+			Shard:           c.Draw(shards, "shard"),
 			Call:            c.Draw(prop.SampledFrom(protocol.Add, protocol.Drop), "call"),
 			Path:            c.Draw(prop.SampledFrom(protocol.Forward, protocol.Abort, protocol.Cleanup), "path"),
 			Role:            c.Draw(roles, "role"),
@@ -106,7 +108,7 @@ var (
 	operations = prop.Composite(func(c *prop.Case) shard.OperationID {
 		return shard.OperationID{
 			Incarnation: shard.NamespaceIncarnation{ID: c.Draw(ids, "incarnation")},
-			Shard:       shard.ID{ID: c.Draw(ids, "shard")},
+			Shard:       c.Draw(shards, "shard"),
 			Sequence:    uint64(c.Draw(epochs, "sequence")),
 		}
 	})
@@ -120,13 +122,10 @@ var (
 			Cause:    c.Draw(prop.String(prop.MaxSize(maxBytes)), "cause"),
 			Reported: c.Draw(instants, "reported"),
 			Range:    shard.Range{Start: c.Draw(payloads, "start"), End: c.Draw(payloads, "end")},
-			Parents: c.Draw(
-				prop.List(ids.Map(func(i id.ID) shard.ID { return shard.ID{ID: i} }), prop.MaxSize(maxList)),
-				"parents",
-			),
-			Epoch: c.Draw(epochs, "epoch"),
-			Shard: shard.ID{ID: c.Draw(ids, "shard")},
-			Role:  c.Draw(roles, "role"),
+			Parents:  c.Draw(prop.List(shards, prop.MaxSize(maxList)), "parents"),
+			Epoch:    c.Draw(epochs, "epoch"),
+			Shard:    c.Draw(shards, "shard"),
+			Role:     c.Draw(roles, "role"),
 			Status: c.Draw(prop.SampledFrom(shard.StatusStarting, shard.StatusServing, shard.StatusStopping,
 				shard.StatusFailed), "status"),
 			Fault: c.Draw(prop.SampledFrom(shard.FaultNone, shard.FaultTransient, shard.FaultPermanent), "fault"),

@@ -19,10 +19,11 @@ import (
 // into. A request with a longer encoding allocates its buffer.
 const digestBuffer = 256
 
-// Request is one callback for one replica. The controller of the cell of the replica sends
-// it, and the agent checks it before the application receives it. Its [Request.Key] and
-// its [Request.Digest] identify it across retries. A request on the path [Cleanup] comes
-// from the agent itself.
+// Request is one callback for one replica. The controller of the scope that places the
+// replica sends it, and the agent checks it before the application receives it. The
+// controller of a cell places shards, and the root of a namespace places cells. Its
+// [Request.Key] and its [Request.Digest] identify it across retries. A request on the path
+// [Cleanup] comes from the agent itself.
 //
 // The zero Request is no callback.
 //
@@ -38,7 +39,8 @@ const digestBuffer = 256
 //
 // A copy of a Request shares the bytes of Range with the original.
 type Request struct {
-	// Scope is the scope of the cell of the replica.
+	// Scope is the scope that places the replica. It is the scope of a cell for the replica
+	// of a shard, and the root scope of the namespace for the replica of a cell.
 	Scope shard.Scope
 	// Node is the node that the callback is for.
 	Node shard.NodeID
