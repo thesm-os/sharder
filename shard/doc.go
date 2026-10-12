@@ -11,8 +11,9 @@
 // # Identities
 //
 // The core assigns the identities of namespace incarnations and shards with core's
-// identifiers, so [NamespaceIncarnation] and [ID] each embed a
-// [go.thesmos.sh/core/id.ID]. A cell is a shard of the root, and the root gives the
+// identifiers. [NamespaceIncarnation] embeds a [go.thesmos.sh/core/id.ID], and [ID]
+// embeds the [go.thesmos.sh/core/id.ID128] of a ULID, so a map keyed by ID hashes and
+// compares 16 bytes. A cell is a shard of the root, and the root gives the
 // cell the canonical text of that shard's ID as its [CellID]. Applications, operators
 // and transports choose the names of namespaces, nodes and processes. [Namespace],
 // [NodeID], [CellID] and [Identity] are string types, because node labels and messages
@@ -45,13 +46,14 @@
 // The codecs return an error for a [Role], a [Status], a [Fault] or a [Phase] that is
 // not Valid, on encode and on decode. An encoding leaves out every field of a zero
 // value, so a codec does not check the zero [Status] or the zero [Phase], which are not
-// Valid. [NamespaceIncarnation] and [ID] encode through the binary methods of the
-// identifier that they embed.
+// Valid. [NamespaceIncarnation] encodes through the binary methods of the identifier
+// that it embeds. [ID] encodes as the bytes that those methods write for its ULID.
 //
 // # Errors
 //
 // [ErrIncarnation] classifies as errs.Conflict. [ErrUnknownRole], [ErrUnknownStatus],
-// [ErrUnknownFault], [ErrUnknownPhase] and [ErrDuration] classify as errs.Invalid.
+// [ErrUnknownFault], [ErrUnknownPhase], [ErrDuration] and [ErrID] classify as
+// errs.Invalid.
 //
 // # Concurrency
 //
@@ -67,7 +69,7 @@
 //
 // # Dependency position
 //
-// shard imports the standard library and the packages epoch, errs, id and tag of
-// go.thesmos.sh/core. Its generated codecs also import go.thesmos.sh/kanon and
+// shard imports the standard library and the packages epoch, errs, id, id/ulid and tag
+// of go.thesmos.sh/core. Its generated codecs also import go.thesmos.sh/kanon and
 // go.thesmos.sh/kanon/wire.
 package shard

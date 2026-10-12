@@ -54,10 +54,10 @@ const (
 )
 
 // recordedParent is the parent shard of recordedObserved.
-var recordedParent = shard.ID{ID: id.New128([16]byte{
+var recordedParent = shard.ID{ID128: id.ID128{
 	0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
 	0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f, 0x30,
-})}
+}}
 
 // recordedObserved is the report whose encoding recordedObservedHex pins.
 var recordedObserved = shard.Observed{

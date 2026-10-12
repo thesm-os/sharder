@@ -16,8 +16,7 @@ type Namespace string
 // incarnation matches the new one.
 //
 // The zero NamespaceIncarnation is the value of a sender that does not know the
-// incarnation yet, such as the spec proposal that creates the namespace, or a reader
-// that has not read the root scope.
+// incarnation yet, such as a reader that has not read the root scope.
 //
 // # Encoding
 //

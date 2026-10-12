@@ -41,4 +41,9 @@ var (
 	// Duration.UnmarshalText returns an error that wraps it. It classifies as
 	// errs.Invalid.
 	ErrDuration = errs.WithClass(errors.New("shard: invalid duration"), errs.Invalid)
+
+	// ErrID reports bytes that are not the encoding of a shard ID, such as the 20 bytes
+	// of a wider identifier. ID.UnmarshalBinary returns an error that wraps it. It
+	// classifies as errs.Invalid.
+	ErrID = errs.WithClass(errors.New("shard: invalid shard ID"), errs.Invalid)
 )

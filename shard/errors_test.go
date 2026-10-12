@@ -30,6 +30,7 @@ func TestErrors(t *testing.T) {
 		{name: "ErrUnknownFault", give: shard.ErrUnknownFault, want: errs.Invalid},
 		{name: "ErrUnknownPhase", give: shard.ErrUnknownPhase, want: errs.Invalid},
 		{name: "ErrDuration", give: shard.ErrDuration, want: errs.Invalid},
+		{name: "ErrID", give: shard.ErrID, want: errs.Invalid},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
