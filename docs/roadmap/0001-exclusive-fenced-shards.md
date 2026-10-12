@@ -26,8 +26,9 @@ An application can embed sharder to spread exclusive shards over its processes, 
 ### The boundary
 
 - [ ] `builtin.Support` lists `fixed-slots` and `singleton`, `planner`, `primary-only`, `exclusive`, `break-before-make`, `embedded` and `watch`, opens the constraint, goal and hash axes, requires the capability `fenced`, and admits no approvals.
-- [ ] `Resolve` rejects every other built-in name on every axis, a strategy that an application registers on a closed axis, a non-empty approvals section, `hold`, `scale`, and a replica count other than one. Each rejection is an error of class `errs.Unsupported` that names the axis and the value, and a table test covers every name.
-- [ ] `builtin.Registry` registers `exclusive-worker`, `consumer-group`, `actor-entities` and `leader-election` and no other preset, and each of the four resolves without a problem or a warning.
+- [ ] `Resolve` rejects every other built-in name on every axis, and a strategy that an application registers on a closed axis. Each rejection is an error of class `errs.Unsupported` that names the axis and the value, and a table test covers every name.
+- [ ] A spec with an approvals section, `hold`, `scale` or a replica count fails with an error of class `errs.Invalid`, because none of them is a field of the support matrix.
+- [ ] `builtin.Register` registers `exclusive-worker`, `consumer-group`, `actor-entities` and `leader-election` and no other preset, and each of the four resolves without a problem or a warning.
 - [ ] `Change` rejects an edit of every field of the mapping, `hashTags` alone included, with an error of class `errs.Invalid` that names a migration to a new namespace. It allows edits of placement, the budget, the load model and the cell bounds. A table test covers every field of both supported partitioners.
 - [ ] `Resolve` merges a selection of the preset's strategy over the preset's configuration as a JSON Merge Patch, and starts a selection of another strategy from that strategy's defaults. The root stores the expanded result. A table test covers `null`, an array, `[]` and a change of strategy.
 - [ ] `Resolve` rejects a store that has leases paired with `membership/static`, and a value below one for `maxTransitions`, `maxNodeTransitions` or `nodeCallbacks`.
@@ -219,10 +220,11 @@ It needs these from outside this repository:
 - Core's `fsm`, `task` and `coretest/epochtest`, its fence laws, and the `Policy`, `Signature` and `Resolver` of its `crypto/sign`.
 - `version.ErrOutcomeUnknown` in core, which the store returns for a commit whose outcome is unknown.
 - Binary encoding methods on core's `id.ID`, through which every message encodes its namespace incarnation.
+- Core's `id.ID128`, which a shard ID embeds.
 - `resilience.Retrier.Start` and `Retry` in core, with which the transition engine decides each retry of a callback without a wait inside the call.
 - kanon's generator, and its runtime packages `go.thesmos.sh/kanon` and `go.thesmos.sh/kanon/wire`, which the generated codecs import.
 
-Core v0.9.0 contains every core item, and kanon v0.1.0 contains the generator and both runtime packages.
+Core v0.12.0 contains every core item, and kanon v0.1.0 contains the generator and both runtime packages.
 
 Milestones 0002 to 0005 wait for this one.
 
@@ -252,6 +254,8 @@ The scope is the support matrix of the first release and its enforcement: `Resol
 
 | Date | What changed | Why |
 |---|---|---|
+| 2026-10-11 | Named `builtin.Register` in place of `builtin.Registry`. Changed the class of the refusal of an approvals section, `hold`, `scale` and a replica count to `errs.Invalid` | ADR-0019 registers the built-ins with `Register` and a constructor per factory, and refuses a field outside the support matrix as an unknown field, as ADR-0012 does for approvals |
+| 2026-10-11 | Added core's `id.ID128` to the prerequisites, and named core v0.12.0 as the release that contains every core item | ADR-0018 stores a shard ID as an `id.ID128`. Core v0.12.0 was published on 2026-10-11 |
 | 2026-10-11 | Named the `Local` of `protocol/local` in the check of the refused versions and features | ADR-0013 moves `Network` and `Local` into package `protocol/local` |
 | 2026-10-11 | Added the checks of a node that joins an evenly loaded cell and of nodes that stop at once, and the documentation of the drain time of a planned stop. Changed the check of two racing disruptions to admit each once its nodes are empty | ADR-0009 runs the improvement when the least loaded node is far below the mean, ADR-0010 counts only the disrupted nodes that host a replica, and ADR-0011 limits only the moves out of a node. A review of scale-in found that the nodes of one step drain in parallel, and that a stop whose drain outlasts the platform's grace period fails over as after a crash |
 | 2026-10-10 | Added core's `Retrier.Start` and `Retry` to the prerequisites, and named core v0.9.0 as the release that contains every core item | The simulator drives the transition engine on one goroutine, so the engine cannot use the blocking `resilience.Do`. Core v0.9.0 was published on 2026-10-10 |
