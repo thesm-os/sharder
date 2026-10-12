@@ -13,7 +13,7 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0002](0002-store-reader-for-readers.md) | Readers of the store take store.Reader | Accepted |
 | [0003](0003-implementations-below-contracts.md) | Built-in implementations are subpackages of their contracts | Accepted |
 | [0004](0004-proposals-in-their-own-package.md) | Proposals and approvals form package proposal | Superseded by [0008](0008-declarations-of-the-support-matrix.md) |
-| [0005](0005-core-assigns-shard-ids.md) | The core assigns shard IDs from core's identifiers | Accepted |
+| [0005](0005-core-assigns-shard-ids.md) | The core assigns shard IDs from core's identifiers | Superseded by [0018](0018-shard-ids-are-128-bit-identifiers.md) |
 | [0006](0006-roles-and-statuses-are-enumerations.md) | Roles and statuses are closed enumerations | Accepted |
 | [0007](0007-partitioners-return-spans.md) | Partitioners divide a range into spans, and the core assigns their IDs | Accepted |
 | [0008](0008-declarations-of-the-support-matrix.md) | Replication, ownership, fence and proposal declare only the capabilities of the support matrix | Accepted |
@@ -26,3 +26,14 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0015](0015-placement-declares-the-planner-of-the-matrix.md) | Placement declares only the planner of the support matrix, with sparse plans and a concrete state | Accepted |
 | [0016](0016-improvement-weighs-every-tier-at-once.md) | The improvement weighs every tier at once and examines a sample of the shards of each node | Accepted |
 | [0017](0017-handoff-steps-on-the-sides-of-a-transfer.md) | Handoff declares only the protocol of the support matrix, with steps on the sides of a transfer | Accepted |
+| [0018](0018-shard-ids-are-128-bit-identifiers.md) | The core assigns shard IDs as 128-bit identifiers of core | Accepted |
+| [0019](0019-builtin-registers-with-a-constructor-per-factory.md) | Builtin registers the support matrix with Register and one constructor per factory | Accepted |
+| [0020](0020-machines-return-effects-with-tokens.md) | Machines take events and return effects through a closed vocabulary with tokens | Accepted |
+| [0021](0021-engine-bounds-callbacks-per-node.md) | The transition engine bounds the callbacks to each node with a queue of its own | Accepted |
+| [0022](0022-engine-commits-one-batch-at-a-time.md) | The transition engine commits its changes with one batch in flight | Accepted |
+| [0023](0023-membership-ends-node-incarnations.md) | The transition engine takes the end of a node incarnation from the membership view | Accepted |
+| [0024](0024-controller-makes-the-source-the-fallback.md) | A controller makes the source of a move its fallback, or gives the move none | Accepted |
+| [0025](0025-cell-logs-the-cell-above-its-bounds.md) | The controller of a cell logs the cell above its bounds | Accepted |
+| [0026](0026-agent-joins-again-after-its-session.md) | The agent joins its cell again with a new incarnation after its session ends | Accepted |
+| [0027](0027-agent-raises-epoch-from-the-ack.md) | The agent raises its controller epoch from the ack of a report | Accepted |
+| [0028](0028-close-ends-at-its-deadline.md) | The disruption of a Close ends at the deadline of the call | Accepted |

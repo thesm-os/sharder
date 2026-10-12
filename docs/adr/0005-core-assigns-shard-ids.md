@@ -1,10 +1,10 @@
 ---
 adr: 0005
 title: The core assigns shard IDs from core's identifiers
-status: Accepted
+status: Superseded
 date: 2026-10-10
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0018
 rfc: RFC-0001, RFC-0003, RFC-0004, RFC-0006, RFC-0008
 ---
 
@@ -17,7 +17,7 @@ rfc: RFC-0001, RFC-0003, RFC-0004, RFC-0006, RFC-0008
 
 ## Status
 
-Accepted
+Superseded by [ADR-0018](0018-shard-ids-are-128-bit-identifiers.md)
 
 ## Context
 
