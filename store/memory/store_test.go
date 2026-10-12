@@ -59,12 +59,12 @@ var (
 	// placements lists the two placements of the tests, in position order.
 	placements = []shard.Placement{
 		{
-			Shard:    shard.ID{ID: id.New128([16]byte{0: tagShard, 15: 0x01})},
+			Shard:    shard.ID{ID128: id.ID128{0: tagShard, 15: 0x01}},
 			Range:    shard.Range{End: []byte{0x80}},
 			Replicas: []shard.Replica{{Node: node, Role: shard.RolePrimary}},
 		},
 		{
-			Shard:    shard.ID{ID: id.New128([16]byte{0: tagShard, 15: 0x02})},
+			Shard:    shard.ID{ID128: id.ID128{0: tagShard, 15: 0x02}},
 			Range:    shard.Range{Start: []byte{0x80}},
 			Replicas: []shard.Replica{{Node: node, Role: shard.RolePrimary}},
 		},

@@ -397,7 +397,7 @@ func newFixture() *fixture {
 		cell:    shard.Cell{ID: cell, Controller: controller, ControllerIdentity: caller, Epoch: lawTerm},
 	}
 	for i := range shardCount {
-		f.shards[i] = shard.ID{ID: id.New128([16]byte{0: tagShard, 15: byte(i + 1)})}
+		f.shards[i] = shard.ID{ID128: id.ID128{0: tagShard, 15: byte(i + 1)}}
 		if i > 0 {
 			f.ranges[i].Start = []byte{byte(i * rangeStep)}
 		}
@@ -1004,7 +1004,7 @@ func (sm *stateModel) state(h store.Head) store.State {
 		Applied: sm.applied,
 		Spec:    sm.spec,
 		Transitions: slices.SortedFunc(maps.Values(sm.transitions), func(a, b store.Transition) int {
-			return a.Operation.Shard.Compare(b.Operation.Shard.ID)
+			return a.Operation.Shard.Compare(b.Operation.Shard)
 		}),
 		Reservations: slices.SortedFunc(maps.Values(sm.reservations), func(a, b budget.Reservation) int {
 			return a.Disruption.ID.Compare(b.Disruption.ID.ID)
@@ -1822,7 +1822,7 @@ func (su *suite) fitsLaws(t *testing.T) {
 			}
 			for i := range m.Put {
 				m.Put[i] = shard.Placement{
-					Shard: shard.ID{ID: id.New128([16]byte{0: tagFits, 14: byte(i >> 8), 15: byte(i)})},
+					Shard: shard.ID{ID128: id.ID128{0: tagFits, 14: byte(i >> 8), 15: byte(i)}},
 					Range: shard.Range{Start: []byte{byte(i >> 8), byte(i)}},
 				}
 			}

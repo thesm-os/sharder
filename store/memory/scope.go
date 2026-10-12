@@ -359,7 +359,7 @@ func transitions(prev []store.Transition, m *store.Mutation) ([]store.Transition
 		byShard[m.Transitions[i].Operation.Shard] = m.Transitions[i]
 	}
 	return slices.SortedFunc(maps.Values(byShard), func(a, b store.Transition) int {
-		return a.Operation.Shard.Compare(b.Operation.Shard.ID)
+		return a.Operation.Shard.Compare(b.Operation.Shard)
 	}), ended
 }
 
