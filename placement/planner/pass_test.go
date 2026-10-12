@@ -123,7 +123,7 @@ var origin = time.Date(2026, time.October, 11, 0, 0, 0, 0, time.UTC)
 var ids = func() []shard.ID {
 	list := make([]shard.ID, 8)
 	for i := range list {
-		list[i] = shard.ID{ID: id.New128([16]byte{15: byte(i + 1)})}
+		list[i] = shard.ID{ID128: id.ID128{15: byte(i + 1)}}
 	}
 	return list
 }()

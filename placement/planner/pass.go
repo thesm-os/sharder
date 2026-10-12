@@ -184,7 +184,7 @@ func (p *pass) measure() error {
 //   - the errors of check and repairShard.
 func (p *pass) repair(ctx context.Context) error {
 	ids := p.st.Shards()
-	start, _ := slices.BinarySearchFunc(ids, p.in.RepairFrom, func(a, b shard.ID) int { return a.Compare(b.ID) })
+	start, _ := slices.BinarySearchFunc(ids, p.in.RepairFrom, shard.ID.Compare)
 	for k := range ids {
 		i := (start + k) % len(ids)
 		if !p.needsRepair(ids[i], p.st.ReplicasAt(i)) {
@@ -432,7 +432,7 @@ func (p *pass) improveFrom(ctx context.Context, n shard.NodeID) (bool, error) {
 			if found {
 				order = p.compare(deltas, p.bestDeltas)
 			}
-			if order < 0 || (order == 0 && m.Shard.Compare(best.Shard.ID) < 0) {
+			if order < 0 || (order == 0 && m.Shard.Compare(best.Shard) < 0) {
 				best, found = m, true
 				copy(p.bestDeltas, deltas)
 			}

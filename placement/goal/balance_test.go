@@ -50,12 +50,12 @@ const tolerance = 1e-12
 
 // The shards of the cell of the tests of this package, in the order of their IDs.
 var (
-	s1 = shard.ID{ID: id.New128([16]byte{15: 1})}
-	s2 = shard.ID{ID: id.New128([16]byte{15: 2})}
-	s3 = shard.ID{ID: id.New128([16]byte{15: 3})}
-	s4 = shard.ID{ID: id.New128([16]byte{15: 4})}
-	s5 = shard.ID{ID: id.New128([16]byte{15: 5})}
-	s6 = shard.ID{ID: id.New128([16]byte{15: 6})}
+	s1 = shard.ID{ID128: id.ID128{15: 1}}
+	s2 = shard.ID{ID128: id.ID128{15: 2}}
+	s3 = shard.ID{ID128: id.ID128{15: 3}}
+	s4 = shard.ID{ID128: id.ID128{15: 4}}
+	s5 = shard.ID{ID128: id.ID128{15: 5}}
+	s6 = shard.ID{ID128: id.ID128{15: 6}}
 )
 
 // The labels of the shards of the cell of the tests of this package.

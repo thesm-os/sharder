@@ -64,13 +64,13 @@ const (
 // s1 to s5 are the shards of the cell of the tests, in the order of their IDs. s8 and
 // s9 are shards that the layout does not list.
 var (
-	s1 = shard.ID{ID: id.New128([16]byte{15: 1})}
-	s2 = shard.ID{ID: id.New128([16]byte{15: 2})}
-	s3 = shard.ID{ID: id.New128([16]byte{15: 3})}
-	s4 = shard.ID{ID: id.New128([16]byte{15: 4})}
-	s5 = shard.ID{ID: id.New128([16]byte{15: 5})}
-	s8 = shard.ID{ID: id.New128([16]byte{15: 8})}
-	s9 = shard.ID{ID: id.New128([16]byte{15: 9})}
+	s1 = shard.ID{ID128: id.ID128{15: 1}}
+	s2 = shard.ID{ID128: id.ID128{15: 2}}
+	s3 = shard.ID{ID128: id.ID128{15: 3}}
+	s4 = shard.ID{ID128: id.ID128{15: 4}}
+	s5 = shard.ID{ID128: id.ID128{15: 5}}
+	s8 = shard.ID{ID128: id.ID128{15: 8}}
+	s9 = shard.ID{ID128: id.ID128{15: 9}}
 )
 
 // The labels of the shards of the cell of the tests.
@@ -316,7 +316,7 @@ func TestState(t *testing.T) {
 			in.Current.Placements[s9] = shard.Placement{Shard: s9}
 			in.Current.Placements[s8] = shard.Placement{Shard: s8}
 			for b := byte(10); b < 14; b++ {
-				extra := shard.ID{ID: id.New128([16]byte{15: b})}
+				extra := shard.ID{ID128: id.ID128{15: b}}
 				in.Current.Placements[extra] = shard.Placement{Shard: extra}
 			}
 			assert.Deterministic(t, func(in *placement.Input) (string, error) {
@@ -1441,7 +1441,8 @@ func scaled(shards, nodes int) *placement.Input {
 		}
 	}
 	for i := range shards {
-		sh := shard.ID{ID: id.New128([16]byte{12: byte(i >> 24), 13: byte(i >> 16), 14: byte(i >> 8), 15: byte(i)})}
+		seq := i + 1
+		sh := shard.ID{ID128: id.ID128{12: byte(seq >> 24), 13: byte(seq >> 16), 14: byte(seq >> 8), 15: byte(seq)}}
 		in.Layout.Shards[i] = partition.Shard{ID: sh}
 		in.Current.Placements[sh] = shard.Placement{
 			Shard:    sh,

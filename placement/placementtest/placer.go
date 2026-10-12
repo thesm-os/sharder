@@ -151,7 +151,7 @@ func AssertPlacer(t *testing.T, p placement.Placer, cs []placement.Constraint) {
 					in := drawPass(c)(1)
 					plan, err := p.Place(c.Context(), in)
 					assert.NoError(c, err, "Place must plan a generated input")
-					for _, id := range slices.SortedFunc(maps.Keys(plan.Targets), func(a, b shard.ID) int { return a.Compare(b.ID) }) {
+					for _, id := range slices.SortedFunc(maps.Keys(plan.Targets), shard.ID.Compare) {
 						target := plan.Targets[id]
 						current := in.Current.Placements[id].Replicas
 						same := len(target.Replicas) == len(current) &&

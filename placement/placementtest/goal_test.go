@@ -79,7 +79,7 @@ func TestGoal(t *testing.T) {
 	t.Run("Delta", func(t *testing.T) {
 		t.Parallel()
 
-		sh := shard.ID{ID: id.New128([16]byte{15: 1})}
+		sh := shard.ID{ID128: id.ID128{15: 1}}
 		in := &placement.Input{
 			Model:  replication.PrimaryOnly,
 			Layout: partition.Layout{Shards: []partition.Shard{{ID: sh}}},

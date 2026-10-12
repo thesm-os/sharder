@@ -786,7 +786,7 @@ func (st *State) indexShards() error {
 	for i := range layout {
 		entries[i] = entry{id: layout[i].ID, pos: int32(i)}
 	}
-	slices.SortFunc(entries, func(a, b entry) int { return a.id.Compare(b.id.ID) })
+	slices.SortFunc(entries, func(a, b entry) int { return a.id.Compare(b.id) })
 
 	st.ids = make([]shard.ID, len(entries))
 	st.shards = make([]shardState, len(entries))
@@ -833,7 +833,7 @@ func (st *State) indexCurrent() error {
 	var extra shard.ID
 	for id := range placements {
 		//dokimi:mutate-skip ror-boundary: the keys of a map differ, so two IDs never compare equal
-		if _, ok := st.index[id]; !ok && (extra.IsZero() || id.Compare(extra.ID) < 0) {
+		if _, ok := st.index[id]; !ok && (extra.IsZero() || id.Compare(extra) < 0) {
 			extra = id
 		}
 	}
@@ -1100,7 +1100,7 @@ func (st *State) apply(i int32, from int, to int32, m Move) {
 func (st *State) shift(i, x int32, r shard.Role, sign int32, peak bool) {
 	n := &st.nodes[x]
 	id := st.ids[i]
-	pos, _ := slices.BinarySearchFunc(n.shards, id, func(a, b shard.ID) int { return a.Compare(b.ID) })
+	pos, _ := slices.BinarySearchFunc(n.shards, id, shard.ID.Compare)
 	//dokimi:mutate-skip ror-boundary: sign is 1 or -1, never 0
 	if sign > 0 {
 		n.shards = slices.Insert(n.shards, pos, id)

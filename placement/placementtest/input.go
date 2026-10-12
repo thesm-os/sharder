@@ -175,7 +175,7 @@ func Inputs() prop.Generator[*placement.Input] {
 		}
 		ids := make([]shard.ID, len(layout.Shards))
 		for i := range ids {
-			ids[i] = shard.ID{ID: id.New128([16]byte{15: byte(i + 1)})}
+			ids[i] = shard.ID{ID128: id.ID128{15: byte(i + 1)}}
 		}
 		for _, sh := range ids {
 			drawShard(c, in, sh, pool)
@@ -233,7 +233,7 @@ func drawLayout(c *prop.Case) partition.Layout {
 	shards := make([]partition.Shard, count)
 	order := make([]int, count)
 	for i := range shards {
-		sh := partition.Shard{ID: shard.ID{ID: id.New128([16]byte{15: byte(i + 1)})}}
+		sh := partition.Shard{ID: shard.ID{ID128: id.ID128{15: byte(i + 1)}}}
 		if tenant := c.Draw(prop.SampledFrom("", "t0", "t1"), labelTenant); tenant != "" {
 			sh.Labels = append(sh.Labels, tag.Tag{Key: Tenant, Value: tenant})
 		}

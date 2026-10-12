@@ -381,7 +381,8 @@ func scaled(shards int, s shape) *placement.Input {
 		hosts = nodes
 	}
 	for i := range shards {
-		sh := shard.ID{ID: id.New128([16]byte{12: byte(i >> 24), 13: byte(i >> 16), 14: byte(i >> 8), 15: byte(i)})}
+		seq := i + 1
+		sh := shard.ID{ID128: id.ID128{12: byte(seq >> 24), 13: byte(seq >> 16), 14: byte(seq >> 8), 15: byte(seq)}}
 		in.Layout.Shards[i] = partition.Shard{ID: sh}
 		host, load := in.Nodes[i%hosts].ID, 1.0
 		if s == skewed && i%shardsPerNode == 0 {

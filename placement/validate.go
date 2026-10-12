@@ -69,7 +69,7 @@ func Validate(in *Input, p Plan, cs []Constraint) ([]Violation, error) {
 	if err != nil {
 		return nil, err
 	}
-	targets := slices.SortedFunc(maps.Keys(p.Targets), func(a, b shard.ID) int { return a.Compare(b.ID) })
+	targets := slices.SortedFunc(maps.Keys(p.Targets), shard.ID.Compare)
 	for _, id := range targets {
 		if err := st.applyTarget(id, p.Targets[id]); err != nil {
 			return nil, err

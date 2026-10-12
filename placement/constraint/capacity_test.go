@@ -49,13 +49,13 @@ const (
 // The shards of the cell of the tests of this package, in the order of their IDs. The
 // layout does not list s9.
 var (
-	s1 = shard.ID{ID: id.New128([16]byte{15: 1})}
-	s2 = shard.ID{ID: id.New128([16]byte{15: 2})}
-	s3 = shard.ID{ID: id.New128([16]byte{15: 3})}
-	s4 = shard.ID{ID: id.New128([16]byte{15: 4})}
-	s5 = shard.ID{ID: id.New128([16]byte{15: 5})}
-	s6 = shard.ID{ID: id.New128([16]byte{15: 6})}
-	s9 = shard.ID{ID: id.New128([16]byte{15: 9})}
+	s1 = shard.ID{ID128: id.ID128{15: 1}}
+	s2 = shard.ID{ID128: id.ID128{15: 2}}
+	s3 = shard.ID{ID128: id.ID128{15: 3}}
+	s4 = shard.ID{ID128: id.ID128{15: 4}}
+	s5 = shard.ID{ID128: id.ID128{15: 5}}
+	s6 = shard.ID{ID128: id.ID128{15: 6}}
+	s9 = shard.ID{ID128: id.ID128{15: 9}}
 )
 
 // cell returns the input of the cell of the tests of this package. Its model is
