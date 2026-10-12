@@ -32,7 +32,7 @@ A package may import the packages in its row, and every package that those packa
 | `shard` | The value types that every package shares, such as scopes, nodes, placements and the cell map | Nothing |
 | `proposal` | The proposals of operators, their kinds and their IDs | `shard` |
 | `config` | Specs, the strategy registry, the support matrix type, presets, `Resolve` and `Change` | `shard`, `proposal` |
-| `builtin` | The names of the 30 built-in strategies, the factories of the built-ins that the support matrix contains, the four presets of the matrix, `Support` and `Registry` | `config` and the built-in strategies |
+| `builtin` | `Support`, `Register`, `Presets`, a constructor of the factory of each built-in strategy that the support matrix contains, and the names of `exclusive`, `embedded`, `watch` and the four presets | `config` and the built-in strategies |
 
 ### Strategies, fencing and budgets
 
@@ -81,7 +81,7 @@ A package may import the packages in its row, and every package that those packa
 
 Each controller, agent and router is a state machine. A machine takes one event at a time and returns the effects of the event, such as calls, commits and timers. `internal/driver` runs the machines in production, and `sim` runs every machine of a namespace on one goroutine. The machines are not part of the public API, so they are internal packages of the root module.
 
-Each internal package has at least two callers, so the logic that two components share exists once.
+Each internal package has at least two callers, so the logic that two components share exists once. `internal/control` is the only caller of `internal/engine` and `internal/scope`. It runs them for the root and for each cell.
 
 | Package | Contains | Callers |
 |---|---|---|
@@ -90,10 +90,11 @@ Each internal package has at least two callers, so the logic that two components
 | `internal/machine/cell` | The machine of a cell's controller | `controller`, `sim` |
 | `internal/machine/agent` | The machine of an agent | `replica`, `sim` |
 | `internal/machine/routes` | The machine of a router's cell map and route caches | `router`, `sim` |
-| `internal/engine` | The transition engine, with its records, steps, abort paths, retries and bounds on transitions in flight | `internal/machine/root`, `internal/machine/cell` |
-| `internal/scope` | The acquisition of a scope, commits with receipts, and the settlement of unknown outcomes | `internal/machine/root`, `internal/machine/cell` |
-| `internal/follow` | The state of a scope, kept from a snapshot and a watch of the store | `internal/machine/agent`, `internal/machine/routes` |
-| `internal/driver` | The production driver, which performs the effects of a machine under core's `task` and bounds the callbacks to each node with a bulkhead | `controller`, `replica`, `router` |
+| `internal/control` | The controller of one scope, with the acquisition of the scope, its assignment, the views of its membership, its planning passes, its budget, its proposals and its instruments | `internal/machine/root`, `internal/machine/cell` |
+| `internal/engine` | The transition engine, with its records, steps, abort paths, retries and batches of commits, and the bounds on the transitions in flight and on the callbacks to each node | `internal/control` |
+| `internal/scope` | The acquisition of a scope, commits with receipts, and the settlement of unknown outcomes | `internal/control` |
+| `internal/follow` | The paged snapshots and the watch of a scope, which it passes to its machine under the store's rules for readers | `internal/machine/cell`, `internal/machine/agent`, `internal/machine/routes` |
+| `internal/driver` | The production driver, which performs the effects of a machine under core's `task` | `controller`, `replica`, `router` |
 | `internal/streamtest` | The receive of the items of iterators and channels with a bound on each wait, for the tests and the conformance kits | `store/storetest`, `membership/membershiptest`, and the tests of `store/memory` |
 
 ## Adapters, the command and the examples
