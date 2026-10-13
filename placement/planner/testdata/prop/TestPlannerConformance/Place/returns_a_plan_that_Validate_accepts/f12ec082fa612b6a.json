@@ -1,0 +1,2352 @@
+{
+  "store": 1,
+  "definition": "8.0.0",
+  "property": "Place returns a plan that the checks of the core accept",
+  "identity": {
+    "assertion": "err-absent",
+    "file": "placer.go",
+    "line": 73
+  },
+  "choices": "prop1:AAAABAAAAAAAAQAAAAAAAAABAAAAAAAAAAEAFAAAAAAAAAAAAAEAAgAAAAAACwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQACAAMABAAFAAYABwAIAAkAAQABAAAAAAABAAAAAQAEAAAAAAAAAAAAAAABAAAAAQAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAQAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAB",
+  "counterexample": [
+    {
+      "label": "model",
+      "value": {
+        "type": "map",
+        "entries": [
+          [
+            {
+              "type": "string",
+              "value": "Name"
+            },
+            {
+              "type": "string",
+              "value": "primary-only"
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Roles"
+            },
+            {
+              "type": "list",
+              "items": [
+                {
+                  "type": "map",
+                  "entries": [
+                    [
+                      {
+                        "type": "string",
+                        "value": "Max"
+                      },
+                      {
+                        "type": "int",
+                        "value": 1
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Name"
+                      },
+                      {
+                        "type": "string",
+                        "value": "primary"
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Writer"
+                      },
+                      {
+                        "type": "bool",
+                        "value": true
+                      }
+                    ]
+                  ]
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Transitions"
+            },
+            {
+              "type": "list",
+              "items": [
+                {
+                  "type": "map",
+                  "entries": [
+                    [
+                      {
+                        "type": "string",
+                        "value": "Priority"
+                      },
+                      {
+                        "type": "int",
+                        "value": 0
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "From"
+                      },
+                      {
+                        "type": "string",
+                        "value": "primary"
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "To"
+                      },
+                      {
+                        "type": "string",
+                        "value": "offline"
+                      }
+                    ]
+                  ]
+                },
+                {
+                  "type": "map",
+                  "entries": [
+                    [
+                      {
+                        "type": "string",
+                        "value": "Priority"
+                      },
+                      {
+                        "type": "int",
+                        "value": 1
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "From"
+                      },
+                      {
+                        "type": "string",
+                        "value": "offline"
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "To"
+                      },
+                      {
+                        "type": "string",
+                        "value": "primary"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "label": "nodes",
+      "value": {
+        "type": "int",
+        "value": 4
+      }
+    },
+    {
+      "label": "zone",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "cpu capacity",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "disk capacity",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "zone",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "cpu capacity",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "disk capacity",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "zone",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "cpu capacity",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "disk capacity",
+      "value": {
+        "type": "int",
+        "value": 20
+      }
+    },
+    {
+      "label": "zone",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "cpu capacity",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "disk capacity",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "order",
+      "value": {
+        "type": "list",
+        "of": "int",
+        "value": [
+          0,
+          1,
+          2,
+          3
+        ]
+      }
+    },
+    {
+      "label": "draining",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "idle",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "shards",
+      "value": {
+        "type": "int",
+        "value": 11
+      }
+    },
+    {
+      "label": "tenant",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "home",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "tenant",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "home",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "tenant",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "home",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "tenant",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "home",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "tenant",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "home",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "tenant",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "home",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "tenant",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "home",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "tenant",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "home",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "tenant",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "home",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "tenant",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "home",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "tenant",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "home",
+      "value": {
+        "type": "string",
+        "value": ""
+      }
+    },
+    {
+      "label": "order",
+      "value": {
+        "type": "list",
+        "of": "int",
+        "value": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      }
+    },
+    {
+      "label": "seed",
+      "value": {
+        "type": "int",
+        "value": 1
+      }
+    },
+    {
+      "label": "parallelism",
+      "value": {
+        "type": "int",
+        "value": 1
+      }
+    },
+    {
+      "label": "emergency",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "placed",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "load",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "bytes",
+      "value": {
+        "type": "int",
+        "value": 4
+      }
+    },
+    {
+      "label": "transition",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "placed",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "load",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "transition",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "placed",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "load",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "bytes",
+      "value": {
+        "type": "int",
+        "value": 4
+      }
+    },
+    {
+      "label": "transition",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "placed",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "load",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "transition",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "placed",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "load",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "transition",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "placed",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "load",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "transition",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "placed",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "load",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "bytes",
+      "value": {
+        "type": "int",
+        "value": 6
+      }
+    },
+    {
+      "label": "transition",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "placed",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "load",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "transition",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "placed",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "load",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "transition",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "placed",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "load",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "transition",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "placed",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "load",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "transition",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "repair from",
+      "value": {
+        "type": "string",
+        "value": "00000000000000000000000002"
+      }
+    },
+    {
+      "label": "input",
+      "value": {
+        "type": "map",
+        "entries": [
+          [
+            {
+              "type": "string",
+              "value": "Clock"
+            },
+            {
+              "type": "map",
+              "entries": []
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Rand"
+            },
+            {
+              "type": "map",
+              "entries": []
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Transitions"
+            },
+            {
+              "type": "map",
+              "entries": []
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Faults"
+            },
+            {
+              "type": "map",
+              "entries": []
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Draining"
+            },
+            {
+              "type": "map",
+              "entries": []
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "ShardLoad"
+            },
+            {
+              "type": "map",
+              "entries": [
+                [
+                  {
+                    "type": "string",
+                    "value": "00000000000000000000000001"
+                  },
+                  {
+                    "type": "map",
+                    "entries": [
+                      [
+                        {
+                          "type": "string",
+                          "value": "bytes"
+                        },
+                        {
+                          "type": "float",
+                          "value": 1
+                        }
+                      ],
+                      [
+                        {
+                          "type": "string",
+                          "value": "cpu"
+                        },
+                        {
+                          "type": "float",
+                          "value": 0
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  {
+                    "type": "string",
+                    "value": "00000000000000000000000003"
+                  },
+                  {
+                    "type": "map",
+                    "entries": [
+                      [
+                        {
+                          "type": "string",
+                          "value": "bytes"
+                        },
+                        {
+                          "type": "float",
+                          "value": 1
+                        }
+                      ],
+                      [
+                        {
+                          "type": "string",
+                          "value": "cpu"
+                        },
+                        {
+                          "type": "float",
+                          "value": 0
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  {
+                    "type": "string",
+                    "value": "00000000000000000000000007"
+                  },
+                  {
+                    "type": "map",
+                    "entries": [
+                      [
+                        {
+                          "type": "string",
+                          "value": "bytes"
+                        },
+                        {
+                          "type": "float",
+                          "value": 1.5
+                        }
+                      ],
+                      [
+                        {
+                          "type": "string",
+                          "value": "cpu"
+                        },
+                        {
+                          "type": "float",
+                          "value": 0
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Model"
+            },
+            {
+              "type": "map",
+              "entries": [
+                [
+                  {
+                    "type": "string",
+                    "value": "Name"
+                  },
+                  {
+                    "type": "string",
+                    "value": "primary-only"
+                  }
+                ],
+                [
+                  {
+                    "type": "string",
+                    "value": "Roles"
+                  },
+                  {
+                    "type": "list",
+                    "items": [
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Max"
+                            },
+                            {
+                              "type": "int",
+                              "value": 1
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "Name"
+                            },
+                            {
+                              "type": "string",
+                              "value": "primary"
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "Writer"
+                            },
+                            {
+                              "type": "bool",
+                              "value": true
+                            }
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ],
+                [
+                  {
+                    "type": "string",
+                    "value": "Transitions"
+                  },
+                  {
+                    "type": "list",
+                    "items": [
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Priority"
+                            },
+                            {
+                              "type": "int",
+                              "value": 0
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "From"
+                            },
+                            {
+                              "type": "string",
+                              "value": "primary"
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "To"
+                            },
+                            {
+                              "type": "string",
+                              "value": "offline"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Priority"
+                            },
+                            {
+                              "type": "int",
+                              "value": 1
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "From"
+                            },
+                            {
+                              "type": "string",
+                              "value": "offline"
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "To"
+                            },
+                            {
+                              "type": "string",
+                              "value": "primary"
+                            }
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Layout"
+            },
+            {
+              "type": "map",
+              "entries": [
+                [
+                  {
+                    "type": "string",
+                    "value": "Cell"
+                  },
+                  {
+                    "type": "string",
+                    "value": ""
+                  }
+                ],
+                [
+                  {
+                    "type": "string",
+                    "value": "Shards"
+                  },
+                  {
+                    "type": "list",
+                    "items": [
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Span"
+                            },
+                            {
+                              "type": "map",
+                              "entries": [
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Range"
+                                  },
+                                  {
+                                    "type": "map",
+                                    "entries": [
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "Start"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ],
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "End"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "01"
+                                        }
+                                      ]
+                                    ]
+                                  }
+                                ],
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Labels"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              ]
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "ID"
+                            },
+                            {
+                              "type": "string",
+                              "value": "00000000000000000000000001"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Span"
+                            },
+                            {
+                              "type": "map",
+                              "entries": [
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Range"
+                                  },
+                                  {
+                                    "type": "map",
+                                    "entries": [
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "Start"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "01"
+                                        }
+                                      ],
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "End"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "02"
+                                        }
+                                      ]
+                                    ]
+                                  }
+                                ],
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Labels"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              ]
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "ID"
+                            },
+                            {
+                              "type": "string",
+                              "value": "00000000000000000000000002"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Span"
+                            },
+                            {
+                              "type": "map",
+                              "entries": [
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Range"
+                                  },
+                                  {
+                                    "type": "map",
+                                    "entries": [
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "Start"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "02"
+                                        }
+                                      ],
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "End"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "03"
+                                        }
+                                      ]
+                                    ]
+                                  }
+                                ],
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Labels"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              ]
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "ID"
+                            },
+                            {
+                              "type": "string",
+                              "value": "00000000000000000000000003"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Span"
+                            },
+                            {
+                              "type": "map",
+                              "entries": [
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Range"
+                                  },
+                                  {
+                                    "type": "map",
+                                    "entries": [
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "Start"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "03"
+                                        }
+                                      ],
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "End"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "04"
+                                        }
+                                      ]
+                                    ]
+                                  }
+                                ],
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Labels"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              ]
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "ID"
+                            },
+                            {
+                              "type": "string",
+                              "value": "00000000000000000000000004"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Span"
+                            },
+                            {
+                              "type": "map",
+                              "entries": [
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Range"
+                                  },
+                                  {
+                                    "type": "map",
+                                    "entries": [
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "Start"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "04"
+                                        }
+                                      ],
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "End"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "05"
+                                        }
+                                      ]
+                                    ]
+                                  }
+                                ],
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Labels"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              ]
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "ID"
+                            },
+                            {
+                              "type": "string",
+                              "value": "00000000000000000000000005"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Span"
+                            },
+                            {
+                              "type": "map",
+                              "entries": [
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Range"
+                                  },
+                                  {
+                                    "type": "map",
+                                    "entries": [
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "Start"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "05"
+                                        }
+                                      ],
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "End"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "06"
+                                        }
+                                      ]
+                                    ]
+                                  }
+                                ],
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Labels"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              ]
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "ID"
+                            },
+                            {
+                              "type": "string",
+                              "value": "00000000000000000000000006"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Span"
+                            },
+                            {
+                              "type": "map",
+                              "entries": [
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Range"
+                                  },
+                                  {
+                                    "type": "map",
+                                    "entries": [
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "Start"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "06"
+                                        }
+                                      ],
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "End"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "07"
+                                        }
+                                      ]
+                                    ]
+                                  }
+                                ],
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Labels"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              ]
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "ID"
+                            },
+                            {
+                              "type": "string",
+                              "value": "00000000000000000000000007"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Span"
+                            },
+                            {
+                              "type": "map",
+                              "entries": [
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Range"
+                                  },
+                                  {
+                                    "type": "map",
+                                    "entries": [
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "Start"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "07"
+                                        }
+                                      ],
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "End"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "08"
+                                        }
+                                      ]
+                                    ]
+                                  }
+                                ],
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Labels"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              ]
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "ID"
+                            },
+                            {
+                              "type": "string",
+                              "value": "00000000000000000000000008"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Span"
+                            },
+                            {
+                              "type": "map",
+                              "entries": [
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Range"
+                                  },
+                                  {
+                                    "type": "map",
+                                    "entries": [
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "Start"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "08"
+                                        }
+                                      ],
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "End"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "09"
+                                        }
+                                      ]
+                                    ]
+                                  }
+                                ],
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Labels"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              ]
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "ID"
+                            },
+                            {
+                              "type": "string",
+                              "value": "00000000000000000000000009"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Span"
+                            },
+                            {
+                              "type": "map",
+                              "entries": [
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Range"
+                                  },
+                                  {
+                                    "type": "map",
+                                    "entries": [
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "Start"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "09"
+                                        }
+                                      ],
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "End"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "0a"
+                                        }
+                                      ]
+                                    ]
+                                  }
+                                ],
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Labels"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              ]
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "ID"
+                            },
+                            {
+                              "type": "string",
+                              "value": "0000000000000000000000000A"
+                            }
+                          ]
+                        ]
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "Span"
+                            },
+                            {
+                              "type": "map",
+                              "entries": [
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Range"
+                                  },
+                                  {
+                                    "type": "map",
+                                    "entries": [
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "Start"
+                                        },
+                                        {
+                                          "type": "bytes",
+                                          "value": "0a"
+                                        }
+                                      ],
+                                      [
+                                        {
+                                          "type": "string",
+                                          "value": "End"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    ]
+                                  }
+                                ],
+                                [
+                                  {
+                                    "type": "string",
+                                    "value": "Labels"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              ]
+                            }
+                          ],
+                          [
+                            {
+                              "type": "string",
+                              "value": "ID"
+                            },
+                            {
+                              "type": "string",
+                              "value": "0000000000000000000000000B"
+                            }
+                          ]
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Current"
+            },
+            {
+              "type": "map",
+              "entries": [
+                [
+                  {
+                    "type": "string",
+                    "value": "Placements"
+                  },
+                  {
+                    "type": "map",
+                    "entries": []
+                  }
+                ],
+                [
+                  {
+                    "type": "string",
+                    "value": "Scope"
+                  },
+                  {
+                    "type": "map",
+                    "entries": [
+                      [
+                        {
+                          "type": "string",
+                          "value": "Namespace"
+                        },
+                        {
+                          "type": "string",
+                          "value": ""
+                        }
+                      ],
+                      [
+                        {
+                          "type": "string",
+                          "value": "Cell"
+                        },
+                        {
+                          "type": "string",
+                          "value": ""
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  {
+                    "type": "string",
+                    "value": "Generation"
+                  },
+                  {
+                    "type": "int",
+                    "value": 0
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Nodes"
+            },
+            {
+              "type": "list",
+              "items": [
+                {
+                  "type": "map",
+                  "entries": [
+                    [
+                      {
+                        "type": "string",
+                        "value": "ID"
+                      },
+                      {
+                        "type": "string",
+                        "value": "n0"
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Cell"
+                      },
+                      {
+                        "type": "string",
+                        "value": ""
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Address"
+                      },
+                      {
+                        "type": "string",
+                        "value": ""
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Identity"
+                      },
+                      {
+                        "type": "string",
+                        "value": ""
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Capacity"
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "disk"
+                            },
+                            {
+                              "type": "float",
+                              "value": 0
+                            }
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Labels"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Incarnation"
+                      },
+                      {
+                        "type": "int",
+                        "value": 0
+                      }
+                    ]
+                  ]
+                },
+                {
+                  "type": "map",
+                  "entries": [
+                    [
+                      {
+                        "type": "string",
+                        "value": "ID"
+                      },
+                      {
+                        "type": "string",
+                        "value": "n1"
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Cell"
+                      },
+                      {
+                        "type": "string",
+                        "value": ""
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Address"
+                      },
+                      {
+                        "type": "string",
+                        "value": ""
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Identity"
+                      },
+                      {
+                        "type": "string",
+                        "value": ""
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Capacity"
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "disk"
+                            },
+                            {
+                              "type": "float",
+                              "value": 0
+                            }
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Labels"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Incarnation"
+                      },
+                      {
+                        "type": "int",
+                        "value": 0
+                      }
+                    ]
+                  ]
+                },
+                {
+                  "type": "map",
+                  "entries": [
+                    [
+                      {
+                        "type": "string",
+                        "value": "ID"
+                      },
+                      {
+                        "type": "string",
+                        "value": "n2"
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Cell"
+                      },
+                      {
+                        "type": "string",
+                        "value": ""
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Address"
+                      },
+                      {
+                        "type": "string",
+                        "value": ""
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Identity"
+                      },
+                      {
+                        "type": "string",
+                        "value": ""
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Capacity"
+                      },
+                      {
+                        "type": "map",
+                        "entries": [
+                          [
+                            {
+                              "type": "string",
+                              "value": "disk"
+                            },
+                            {
+                              "type": "float",
+                              "value": 5
+                            }
+                          ]
+                        ]
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Labels"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Incarnation"
+                      },
+                      {
+                        "type": "int",
+                        "value": 0
+                      }
+                    ]
+                  ]
+                },
+                {
+                  "type": "map",
+                  "entries": [
+                    [
+                      {
+                        "type": "string",
+                        "value": "ID"
+                      },
+                      {
+                        "type": "string",
+                        "value": "n3"
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Cell"
+                      },
+                      {
+                        "type": "string",
+                        "value": ""
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Address"
+                      },
+                      {
+                        "type": "string",
+                        "value": ""
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Identity"
+                      },
+                      {
+                        "type": "string",
+                        "value": ""
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Capacity"
+                      },
+                      {
+                        "type": "map",
+                        "entries": []
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Labels"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Incarnation"
+                      },
+                      {
+                        "type": "int",
+                        "value": 0
+                      }
+                    ]
+                  ]
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Metrics"
+            },
+            {
+              "type": "list",
+              "items": [
+                {
+                  "type": "map",
+                  "entries": [
+                    [
+                      {
+                        "type": "string",
+                        "value": "Name"
+                      },
+                      {
+                        "type": "string",
+                        "value": "cpu"
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Capacity"
+                      },
+                      {
+                        "type": "string",
+                        "value": ""
+                      }
+                    ]
+                  ]
+                },
+                {
+                  "type": "map",
+                  "entries": [
+                    [
+                      {
+                        "type": "string",
+                        "value": "Name"
+                      },
+                      {
+                        "type": "string",
+                        "value": "bytes"
+                      }
+                    ],
+                    [
+                      {
+                        "type": "string",
+                        "value": "Capacity"
+                      },
+                      {
+                        "type": "string",
+                        "value": "disk"
+                      }
+                    ]
+                  ]
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Snapshot"
+            },
+            {
+              "type": "map",
+              "entries": [
+                [
+                  {
+                    "type": "string",
+                    "value": "Term"
+                  },
+                  {
+                    "type": "int",
+                    "value": 0
+                  }
+                ],
+                [
+                  {
+                    "type": "string",
+                    "value": "SpecVersion"
+                  },
+                  {
+                    "type": "int",
+                    "value": 0
+                  }
+                ],
+                [
+                  {
+                    "type": "string",
+                    "value": "Generation"
+                  },
+                  {
+                    "type": "int",
+                    "value": 0
+                  }
+                ],
+                [
+                  {
+                    "type": "string",
+                    "value": "Membership"
+                  },
+                  {
+                    "type": "int",
+                    "value": 0
+                  }
+                ],
+                [
+                  {
+                    "type": "string",
+                    "value": "Reports"
+                  },
+                  {
+                    "type": "int",
+                    "value": 0
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Parallelism"
+            },
+            {
+              "type": "int",
+              "value": 1
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "RepairFrom"
+            },
+            {
+              "type": "string",
+              "value": "00000000000000000000000002"
+            }
+          ],
+          [
+            {
+              "type": "string",
+              "value": "Emergency"
+            },
+            {
+              "type": "bool",
+              "value": false
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "label": "seed of the pass",
+      "value": {
+        "type": "int",
+        "value": 1
+      }
+    }
+  ],
+  "found": "2026-10-13"
+}

@@ -13,6 +13,14 @@ import (
 // CapacityName is the registered name of the constraint capacity.
 const CapacityName shard.StrategyName = "capacity"
 
+// precision is the relative amount by which the load of a node may exceed a capacity,
+// less the headroom, and still fit. The State adds and subtracts the load of each move in
+// the order of the moves, so two orders of the same moves can give loads that differ in
+// their last bits. The planner and Validate apply the moves of a plan in different orders.
+// A load within a billionth of the limit fits, so such a rounding error does not decide a
+// check.
+const precision = 1e-9
+
 // CapacityConfig is the configuration of the constraint capacity.
 //
 // The zero CapacityConfig does not keep capacity free.
@@ -45,7 +53,9 @@ func (c CapacityConfig) Validate() error {
 // capacity then keeps the replicas that fit as the planner moves the others off it.
 //
 // Capacity passes a move that removes a replica and a move to a node that the state
-// does not describe. It does not check a capacity that the node does not declare.
+// does not describe. It does not check a capacity that the node does not declare. A load
+// that exceeds a limit by at most a billionth of the limit fits, and so does a load that
+// exceeds a limit below 1 by at most a billionth.
 //
 // # Concurrency
 //
@@ -104,7 +114,9 @@ func (c *Capacity) Check(st *placement.State, m placement.Move) error {
 		if added {
 			total += shardLoad[metric.Name]
 		}
-		if total > capacity*(1-c.headroom) {
+		limit := capacity * (1 - c.headroom)
+		//dokimi:mutate-skip ror-boundary: precision absorbs rounding error, so a load of exactly the limit and the precision is noise
+		if total > limit+precision*max(1, limit) {
 			return ErrCapacity
 		}
 	}

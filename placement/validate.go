@@ -77,7 +77,7 @@ func Validate(in *Input, p Plan, cs []Constraint) ([]Violation, error) {
 	}
 
 	for _, id := range targets {
-		i := st.index[id]
+		i, _ := st.position(id)
 		initial := st.Initial(id)
 		for _, r := range p.Targets[id].Replicas {
 			if slices.Contains(initial, r) {
@@ -127,7 +127,7 @@ func Validate(in *Input, p Plan, cs []Constraint) ([]Violation, error) {
 //   - an error that wraps ErrPlan for a replica on a node that Input.Faults lists for
 //     the shard.
 func (st *State) applyTarget(id shard.ID, t Target) error {
-	if _, ok := st.index[id]; !ok {
+	if _, ok := st.position(id); !ok {
 		return fmt.Errorf("%w: a target of shard %v, which the layout does not list", ErrPlan, id)
 	}
 	if t.Deficit < 0 {

@@ -9,6 +9,7 @@ import (
 	"math"
 	"slices"
 
+	"go.thesmos.sh/core/idmap"
 	"go.thesmos.sh/core/tag"
 
 	"go.thesmos.sh/sharder/partition"
@@ -64,7 +65,7 @@ type State struct {
 	// in is the input that NewState indexed.
 	in *Input
 	// index maps the ID of each shard of the layout to its position in ids.
-	index map[shard.ID]int32
+	index *idmap.Map[shard.ID, int32]
 	// nodeIndex maps the ID of each node of the state to its position in nodes.
 	nodeIndex map[shard.NodeID]int32
 	// labelled counts the replicas on each node of the shards with each label. A count
@@ -224,7 +225,7 @@ func (st *State) Shards() []shard.ID {
 //
 // Zero alloc.
 func (st *State) Shard(id shard.ID) (partition.Shard, bool) {
-	i, ok := st.index[id]
+	i, ok := st.position(id)
 	if !ok {
 		return partition.Shard{}, false
 	}
@@ -238,7 +239,7 @@ func (st *State) Shard(id shard.ID) (partition.Shard, bool) {
 //
 // Zero alloc.
 func (st *State) Replicas(id shard.ID) []shard.Replica {
-	i, ok := st.index[id]
+	i, ok := st.position(id)
 	if !ok {
 		return nil
 	}
@@ -264,7 +265,7 @@ func (st *State) ReplicasAt(i int) []shard.Replica {
 //
 // Zero alloc.
 func (st *State) Initial(id shard.ID) []shard.Replica {
-	i, ok := st.index[id]
+	i, ok := st.position(id)
 	if !ok {
 		return nil
 	}
@@ -288,7 +289,7 @@ func (st *State) InitialAt(i int) []shard.Replica {
 //
 // Zero alloc.
 func (st *State) InFlight(id shard.ID) (InFlight, bool) {
-	i, ok := st.index[id]
+	i, ok := st.position(id)
 	if !ok || !st.shards[i].frozen {
 		return InFlight{}, false
 	}
@@ -303,7 +304,7 @@ func (st *State) InFlight(id shard.ID) (InFlight, bool) {
 //
 // Zero alloc.
 func (st *State) ShardLoad(id shard.ID) shard.Load {
-	i, ok := st.index[id]
+	i, ok := st.position(id)
 	if !ok {
 		return nil
 	}
@@ -443,7 +444,7 @@ func (st *State) PeakLoad(n shard.NodeID) shard.Load {
 //
 // Zero alloc.
 func (st *State) PeakCounts(n shard.NodeID, id shard.ID) bool {
-	i, ok := st.index[id]
+	i, ok := st.position(id)
 	if !ok || n == "" {
 		return false
 	}
@@ -587,7 +588,7 @@ func (st *State) MovedNode(n shard.NodeID) int {
 //
 // Zero alloc.
 func (st *State) MovedShard(id shard.ID) int {
-	i, ok := st.index[id]
+	i, ok := st.position(id)
 	if !ok {
 		return 0
 	}
@@ -618,7 +619,7 @@ func (st *State) MovedShard(id shard.ID) int {
 // shard into a full list of a node, and when it counts a label of the shard on a node
 // for the first time.
 func (st *State) Apply(m Move) error {
-	i, ok := st.index[m.Shard]
+	i, ok := st.position(m.Shard)
 	if !ok {
 		return fmt.Errorf("%w: the layout does not list shard %v", ErrMove, m.Shard)
 	}
@@ -670,6 +671,19 @@ func (st *State) Apply(m Move) error {
 		st.nodes[to].moved++
 	}
 	return nil
+}
+
+// position returns the position in ids of the shard id, and reports whether the layout
+// lists it. The zero State has no index, so position reports false for every shard.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (st *State) position(id shard.ID) (int32, bool) {
+	if st.index == nil {
+		return 0, false
+	}
+	return st.index.Get(id)
 }
 
 // indexModel records the Max of each role of the model, and the number of replicas of
@@ -790,7 +804,7 @@ func (st *State) indexShards() error {
 
 	st.ids = make([]shard.ID, len(entries))
 	st.shards = make([]shardState, len(entries))
-	st.index = make(map[shard.ID]int32, len(entries))
+	st.index = idmap.NewTyped128[shard.ID, int32](len(entries))
 	for i, e := range entries {
 		if e.id.IsZero() {
 			return fmt.Errorf("%w: shard %d of the layout has no ID", ErrInput, e.pos)
@@ -800,7 +814,7 @@ func (st *State) indexShards() error {
 		}
 		st.ids[i] = e.id
 		st.shards[i].layout = e.pos
-		st.index[e.id] = int32(i)
+		st.index.Set(e.id, int32(i))
 	}
 	return st.indexCurrent()
 }
@@ -833,7 +847,7 @@ func (st *State) indexCurrent() error {
 	var extra shard.ID
 	for id := range placements {
 		//dokimi:mutate-skip ror-boundary: the keys of a map differ, so two IDs never compare equal
-		if _, ok := st.index[id]; !ok && (extra.IsZero() || id.Compare(extra) < 0) {
+		if _, ok := st.index.Get(id); !ok && (extra.IsZero() || id.Compare(extra) < 0) {
 			extra = id
 		}
 	}
@@ -925,7 +939,7 @@ func (st *State) indexLoads() error {
 // ascending order.
 func (st *State) indexReplicas() {
 	for id := range st.in.Transitions {
-		if i, ok := st.index[id]; ok {
+		if i, ok := st.index.Get(id); ok {
 			st.shards[i].frozen = true
 		}
 	}

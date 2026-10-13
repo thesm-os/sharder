@@ -250,6 +250,58 @@ func TestCapacity(t *testing.T) {
 			})
 		}
 
+		sums := []struct {
+			name         string
+			giveCapacity float64
+			givePlaced   float64
+			giveAdded    float64
+			want         error
+		}{
+			{
+				name:         "returns nil for a replica that fills the free capacity up to the rounding of the sum",
+				giveCapacity: 0.3,
+				givePlaced:   0.1,
+				giveAdded:    0.2,
+			},
+			{
+				name:         "returns nil for a replica that exceeds the free capacity by less than a billionth of it",
+				giveCapacity: 1000,
+				givePlaced:   600,
+				giveAdded:    400.0000005,
+			},
+			{
+				name:         "returns ErrCapacity for a replica that exceeds the free capacity by more than a billionth of it",
+				giveCapacity: 1000,
+				givePlaced:   600,
+				giveAdded:    400.000002,
+				want:         constraint.ErrCapacity,
+			},
+		}
+		for _, tt := range sums {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				in := &placement.Input{
+					ShardLoad: map[shard.ID]shard.Load{
+						s1: {placementtest.CPU: tt.givePlaced},
+						s2: {placementtest.CPU: tt.giveAdded},
+					},
+					Model:  placementtest.Replicated,
+					Layout: partition.Layout{Shards: []partition.Shard{{ID: s1}, {ID: s2}}},
+					Nodes: []shard.Node{
+						{ID: n1, Capacity: map[string]float64{placementtest.CPU: tt.giveCapacity}},
+					},
+					Metrics:     []placement.Metric{{Name: placementtest.CPU}},
+					Parallelism: 1,
+					Current: shard.Assignment{Placements: map[shard.ID]shard.Placement{
+						s1: {Shard: s1, Replicas: []shard.Replica{{Node: n1, Role: shard.RolePrimary}}},
+					}},
+				}
+				add := placement.Move{To: n1, Shard: s2, Role: shard.RolePrimary}
+				got := newCapacity(t, 0).Check(newState(t, in), add)
+				assert.Equal(t, got, tt.want, "Check must return the error of the capacity")
+			})
+		}
+
 		t.Run("returns ErrCapacity for a node that a moving replica still loads", func(t *testing.T) {
 			t.Parallel()
 			st := newState(t, cell())

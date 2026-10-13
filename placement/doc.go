@@ -53,7 +53,7 @@
 //
 // # Dependency position
 //
-// placement imports the standard library, the packages clock, epoch, errs, rand and
-// tag of go.thesmos.sh/core, and the packages partition, replication and shard of
+// placement imports the standard library, the packages clock, epoch, errs, idmap, rand
+// and tag of go.thesmos.sh/core, and the packages partition, replication and shard of
 // sharder.
 package placement

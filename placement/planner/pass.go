@@ -12,6 +12,7 @@ import (
 	"slices"
 	"time"
 
+	"go.thesmos.sh/core/idmap"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/task"
 
@@ -35,15 +36,15 @@ type pass struct {
 	// st is the state that the pass changes.
 	st *placement.State
 	// deficits maps a shard that repair could not complete to its deficit.
-	deficits map[shard.ID]*deficit
+	deficits *idmap.Map[shard.ID, *deficit]
 	// touched records the shards that the pass moved or left with a deficit.
-	touched map[shard.ID]bool
+	touched *idmap.Map[shard.ID, bool]
 	// placed counts the replicas that repair placed on each node.
 	placed map[shard.NodeID]int
 	// out counts the moves of the improvement out of each node.
 	out map[shard.NodeID]int
 	// improved records the shards that the improvement moved.
-	improved map[shard.ID]bool
+	improved *idmap.Map[shard.ID, bool]
 	// deadline is the time on the clock of the input at which the pass stops.
 	deadline time.Time
 	// costs is the cost of each tier. apply adds the deltas of each move.
@@ -119,11 +120,11 @@ func newPass(pl *Planner, in *placement.Input, st *placement.State) *pass {
 		in:         in,
 		st:         st,
 		deadline:   in.Clock.Time().Add(time.Duration(pl.search.Timeout)),
-		deficits:   map[shard.ID]*deficit{},
-		touched:    map[shard.ID]bool{},
+		deficits:   idmap.NewTyped128[shard.ID, *deficit](0),
+		touched:    idmap.NewTyped128[shard.ID, bool](0),
 		placed:     map[shard.NodeID]int{},
 		out:        map[shard.NodeID]int{},
-		improved:   map[shard.ID]bool{},
+		improved:   idmap.NewTyped128[shard.ID, bool](0),
 		costs:      make([]float64, len(pl.tiers)),
 		tolerances: make([]float64, len(pl.tiers)),
 		bestDeltas: make([]float64, len(pl.tiers)),
@@ -284,8 +285,8 @@ func (p *pass) repairShard(ctx context.Context, id shard.ID) error {
 	}
 	//dokimi:mutate-skip ror-true: a shard without a reason has no kept replica and the replicas of the model, so plan gives it the same target with or without its deficit
 	if d.reason != nil {
-		p.deficits[id] = d
-		p.touched[id] = true
+		p.deficits.Set(id, d)
+		p.touched.Set(id, true)
 	}
 	return nil
 }
@@ -445,7 +446,7 @@ func (p *pass) improveFrom(ctx context.Context, n shard.NodeID) (bool, error) {
 		return false, err
 	}
 	p.out[n]++
-	p.improved[best.Shard] = true
+	p.improved.Set(best.Shard, true)
 	return true, nil
 }
 
@@ -458,7 +459,8 @@ func (p *pass) improveFrom(ctx context.Context, n shard.NodeID) (bool, error) {
 //   - the improvement moved the shard before, or Churn.MaxShardFraction allows one
 //     more shard.
 func (p *pass) movable(id shard.ID) bool {
-	if p.st.MovedShard(id) >= p.pl.churn.PerShard || (!p.improved[id] && len(p.improved) >= p.maxShards) {
+	improved, _ := p.improved.Get(id)
+	if p.st.MovedShard(id) >= p.pl.churn.PerShard || (!improved && p.improved.Len() >= p.maxShards) {
 		return false
 	}
 	_, frozen := p.st.InFlight(id)
@@ -581,7 +583,7 @@ func (p *pass) apply(m placement.Move, deltas []float64) error {
 		return fmt.Errorf("planner: a constraint or a goal changed the state of the pass: %w", err)
 	}
 	p.moves++
-	p.touched[m.Shard] = true
+	p.touched.Set(m.Shard, true)
 	return nil
 }
 
@@ -741,11 +743,11 @@ func (p *pass) plan() (placement.Plan, error) {
 			return placement.Plan{}, err
 		}
 	}
-	targets := make(map[shard.ID]placement.Target, len(p.touched))
-	for id := range p.touched {
+	targets := make(map[shard.ID]placement.Target, p.touched.Len())
+	for id := range p.touched.All() {
 		replicas := p.st.Replicas(id)
 		initial := p.st.Initial(id)
-		d := p.deficits[id]
+		d, _ := p.deficits.Get(id)
 		// A pass never removes a replica without placing it on another node, so a shard
 		// whose replicas are all initial replicas has its initial replicas.
 		same := !slices.ContainsFunc(replicas, func(r shard.Replica) bool { return !slices.Contains(initial, r) })
