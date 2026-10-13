@@ -1,0 +1,28 @@
+{
+  "store": 1,
+  "definition": "8.0.0",
+  "property": "each term of each scope has one controller, each process runs one controller of a cell at most, and a running process controls the cell once the store is available",
+  "identity": {
+    "assertion": "true",
+    "file": "controller_test.go",
+    "line": 291
+  },
+  "choices": "prop1:AAAAAQAAAAAAAAAAAAAAAQAAAAAAAQAAAAA",
+  "counterexample": [
+    {
+      "label": "process",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "process",
+      "value": {
+        "type": "int",
+        "value": 1
+      }
+    }
+  ],
+  "found": "2000-01-01"
+}
