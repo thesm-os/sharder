@@ -9,6 +9,7 @@ import (
 
 	"go.thesmos.sh/core/pool"
 
+	"go.thesmos.sh/sharder/fence"
 	"go.thesmos.sh/sharder/internal/driver"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
@@ -48,6 +49,9 @@ type AddShardRequest struct {
 	// Request is the callback that starts the replica. Request.Key identifies the callback
 	// across its deliveries.
 	Request *protocol.Request
+	// Token is the fencing token of the tenure that the add starts. The agent acquires the
+	// fence with it before it calls AddShard.
+	Token fence.Token
 }
 
 // AddShardResult is the result of Handler.AddShard.
@@ -110,13 +114,14 @@ func newApplication(h Handler) *application {
 	}
 }
 
-// AddShard passes the callback r to Handler.AddShard, and returns an error that wraps its
-// error. It clears the request before it returns the request to its pool.
-func (a *application) AddShard(ctx context.Context, r *protocol.Request) error {
+// AddShard passes the callback r and the fencing token t of its tenure to Handler.AddShard,
+// and returns an error that wraps its error. It clears the request before it returns the
+// request to its pool.
+func (a *application) AddShard(ctx context.Context, r *protocol.Request, t *fence.Token) error {
 	req := a.adds.Get()
-	req.Request = r
+	req.Request, req.Token = r, *t
 	_, err := a.handler.AddShard(ctx, req)
-	req.Request = nil
+	req.Request, req.Token = nil, fence.Token{}
 	//dokimi:mutate-skip sbr-delete: a request that the pool does not get back costs one allocation of a later callback, which the allocations of the driver for each callback hide from a test of the agent
 	a.adds.Put(req)
 	if err != nil {

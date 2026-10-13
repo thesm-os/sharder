@@ -43,7 +43,7 @@ const (
 // a comparison. As the first field it does not change the size of the type.
 type incomparable [0]func()
 
-// Config is the configuration of an agent. [Start] refuses a Config without one of its
+// Config is the configuration of an agent. [New] refuses a Config without one of its
 // required fields.
 type Config struct {
 	// Store reads the root scope of the namespace and the scope of the cell of the node. It
@@ -85,9 +85,9 @@ type Config struct {
 	Unauthenticated bool
 }
 
-// validate returns an error that wraps ErrConfig for the first field of c that Start
-// requires and that neither the machine nor the driver of the agent requires. The machine
-// and the driver refuse a Config without one of the other required fields.
+// validate returns an error that wraps ErrConfig for the first field of c that New requires
+// and that neither the machine nor the driver of the agent requires. The machine and the
+// driver refuse a Config without one of the other required fields.
 func (c *Config) validate() error {
 	if c.Controller == nil {
 		return fmt.Errorf("%w: no controller client", ErrConfig)
@@ -102,11 +102,11 @@ func (c *Config) validate() error {
 // serves the callbacks of the controller as a protocol.AgentServer, which the embedder serves
 // through a transport adapter.
 //
-// The zero Agent is not usable. Construct one with [Start].
+// The zero Agent is not usable. Construct one with [New], and start it with [Agent.Start].
 //
 // # Concurrency
 //
-// An Agent is safe for concurrent use.
+// An Agent is safe for concurrent use. Start runs once.
 type Agent struct {
 	// err is the error that ended the run, or nil after a Close. The run sets it before it
 	// closes done.
@@ -115,34 +115,35 @@ type Agent struct {
 	machine *agent.Machine
 	// driver runs the machine.
 	driver *driver.Driver
-	// cancel ends the context of the run.
-	cancel context.CancelFunc
+	// runner is the handler of the agent when the handler is a Runner, and nil otherwise.
+	runner *Runner
+	// logger logs the work of a tenure that fails.
+	logger *slog.Logger
+	// cancel ends the context of the run. It is nil until Start has derived that context.
+	cancel atomic.Pointer[context.CancelFunc]
 	// done is closed once the run has ended.
 	done chan struct{}
+	// node is the ID of the node of the agent.
+	node shard.NodeID
+	// started is true once Start has been called.
+	started atomic.Bool
 	// closed is true once a Close has passed its call to the machine.
 	closed atomic.Bool
 }
 
 var _ protocol.AgentServer = (*Agent)(nil)
 
-// Start starts the agent of cfg.Node, which calls h to start and stop its replicas. The agent
-// reads the spec of cfg.Namespace and the cell of the node from the root scope, joins the
-// cell, and reads the placements of the node from the scope of the cell. In the support
-// matrix every replica is a writer, and a node that starts restores none. Start returns once
-// the node has a session and the agent has read the scope of its cell. The agent then runs
-// until ctx ends or a Close returns. When h implements [LoadReporter], each report of the
-// agent has the loads that h reports.
+// New returns the agent of cfg.Node, which calls h to start and stop its replicas. The agent
+// does not run, read or start a goroutine before [Agent.Start], so the embedder serves it
+// through its transport first. Until the node serves, Do, ReportFault, Recovered and Close
+// return an error that wraps ErrNotServing. When h implements [LoadReporter], each report of
+// the agent has the loads that h reports. When h is a [Runner], New binds it to the agent.
 //
 // Error modes:
 //   - an error that wraps ErrConfig for a nil cfg or a nil h, and for a cfg that lacks a
 //     required field or whose Node.Cell is not the text of a shard ID.
-//   - an error that wraps the error with which the agent stops before it serves, such as an
-//     error of class errs.Invalid for a spec that the registry does not resolve or a cell
-//     that the namespace does not have.
-//   - an error that wraps the cause of ctx when ctx ends before the agent serves.
-//
-// Start returns its error once every goroutine that it started has returned.
-func Start(ctx context.Context, cfg *Config, h Handler) (*Agent, error) {
+//   - an error that wraps ErrConfig for a Runner that another agent uses.
+func New(cfg *Config, h Handler) (*Agent, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("%w: no configuration", ErrConfig)
 	}
@@ -183,16 +184,44 @@ func Start(ctx context.Context, cfg *Config, h Handler) (*Agent, error) {
 	if err := errors.Join(merr, derr); err != nil {
 		return nil, fmt.Errorf("%w: node %s: %w", ErrConfig, cfg.Node.ID, err)
 	}
+	a := &Agent{machine: m, driver: d, logger: cfg.Logger, node: cfg.Node.ID, done: make(chan struct{})}
+	if run, ok := h.(*Runner); ok {
+		if !run.agent.CompareAndSwap(nil, a) {
+			return nil, fmt.Errorf("%w: node %s: the runner serves another agent", ErrConfig, cfg.Node.ID)
+		}
+		a.runner = run
+	}
+	return a, nil
+}
+
+// Start starts the agent. The agent reads the spec of the namespace and the cell of the node
+// from the root scope, joins the cell, and reads the placements of the node from the scope of
+// the cell. In the support matrix every replica is a writer, and a node that starts restores
+// none. Start returns once the node has a session and the agent has read the scope of its
+// cell. The agent then runs until ctx ends or a Close returns.
+//
+// Error modes:
+//   - ErrStarted for a second call.
+//   - an error that wraps the error with which the agent stops before it serves, such as an
+//     error of class errs.Invalid for a spec that the registry does not resolve or a cell
+//     that the namespace does not have.
+//   - an error that wraps the cause of ctx when ctx ends before the agent serves.
+//
+// Start returns its error once every goroutine that it started has returned.
+func (a *Agent) Start(ctx context.Context) error {
+	if a.started.Swap(true) {
+		return ErrStarted
+	}
 	run, cancel := context.WithCancel(ctx)
-	a := &Agent{machine: m, driver: d, cancel: cancel, done: make(chan struct{})}
+	a.cancel.Store(&cancel)
 	go a.run(run)
-	if err := d.Ready(ctx); err != nil {
+	if err := a.driver.Ready(ctx); err != nil {
 		//dokimi:mutate-skip sbr-delete: the run has ended or ends by itself once Ready fails, so cancel only releases the context of the run
 		cancel()
 		<-a.done
-		return nil, fmt.Errorf("replica: the start of node %s: %w", cfg.Node.ID, err)
+		return fmt.Errorf("replica: the start of node %s: %w", a.node, err)
 	}
-	return a, nil
+	return nil
 }
 
 // Do runs r, a callback of the controller of the cell. It checks md and r before it looks up
@@ -211,10 +240,11 @@ func Start(ctx context.Context, cfg *Config, h Handler) (*Agent, error) {
 //   - an error of class errs.Invalid for a key that the node has seen with another payload,
 //     and for a request on the path protocol.Cleanup, which only the agent builds.
 //   - the error of the handler, or of the acquisition of the fence of an add.
-//   - an error that wraps ErrNotServing once the run of the agent has ended.
+//   - an error that wraps ErrNotServing before the node serves and once the run of the agent
+//     has ended.
 func (a *Agent) Do(ctx context.Context, md protocol.Metadata, r *protocol.Request) error {
 	req := r.CloneKanon()
-	return call(ctx, a.driver, callCallback, func(tok machine.ReplyToken) machine.Event {
+	return a.call(ctx, callCallback, func(tok machine.ReplyToken) machine.Event {
 		return machine.Do{Request: req, Metadata: md, Reply: tok}
 	})
 }
@@ -232,17 +262,22 @@ func (a *Agent) Do(ctx context.Context, md protocol.Metadata, r *protocol.Reques
 // Error modes:
 //   - an error that wraps ErrConfig for a ctx without a deadline.
 //   - an error that wraps the cause of ctx when ctx ends before the admission.
-//   - an error that wraps ErrNotServing when the run of the agent has ended before the Close.
+//   - an error that wraps ErrNotServing before Start, and when the run of the agent has ended
+//     before the Close.
 func (a *Agent) Close(ctx context.Context) error {
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		return fmt.Errorf("%w: the context of the close has no deadline", ErrConfig)
 	}
-	err := call(ctx, a.driver, callClose, func(tok machine.ReplyToken) machine.Event {
+	cancel := a.cancel.Load()
+	if cancel == nil {
+		return fmt.Errorf("%w: %s before the start of node %s", ErrNotServing, callClose, a.node)
+	}
+	err := a.call(ctx, callClose, func(tok machine.ReplyToken) machine.Event {
 		return machine.Close{Deadline: deadline, Reply: tok}
 	})
 	a.closed.Store(true)
-	a.cancel()
+	(*cancel)()
 	<-a.done
 	return err
 }
@@ -267,11 +302,15 @@ func (a *Agent) Err() error {
 	}
 }
 
-// run runs the driver of a until ctx ends or the machine stops itself, and then closes done.
-// It keeps the error of the run unless a Close ended the run.
+// run runs the driver of a until ctx ends or the machine stops itself. It then ends the work
+// of every tenure of the runner of a, and closes done. It keeps the error of the run unless a
+// Close ended the run.
 func (a *Agent) run(ctx context.Context) {
 	defer close(a.done)
 	err := a.driver.Run(ctx)
+	if a.runner != nil {
+		a.runner.stop()
+	}
 	if !a.closed.Load() {
 		a.err = fmt.Errorf("replica: the run of the agent: %w", err)
 	}
@@ -286,16 +325,20 @@ func provides(adapter any) []config.Capability {
 	return nil
 }
 
-// call passes the inbound call that event returns to the machine of d, and returns the error
+// call passes the inbound call that event returns to the machine of a, and returns the error
 // of the reply of the machine. Every call of an agent replies with an error alone. The errors
 // of call contain the text what.
 //
 // Error modes:
-//   - an error that wraps ErrNotServing and driver.ErrStopped once the run of d has ended.
+//   - an error that wraps ErrNotServing before Start.
+//   - an error that wraps ErrNotServing and driver.ErrStopped once the run of a has ended.
 //     It classifies as errs.Transient, the class of ErrNotServing.
 //   - an error that wraps the error of the reply, and the cause of ctx when ctx ends first.
-func call(ctx context.Context, d *driver.Driver, what string, event func(machine.ReplyToken) machine.Event) error {
-	_, err := d.Call[struct{}](ctx, event)
+func (a *Agent) call(ctx context.Context, what string, event func(machine.ReplyToken) machine.Event) error {
+	if a.cancel.Load() == nil {
+		return fmt.Errorf("%w: %s before the start of node %s", ErrNotServing, what, a.node)
+	}
+	_, err := a.driver.Call[struct{}](ctx, event)
 	if errors.Is(err, driver.ErrStopped) {
 		return errs.WithClass(fmt.Errorf("%w: %s: %w", ErrNotServing, what, err), errs.Transient)
 	}

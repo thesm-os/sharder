@@ -51,7 +51,7 @@ type RecoveredResult struct {
 //   - an error that wraps the cause of ctx when ctx ends before the agent takes the report.
 func (a *Agent) ReportFault(ctx context.Context, req *ReportFaultRequest) (ReportFaultResult, error) {
 	cause, sid, fault := req.Cause, req.Shard, req.Fault
-	err := call(ctx, a.driver, callFault, func(tok machine.ReplyToken) machine.Event {
+	err := a.call(ctx, callFault, func(tok machine.ReplyToken) machine.Event {
 		return machine.ReportFault{Cause: cause, Shard: sid, Fault: fault, Reply: tok}
 	})
 	return ReportFaultResult{}, err
@@ -67,7 +67,7 @@ func (a *Agent) ReportFault(ctx context.Context, req *ReportFaultRequest) (Repor
 //   - an error that wraps the cause of ctx when ctx ends before the agent takes the report.
 func (a *Agent) Recovered(ctx context.Context, req *RecoveredRequest) (RecoveredResult, error) {
 	sid := req.Shard
-	err := call(ctx, a.driver, callRecovery, func(tok machine.ReplyToken) machine.Event {
+	err := a.call(ctx, callRecovery, func(tok machine.ReplyToken) machine.Event {
 		return machine.Recovered{Shard: sid, Reply: tok}
 	})
 	return RecoveredResult{}, err

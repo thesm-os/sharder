@@ -53,14 +53,22 @@ func TestFault(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				ctx, stop := context.WithCancel(t.Context())
-				a, err := replica.Start(ctx, f.config(), f.app)
-				assert.NoError(t, err, "Start must start the agent")
+				a := f.run(t, ctx, f.app)
 				stop()
 				received(t, a.Done(), "the end of the run")
 				req := replica.ReportFaultRequest{Shard: shardA, Fault: shard.FaultPermanent, Cause: errDisk}
-				_, err = a.ReportFault(t.Context(), &req)
+				_, err := a.ReportFault(t.Context(), &req)
 				assert.ErrorIs(t, err, replica.ErrNotServing, "a report after the run must not be served")
 			})
+		})
+
+		t.Run("returns ErrNotServing before Start", func(t *testing.T) {
+			t.Parallel()
+			a, err := replica.New(bare(t).config(), newApplication())
+			assert.NoError(t, err, "New must return the agent")
+			req := replica.ReportFaultRequest{Shard: shardA, Fault: shard.FaultPermanent, Cause: errDisk}
+			_, err = a.ReportFault(t.Context(), &req)
+			assert.ErrorIs(t, err, replica.ErrNotServing, "a report before Start must not be served")
 		})
 	})
 
@@ -94,6 +102,14 @@ func TestFault(t *testing.T) {
 				_, err := a.Recovered(t.Context(), &replica.RecoveredRequest{Shard: shardA})
 				assert.ErrorIs(t, err, replica.ErrNoFault, "Recovered must refuse a replica without a transient fault")
 			})
+		})
+
+		t.Run("returns ErrNotServing before Start", func(t *testing.T) {
+			t.Parallel()
+			a, err := replica.New(bare(t).config(), newApplication())
+			assert.NoError(t, err, "New must return the agent")
+			_, err = a.Recovered(t.Context(), &replica.RecoveredRequest{Shard: shardA})
+			assert.ErrorIs(t, err, replica.ErrNotServing, "a recovery before Start must not be served")
 		})
 	})
 }

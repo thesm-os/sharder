@@ -102,12 +102,11 @@ func TestToken(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				ctx, stop := context.WithCancel(t.Context())
-				a, err := replica.Start(ctx, f.config(), f.app)
-				assert.NoError(t, err, "Start must start the agent")
+				a := f.run(t, ctx, f.app)
 				f.serve(t, a, shardA, 1)
 				stop()
 				received(t, a.Done(), "the end of the run")
-				_, err = a.Token(t.Context(), &replica.TokenRequest{Shard: shardA})
+				_, err := a.Token(t.Context(), &replica.TokenRequest{Shard: shardA})
 				assert.ErrorIs(t, err, epoch.ErrFenced, "Token must revoke the tokens once the run has ended")
 			})
 		})
@@ -185,16 +184,37 @@ func BenchmarkToken(b *testing.B) {
 		"the add of the shard must succeed")
 
 	b.Run("Token", func(b *testing.B) {
-		var res replica.TokenResult
-		var err error
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-		for c.Loop() {
-			req := replica.TokenRequest{Shard: shardA}
-			res, err = a.Token(ctx, &req)
-		}
-		assert.NoError(b, err, "the benchmark must measure the token of a tenure")
-		assert.Equal(b, res.Token.Epoch, epoch.Epoch(1), "the benchmark must measure the token of a tenure")
+		b.Run("serial", func(b *testing.B) {
+			var res replica.TokenResult
+			var err error
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+			for c.Loop() {
+				req := replica.TokenRequest{Shard: shardA}
+				res, err = a.Token(ctx, &req)
+			}
+			assert.NoError(b, err, "the benchmark must measure the token of a tenure")
+			assert.Equal(b, res.Token.Epoch, epoch.Epoch(1), "the benchmark must measure the token of a tenure")
+		})
+
+		b.Run("parallel", func(b *testing.B) {
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+			c.RunParallel(func(pb *bench.PB) {
+				var res replica.TokenResult
+				var err error
+				read := 0
+				for pb.Next() {
+					req := replica.TokenRequest{Shard: shardA}
+					res, err = a.Token(ctx, &req)
+					read++
+				}
+				if read > 0 {
+					expect.NoError(b, err, "the benchmark must measure the token of a tenure")
+					expect.Equal(b, res.Token.Epoch, epoch.Epoch(1), "the benchmark must measure the token of a tenure")
+				}
+			})
+		})
 	})
 }
 

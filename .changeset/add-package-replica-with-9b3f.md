@@ -2,4 +2,4 @@
 "go.thesmos.sh/sharder": minor
 ---
 
-Add package `replica` with `Start`, `Agent` and `Handler` to host the replicas of the shards of a node.
+Add package `replica` with `New`, `Agent`, `Handler` and `Runner` to host the replicas of the shards of a node.

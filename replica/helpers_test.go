@@ -11,6 +11,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"testing"
 	"testing/synctest"
 	"time"
 
@@ -213,6 +214,8 @@ type application struct {
 	calls []*protocol.Request
 	// adds lists every request of AddShard, as the agent passed it.
 	adds []*replica.AddShardRequest
+	// tokens lists the token of every request of AddShard at the call, in order.
+	tokens []fence.Token
 	// drops lists every request of DropShard, as the agent passed it.
 	drops []*replica.DropShardRequest
 	// mu guards the fields above.
@@ -226,11 +229,12 @@ func newApplication() *application {
 	return &application{effects: make(map[protocol.Key]int)}
 }
 
-// AddShard records the callback of req, and returns the error of fail.
+// AddShard records the callback and the token of req, and returns the error of fail.
 func (a *application) AddShard(_ context.Context, req *replica.AddShardRequest) (replica.AddShardResult, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.adds = append(a.adds, req)
+	a.tokens = append(a.tokens, req.Token)
 	return replica.AddShardResult{}, a.record(req.Request)
 }
 
@@ -378,13 +382,24 @@ func (f *fixture) start(tb cleaner, opts ...func(c *replica.Config)) *replica.Ag
 	for _, opt := range opts {
 		opt(cfg)
 	}
+	a, err := replica.New(cfg, f.app)
+	assert.NoError(tb, err, "New returns the agent")
 	ctx, stop := context.WithCancel(assert.Context(tb))
-	a, err := replica.Start(ctx, cfg, f.app)
-	assert.NoError(tb, err, "Start starts the agent")
+	assert.NoError(tb, a.Start(ctx), "Start starts the agent")
 	tb.Cleanup(func() {
 		stop()
 		<-a.Done()
 	})
+	return a
+}
+
+// run starts the agent of the node of the tests with the handler h under ctx. The agent runs
+// until ctx ends.
+func (f *fixture) run(t *testing.T, ctx context.Context, h replica.Handler) *replica.Agent {
+	t.Helper()
+	a, err := replica.New(f.config(), h)
+	assert.NoError(t, err, "New returns the agent")
+	assert.NoError(t, a.Start(ctx), "Start starts the agent")
 	return a
 }
 

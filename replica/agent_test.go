@@ -19,6 +19,7 @@ import (
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
+	"go.thesmos.sh/core/id/ulid"
 
 	"go.thesmos.sh/sharder/budget"
 	"go.thesmos.sh/sharder/membership"
@@ -332,13 +333,13 @@ func exercise(c *prop.Case) {
 func TestAgent(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Start", func(t *testing.T) {
+	t.Run("New", func(t *testing.T) {
 		t.Parallel()
 
 		t.Run("returns ErrConfig for a nil Config", func(t *testing.T) {
 			t.Parallel()
-			_, err := replica.Start(t.Context(), nil, newApplication())
-			assert.ErrorIs(t, err, replica.ErrConfig, "Start must refuse a nil Config")
+			_, err := replica.New(nil, newApplication())
+			assert.ErrorIs(t, err, replica.ErrConfig, "New must refuse a nil Config")
 		})
 
 		tests := []struct {
@@ -395,18 +396,41 @@ func TestAgent(t *testing.T) {
 				f := bare(t)
 				cfg := f.config()
 				tt.give(cfg)
-				_, err := replica.Start(t.Context(), cfg, f.app)
-				assert.ErrorIs(t, err, replica.ErrConfig, "Start must refuse the Config")
+				_, err := replica.New(cfg, f.app)
+				assert.ErrorIs(t, err, replica.ErrConfig, "New must refuse the Config")
 			})
 		}
 
 		t.Run("returns ErrConfig for a nil handler", func(t *testing.T) {
 			t.Parallel()
-			_, err := replica.Start(t.Context(), bare(t).config(), nil)
-			assert.ErrorIs(t, err, replica.ErrConfig, "Start must refuse a nil handler")
+			_, err := replica.New(bare(t).config(), nil)
+			assert.ErrorIs(t, err, replica.ErrConfig, "New must refuse a nil handler")
 		})
 
-		t.Run("returns an agent once the node has a session in its cell", func(t *testing.T) {
+		t.Run("returns ErrConfig for a runner that another agent uses", func(t *testing.T) {
+			t.Parallel()
+			f := bare(t)
+			run := replica.NewRunner(&opener{})
+			_, err := replica.New(f.config(), run)
+			assert.NoError(t, err, "the first agent must take the runner")
+			_, err = replica.New(f.config(), run)
+			assert.ErrorIs(t, err, replica.ErrConfig, "New must refuse a runner of another agent")
+		})
+
+		t.Run("returns an agent that refuses a callback before Start", func(t *testing.T) {
+			t.Parallel()
+			a, err := replica.New(bare(t).config(), newApplication())
+			assert.NoError(t, err, "New must return the agent")
+			err = a.Do(t.Context(), controllerMetadata, request(protocol.Add, shardA, 1, 1, 1))
+			expect.That(t, err).ErrorIs(replica.ErrNotServing, "a callback before Start must not be served")
+			expect.Equal(t, errs.Classify(err), errs.Transient, "a callback before Start must be transient")
+		})
+	})
+
+	t.Run("Start", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns once the node has a session in its cell", func(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
@@ -423,8 +447,10 @@ func TestAgent(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					f := newFixture(t)
 					cfg := f.config()
-					cfg.Node.Cell = shard.CellID(shardA.String())
-					_, err := replica.Start(t.Context(), cfg, f.app)
+					cfg.Node.Cell = shard.CellID(ulid.Format(shardA.ID()))
+					a, err := replica.New(cfg, f.app)
+					assert.NoError(t, err, "New must return the agent")
+					err = a.Start(t.Context())
 					assert.Equal(
 						t,
 						errs.Classify(err),
@@ -441,7 +467,9 @@ func TestAgent(t *testing.T) {
 					f := newFixture(t)
 					cfg := f.config()
 					cfg.Membership = plain{Membership: cfg.Membership}
-					_, err := replica.Start(t.Context(), cfg, f.app)
+					a, err := replica.New(cfg, f.app)
+					assert.NoError(t, err, "New must return the agent")
+					err = a.Start(t.Context())
 					assert.Equal(t, errs.Classify(err), errs.Invalid,
 						"Start must refuse a membership that does not provide the leases of the spec")
 				})
@@ -454,8 +482,9 @@ func TestAgent(t *testing.T) {
 					f := bare(t)
 					ctx, cancel := context.WithTimeoutCause(t.Context(), time.Minute, errStop)
 					defer cancel()
-					_, err := replica.Start(ctx, f.config(), f.app)
-					assert.ErrorIs(t, err, errStop, "Start must return the cause of its context")
+					a, err := replica.New(f.config(), f.app)
+					assert.NoError(t, err, "New must return the agent")
+					assert.ErrorIs(t, a.Start(ctx), errStop, "Start must return the cause of its context")
 				})
 			})
 
@@ -468,9 +497,18 @@ func TestAgent(t *testing.T) {
 				cfg.Store = g
 				ctx, cancel := context.WithTimeoutCause(t.Context(), time.Minute, errStop)
 				defer cancel()
-				_, err := replica.Start(ctx, cfg, f.app)
-				assert.ErrorIs(t, err, errStop, "Start must return the cause of its context")
+				a, err := replica.New(cfg, f.app)
+				assert.NoError(t, err, "New must return the agent")
+				assert.ErrorIs(t, a.Start(ctx), errStop, "Start must return the cause of its context")
 				assert.True(t, g.opened.Load(), "Start must return once the watches of the agent have returned")
+			})
+		})
+
+		t.Run("returns ErrStarted for a second call", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				a := newFixture(t).start(t)
+				assert.ErrorIs(t, a.Start(t.Context()), replica.ErrStarted, "Start must refuse a second call")
 			})
 		})
 	})
@@ -567,11 +605,10 @@ func TestAgent(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				ctx, stop := context.WithCancel(t.Context())
-				a, err := replica.Start(ctx, f.config(), f.app)
-				assert.NoError(t, err, "Start must start the agent")
+				a := f.run(t, ctx, f.app)
 				stop()
 				received(t, a.Done(), "the end of the run")
-				err = a.Do(t.Context(), controllerMetadata, request(protocol.Add, shardA, 1, 1, 1))
+				err := a.Do(t.Context(), controllerMetadata, request(protocol.Add, shardA, 1, 1, 1))
 				expect.That(t, err).ErrorIs(replica.ErrNotServing, "a callback after the run must not be served")
 				expect.Equal(t, errs.Classify(err), errs.Transient, "a callback after the run must be transient")
 			})
@@ -655,13 +692,24 @@ func TestAgent(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				ctx, stop := context.WithCancel(t.Context())
-				a, err := replica.Start(ctx, f.config(), f.app)
-				assert.NoError(t, err, "Start must start the agent")
+				a := f.run(t, ctx, f.app)
 				stop()
 				received(t, a.Done(), "the end of the run")
 				closing, cancel := f.closing(t, errStop)
 				defer cancel()
 				assert.ErrorIs(t, a.Close(closing), replica.ErrNotServing, "a Close after the run must not be served")
+			})
+		})
+
+		t.Run("returns ErrNotServing before Start", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := bare(t)
+				a, err := replica.New(f.config(), f.app)
+				assert.NoError(t, err, "New must return the agent")
+				closing, cancel := f.closing(t, errStop)
+				defer cancel()
+				assert.ErrorIs(t, a.Close(closing), replica.ErrNotServing, "a Close before Start must not be served")
 			})
 		})
 	})
@@ -674,8 +722,7 @@ func TestAgent(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				ctx, stop := context.WithCancel(t.Context())
-				a, err := replica.Start(ctx, f.config(), f.app)
-				assert.NoError(t, err, "Start must start the agent")
+				a := f.run(t, ctx, f.app)
 				stop()
 				received(t, a.Done(), "the end of the run")
 			})
@@ -697,8 +744,7 @@ func TestAgent(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				ctx, stop := context.WithCancelCause(t.Context())
-				a, err := replica.Start(ctx, f.config(), f.app)
-				assert.NoError(t, err, "Start must start the agent")
+				a := f.run(t, ctx, f.app)
 				stop(errStop)
 				received(t, a.Done(), "the end of the run")
 				assert.ErrorIs(t, a.Err(), errStop, "Err must return the cause of the context of Start")

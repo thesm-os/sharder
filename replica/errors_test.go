@@ -32,6 +32,7 @@ func TestErrors(t *testing.T) {
 		class  errs.Class
 	}{
 		{name: "ErrConfig", err: replica.ErrConfig, prefix: replicaPrefix, class: errs.Invalid},
+		{name: "ErrStarted", err: replica.ErrStarted, prefix: replicaPrefix, class: errs.Invalid},
 		{name: "ErrNotWriter", err: replica.ErrNotWriter, prefix: agentPrefix, class: errs.Conflict},
 		{name: "ErrNotServing", err: replica.ErrNotServing, prefix: agentPrefix, class: errs.Transient},
 		{name: "ErrNoReplica", err: replica.ErrNoReplica, prefix: agentPrefix, class: errs.NotFound},

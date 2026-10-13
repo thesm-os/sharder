@@ -11,8 +11,8 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
 
+	"go.thesmos.sh/sharder/fence"
 	"go.thesmos.sh/sharder/protocol"
-	"go.thesmos.sh/sharder/replica"
 	"go.thesmos.sh/sharder/shard"
 )
 
@@ -46,7 +46,30 @@ func TestHandler(t *testing.T) {
 				a := f.start(t)
 				f.serve(t, a, shardA, 1)
 				assert.Length(t, f.app.adds, 1, "the handler must receive one add")
-				assert.Nil(t, f.app.adds[0].Request, "the agent must clear the request once the call returns")
+				expect.Nil(t, f.app.adds[0].Request, "the agent must clear the request once the call returns")
+				expect.Equal(
+					t,
+					f.app.adds[0].Token,
+					fence.Token{},
+					"the agent must clear the token once the call returns",
+				)
+			})
+		})
+
+		t.Run("receives the fencing token of the tenure of the add", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				a := f.start(t)
+				f.serve(t, a, shardA, 1)
+				assert.Length(t, f.app.tokens, 1, "the handler must receive one add")
+				assert.Length(t, f.guard.acquired, 1, "the agent must acquire one fence")
+				assert.Equal(
+					t,
+					f.app.tokens[0],
+					f.guard.acquired[0],
+					"the handler must receive the token that the add acquired",
+				)
 			})
 		})
 
@@ -117,8 +140,7 @@ func TestHandler(t *testing.T) {
 				load := shard.Load{cpu: 0.5}
 				ctx, stop := context.WithCancel(t.Context())
 				t.Cleanup(stop)
-				a, err := replica.Start(ctx, f.config(), &loaded{application: f.app, load: load})
-				assert.NoError(t, err, "Start must start the agent")
+				a := f.run(t, ctx, &loaded{application: f.app, load: load})
 				t.Cleanup(func() {
 					stop()
 					<-a.Done()
