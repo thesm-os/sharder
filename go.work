@@ -7,3 +7,5 @@ use (
 	.
 	./examples
 )
+
+replace go.thesmos.sh/sharder v0.1.0 => ./
