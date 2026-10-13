@@ -1,0 +1,63 @@
+// Copyright ThesmOS B.V. 2026
+// SPDX-License-Identifier: BUSL-1.1
+
+// Package replica runs the agent that an application process embeds to host the replicas of
+// its shards.
+//
+// The controller of a cell places each shard of the cell on a node, and the agent of the node
+// starts and stops the replicas of the node. [Start] joins the cell of the node and returns
+// once the node has a session and the agent has read the placements of the node. The agent
+// then runs until the context of Start ends or [Agent.Close] returns.
+//
+// # Handler
+//
+// The application implements [Handler]. The agent calls AddShard to start a replica and
+// DropShard to stop one, one call at a time for each shard. Callbacks arrive at least once.
+// The agent refuses a stale callback, and returns its kept result for a repeated key, before
+// it calls the handler. An application that reports the load of its replicas also implements
+// [LoadReporter].
+//
+// # Fencing
+//
+// Every namespace of the support matrix is exclusive and fenced. The agent acquires the fence
+// of each tenure through Config.Guard before it calls AddShard, and [Agent.Token] returns the
+// fencing token of each tenure of the node. The application writes each shard through the
+// fence with that token.
+//
+// # Callbacks
+//
+// [Agent.Do] serves the callbacks of the controller of the cell as a protocol.AgentServer,
+// which the embedder serves through a transport adapter. The agent checks the metadata, the
+// controller epoch, the caller, the node incarnation, the epochs and the operation of each
+// callback before it looks up its key or calls the handler. A callback that starts a tenure
+// runs once the placements that the agent watches list the tenure.
+//
+// # Faults
+//
+// [Agent.ReportFault] reports a fault in a replica, and [Agent.Recovered] reports that a
+// replica with a transient fault serves again. The agent passes both to the controller in its
+// next report.
+//
+// # End of the run
+//
+// [Agent.Close] moves the replicas of the node away before the process stops. It sends the
+// controller a disruption of the node that ends at the deadline of its context, and leaves
+// the cell once the controller admits the disruption. [Agent.Done] is closed once the run of
+// the agent has ended and every goroutine of the agent has returned. [Agent.Err] then returns
+// the error that ended the run, or nil after a Close.
+//
+// # Errors
+//
+// [ErrConfig] classifies as errs.Invalid. [ErrNotWriter] and [ErrNoFault] classify as
+// errs.Conflict, [ErrNoReplica] as errs.NotFound, and [ErrNotServing] as errs.Transient.
+//
+// # Concurrency
+//
+// An Agent is safe for concurrent use.
+//
+// # Dependency position
+//
+// replica imports the standard library, the packages clock, errs, pool, rand and telemetry of
+// go.thesmos.sh/core, and the packages config, fence, internal/driver, internal/machine,
+// internal/machine/agent, membership, protocol, shard and store of go.thesmos.sh/sharder.
+package replica
