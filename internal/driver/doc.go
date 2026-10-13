@@ -35,9 +35,9 @@
 //
 // A Campaign and a Join pass a second event once the term or the session ends. Their Resign
 // and Leave release the term or the session, and then cancel the context of the effect. The
-// driver logs a failed Resign or Leave, because neither has a result of its own. The driver
-// cancels the context of a Watch, a WatchViews, a Campaign or a Join once the effect
-// returns.
+// driver logs a failed Resign or Leave. It passes the result of a Leave as a Left before
+// the end of the session, and a Resign has no result. The driver cancels the context of a
+// Watch, a WatchViews, a Campaign or a Join once the effect returns.
 //
 // # Inbound calls
 //

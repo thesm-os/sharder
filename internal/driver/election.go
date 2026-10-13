@@ -64,6 +64,9 @@ type grant struct {
 	release func(ctx context.Context) error
 	// cancel cancels the context of the Campaign or the Join.
 	cancel context.CancelFunc
+	// released returns the result of release with its error: a Left for a session. It is nil
+	// for a term, because a Resign has no result.
+	released func(err error) machine.Event
 	// ended is the last event of the effect: a TermEnded or a SessionEnded.
 	ended machine.Event
 	// failure is the message of the log of a failed release.
@@ -74,8 +77,9 @@ type grant struct {
 
 // keep waits until the term or the session of g ends, and then passes its last event. When
 // end ends first, keep releases g, logs a failed release, and then cancels the context of
-// the effect, so a failed release still ends the term or the session. waiting reports that
-// end had not ended when the effect acquired g. keep passes nothing once ctx has ended.
+// the effect, so a failed release still ends the term or the session. It then passes the
+// result of the release of a session. waiting reports that end had not ended when the effect
+// acquired g. keep passes nothing once ctx has ended.
 func (d *Driver) keep(ctx, end context.Context, waiting bool, g *grant) {
 	if waiting {
 		select {
@@ -84,10 +88,14 @@ func (d *Driver) keep(ctx, end context.Context, waiting bool, g *grant) {
 		}
 	}
 	if end.Err() != nil && ctx.Err() == nil {
-		if err := g.release(ctx); err != nil {
+		err := g.release(ctx)
+		if err != nil {
 			d.logger.LogAttrs(ctx, slog.LevelWarn, g.failure, append(g.attrs, slog.Any(attrError, err))...)
 		}
 		g.cancel()
+		if g.released != nil {
+			d.post(ctx, g.released(err))
+		}
 	}
 	select {
 	case <-g.done:

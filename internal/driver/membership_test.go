@@ -192,10 +192,11 @@ func TestMembership(t *testing.T) {
 					}
 					return nil
 				})
-				assert.Equal(t, f.results(t, 2), []machine.Event{
+				assert.Equal(t, f.results(t, 3), []machine.Event{
 					machine.Joined{Incarnation: 1, Token: 1},
+					machine.Left{Token: 1},
 					machine.SessionEnded{Token: 1},
-				}, "the run must pass SessionEnded once it has left the session")
+				}, "the run must pass the result of the Leave and then the end of the session")
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				view := received(
@@ -233,6 +234,7 @@ func TestMembership(t *testing.T) {
 					),
 					"the run must pass the session of the Join",
 				)
+				received(t, f.probe.events, "the run passes the result of the Leave")
 				synctest.Wait()
 				f.clock.Advance(time.Duration(lease.TTL))
 				assert.Equal(
@@ -253,6 +255,27 @@ func TestMembership(t *testing.T) {
 				assert.Length(t, errs, 1, "the record must have the error of Leave")
 				assert.ErrorIs(t, errs[0], memory.ErrOutage, "the record must have the error of Leave")
 				stopped(t, cancel, errc)
+			})
+		})
+
+		t.Run("passes the error of a Leave that fails in Left", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				var f *fixture
+				f = newFixture(t, func(ev machine.Event) []machine.Effect {
+					switch ev := ev.(type) {
+					case machine.Started:
+						return []machine.Effect{machine.Reply[struct{}]{To: ev.Reply}, join}
+					case machine.Joined:
+						f.store.StartOutage()
+						return []machine.Effect{machine.Leave{Token: 1}}
+					}
+					return nil
+				})
+				got, ok := f.results(t, 2)[1].(machine.Left)
+				assert.True(t, ok, "the run must pass a Left before the session ends")
+				expect.That(t, got.Err).ErrorIs(memory.ErrOutage, "the Left must have the error of Leave")
+				expect.Equal(t, got.Token, machine.Token(1), "the Left must have the token of the Join")
 			})
 		})
 
@@ -312,6 +335,8 @@ func TestMembership(t *testing.T) {
 					),
 					"the run must pass the session that the membership returned",
 				)
+				assert.Equal(t, received(t, f.probe.events, "the run passes the result of the Leave"),
+					machine.Event(machine.Left{Token: 1}), "the run must pass the result of the Leave")
 				assert.Equal(t, received(t, f.probe.events, "the run passes the end of the session"),
 					machine.Event(machine.SessionEnded{Token: 1}), "the run must pass the end of the session")
 				assert.True(t, left.Load(), "the run must leave the session")

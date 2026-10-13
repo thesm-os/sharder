@@ -17,7 +17,7 @@ import (
 // e ends end. Before the session starts, that ends the wait of the join. After the start,
 // the driver leaves the session through the membership, and then cancels the context of
 // the join, so a session whose leave failed still ends at its deadline. The driver logs a
-// failed leave.
+// failed leave, and passes the result of the leave as a Left before the SessionEnded.
 func (d *Driver) join(ctx, end context.Context, e *machine.Join) {
 	jctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -33,6 +33,9 @@ func (d *Driver) join(ctx, end context.Context, e *machine.Join) {
 			done:    s.Done(),
 			release: s.Leave,
 			cancel:  cancel,
+			released: func(err error) machine.Event {
+				return machine.Left{Err: err, Token: e.Token}
+			},
 			ended:   machine.SessionEnded{Token: e.Token},
 			failure: msgLeave,
 			attrs:   []slog.Attr{slog.Any(attrScope, e.Scope)},
