@@ -77,7 +77,7 @@ func TestBudget(t *testing.T) {
 			t.Parallel()
 			h := spare(t)
 			h.reportAll(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Callback); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Callback); return ok }
 			sid := h.shardOn(t, nodeA.ID)
 			p := proposalOf(t, 1, proposal.Move, h.placements(t)[sid].Epoch,
 				proposal.MoveArgs{Node: nodeC.ID, Shard: sid})
@@ -692,11 +692,11 @@ func TestBudget(t *testing.T) {
 		t.Run("ends a reservation whose commit is in flight", func(t *testing.T) {
 			t.Parallel()
 			h := served(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Commit); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Commit); return ok }
 			d := disruption(1, nodeA.ID)
 			h.step(t, h.disruptCall(&d, operator))
 			h.step(t, h.doneCall(d.ID, operator))
-			h.held = nil
+			h.pause = nil
 			h.run(t)
 			st := h.state(t)
 			expect.Empty(t, st.Reservations, "Done must end a reservation whose commit was in flight")

@@ -1,0 +1,21 @@
+{
+  "store": 1,
+  "definition": "8.0.0",
+  "property": "a controller keeps the safety rules of the core under every sequence of events",
+  "identity": {
+    "assertion": "equal",
+    "file": "plan_test.go",
+    "line": 677
+  },
+  "choices": "prop1:AAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAA",
+  "counterexample": [
+    {
+      "label": "node",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    }
+  ],
+  "found": "2026-10-13"
+}

@@ -190,7 +190,7 @@ func (c *Controller) gauge() {
 	ctx := context.Background()
 	mt := c.metrics
 	clear(mt.counts)
-	for _, t := range c.assignment.transitions {
+	for _, t := range c.assignment.transitions.All() {
 		k := inFlight{protocol: t.Protocol, phase: t.Phase}
 		mt.counts[k]++
 		if _, ok := mt.inflight[k]; !ok {

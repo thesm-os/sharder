@@ -337,17 +337,18 @@ func (c *Controller) coveredNodes() int {
 	return len(nodes)
 }
 
-// admits reports whether the budget admits a move of the replica from. The move makes the
-// replica unavailable until the transition ends. The model of the support matrix has one
-// replica per shard, so the move makes its shard unavailable, and maxUnavailable admits it
-// above zero. A move of a replica that is unavailable already does not count: its node
-// has left the view, or an admitted reservation covers it. A move that adds a replica has
-// no source in the view, so it does not count either.
-func (c *Controller) admits(from shard.Replica) bool {
+// admits reports whether the budget admits a move of the writer from of the placement cur.
+// The move makes the writer unavailable until the transition ends. The model of the support
+// matrix has one replica per shard, so the move makes its shard unavailable, and
+// maxUnavailable admits it above zero. A move of a writer that is unavailable already does
+// not count: the view does not have its node at the incarnation of cur, or an admitted
+// reservation covers its node. A move that adds a replica has no source in the view, so it
+// does not count either.
+func (c *Controller) admits(cur *shard.Placement, from shard.Replica) bool {
 	if *c.spec.budget.MaxUnavailable > 0 {
 		return true
 	}
-	_, live := c.members.live(from.Node)
+	_, live := c.members.at(from.Node, cur.Incarnation)
 	return !live || c.budget.covered(from.Node)
 }
 

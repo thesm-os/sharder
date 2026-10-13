@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/crypto/sha256"
+	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/rand"
@@ -275,22 +277,22 @@ func TestPlan(t *testing.T) {
 			h := newHarness(t)
 			h.start(t)
 			h.view(t, nodeA, nameless)
-			got := h.logs.logged(logPass)
+			got := h.logged(logPass)
 			assert.Length(t, got, 1, "the controller must log the pass that failed")
-			expect.Equal(t, got[0].attrs[attrNamespaceKey], string(namespace), "the log must name the namespace")
-			expect.Equal(t, got[0].attrs[attrCellKey], string(cellID), "the log must name the cell")
+			expect.Equal(t, got[0][attrNamespaceKey], string(namespace), "the log must name the namespace")
+			expect.Equal(t, got[0][attrCellKey], string(cellID), "the log must name the cell")
 		})
 
 		t.Run("logs each replica that breaks a constraint", func(t *testing.T) {
 			t.Parallel()
-			h := newHarness(t, strict, crowded(t, nodeA.ID))
+			h := newHarness(t, strict, crowded(t, nodeA))
 			h.start(t)
 			h.view(t, nodeA)
-			got := h.logs.logged(logViolation)
+			got := h.logged(logViolation)
 			assert.NotEmpty(t, got, "the controller must log the replicas that break a constraint")
-			expect.Equal(t, got[0].attrs[attrConstraintKey], string(constraint.MaxPerNodeName),
+			expect.Equal(t, got[0][attrConstraintKey], string(constraint.MaxPerNodeName),
 				"the log must name the constraint")
-			expect.Equal(t, got[0].attrs[attrNodeKey], string(nodeA.ID), "the log must name the node")
+			expect.Equal(t, got[0][attrNodeKey], string(nodeA.ID), "the log must name the node")
 		})
 
 		t.Run("starts no move for a target without a writer", func(t *testing.T) {
@@ -299,7 +301,7 @@ func TestPlan(t *testing.T) {
 			h.start(t)
 			h.view(t)
 			expect.Empty(t, h.commits[1:], "a pass without nodes must not start a move")
-			expect.Empty(t, h.logs.logged(logMove), "a pass without nodes must not give the engine a move")
+			expect.Empty(t, h.logged(logMove), "a pass without nodes must not give the engine a move")
 		})
 
 		t.Run("does not start a move to a node that started to drain after the input of the pass", func(t *testing.T) {
@@ -323,12 +325,12 @@ func TestPlan(t *testing.T) {
 			h.elapse(t, interval)
 			pass := h.plans[len(h.plans)-1].Token
 			before := len(h.commits)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Commit); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Commit); return ok }
 			d := disruption(1, nodeC.ID)
 			h.step(t, h.disruptCall(&d, operator))
 			h.paused = false
 			h.pass(t, pass)
-			h.held = nil
+			h.pause = nil
 			h.run(t)
 			assert.NotContains(t, destinations(h.commits[before:]), nodeC.ID,
 				"the controller must not move a shard to a node whose drain is in flight")
@@ -370,11 +372,57 @@ func TestPlan(t *testing.T) {
 			h.view(t, nodeB)
 			got := records(h.commits[before:])
 			assert.NotEmpty(t, got, "the end of the node must start repairs")
-			expect.Equal(t, got[0].From, store.Endpoint{Node: nodeA.ID, Role: shard.RolePrimary},
-				"the source that has left must have incarnation zero")
+			expect.Equal(
+				t,
+				got[0].From,
+				store.Endpoint{Node: nodeA.ID, Incarnation: nodeA.Incarnation, Role: shard.RolePrimary},
+				"the source that has left must have the incarnation of its placement",
+			)
 			expect.Equal(t, got[0].Fallback, store.Endpoint{}, "a source that has left must not be the fallback")
 			expect.Equal(t, h.metrics.value(movesInstrument, reasonFailure)-failures, float64(len(got)),
 				"the controller must count each repair as a failure")
+		})
+
+		t.Run("gives no fallback to a move of a writer whose node has a new incarnation", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			before, failures := len(h.commits), h.metrics.value(movesInstrument, reasonFailure)
+			h.view(t, restarted(nodeA), nodeB)
+			got := records(h.commits[before:])
+			assert.NotEmpty(t, got, "the new incarnation must start repairs")
+			for _, r := range got {
+				expect.Equal(
+					t,
+					r.From,
+					store.Endpoint{Node: nodeA.ID, Incarnation: nodeA.Incarnation, Role: shard.RolePrimary},
+					"the source must be the writer at the incarnation of its placement",
+				)
+				expect.Equal(
+					t,
+					r.Fallback,
+					store.Endpoint{},
+					"a source of an ended incarnation must not be the fallback",
+				)
+			}
+			expect.Equal(t, h.metrics.value(movesInstrument, reasonFailure)-failures, float64(len(got)),
+				"the controller must count each repair as a failure")
+		})
+
+		t.Run("places each writer again whose node has a new incarnation", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			later := restarted(nodeA)
+			h.view(t, later, nodeB)
+			h.live(t, later, nodeB)
+		})
+
+		t.Run("places each writer again that a prior controller placed on an ended incarnation", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, crowded(t, nodeA))
+			h.start(t)
+			later := restarted(nodeA)
+			h.view(t, later, nodeB)
+			h.live(t, later, nodeB)
 		})
 
 		t.Run("gives no fallback to a move of a faulted replica", func(t *testing.T) {
@@ -416,6 +464,14 @@ func TestPlan(t *testing.T) {
 			h := served(t, unavailable)
 			h.view(t, nodeB)
 			assert.Equal(t, h.writers(t)[nodeB.ID], shards, "the budget must admit the repairs")
+		})
+
+		t.Run("admits a move of a writer whose node has a new incarnation at maxUnavailable zero", func(t *testing.T) {
+			t.Parallel()
+			h := served(t, unavailable)
+			later := restarted(nodeA)
+			h.view(t, later, nodeB)
+			h.live(t, later, nodeB)
 		})
 
 		t.Run("admits a move off a node that an admitted reservation covers at maxUnavailable zero",
@@ -468,6 +524,31 @@ func TestPlan(t *testing.T) {
 				"the second pass must place the shard again")
 		})
 
+		t.Run("starts a pass for a commit that ends a transition of a writer whose node has a new incarnation",
+			func(t *testing.T) {
+				t.Parallel()
+				h := served(t)
+				sid := h.shardOn(t, nodeA.ID)
+				h.answer = func(r *protocol.Request) error {
+					if r.Call == protocol.Add && r.Node == nodeB.ID {
+						return errRefused
+					}
+					return nil
+				}
+				h.pause = func(e machine.Effect) bool {
+					cb, ok := e.(machine.Callback)
+					return ok && cb.Request.Call == protocol.Drop && cb.Request.Node == nodeB.ID
+				}
+				p := proposalOf(t, 1, proposal.Move, h.placements(t)[sid].Epoch,
+					proposal.MoveArgs{Node: nodeB.ID, Shard: sid})
+				h.submit(t, &p, operator)
+				later := restarted(nodeA)
+				h.view(t, later, nodeB)
+				h.pause = nil
+				h.run(t)
+				h.live(t, later, nodeB)
+			})
+
 		t.Run("logs a move that the engine does not start", func(t *testing.T) {
 			t.Parallel()
 			h := served(t)
@@ -481,9 +562,9 @@ func TestPlan(t *testing.T) {
 			h.step(t, h.submitCall(&p, operator))
 			h.pass(t, h.plans[len(h.plans)-1].Token)
 			h.pass(t, drain)
-			got := h.logs.logged(logMove)
+			got := h.logged(logMove)
 			assert.Length(t, got, 1, "the controller must log the move of the shard in transition")
-			expect.Equal(t, got[0].attrs[attrShardKey], sid.String(), "the log must name the shard")
+			expect.Equal(t, got[0][attrShardKey], sid.String(), "the log must name the shard")
 		})
 
 		t.Run("fails at an error of a commit of a pass while a trigger waits", func(t *testing.T) {
@@ -599,24 +680,59 @@ func delayed(s *setup) {
 }
 
 // crowded returns an option whose prior controller placed every shard of the cell but the
-// last on the node n. The first pass is then an emergency, which restores the last shard
-// and keeps the other replicas where they are.
-func crowded(tb assert.TB, n shard.NodeID) option {
+// last on the incarnation of the node n. The first pass is then an emergency, which
+// restores the last shard and keeps the other replicas where they are.
+func crowded(tb assert.TB, n shard.Node) option {
 	ss := spans(tb)
 	return func(s *setup) {
 		m := &store.Mutation{}
 		for i, sp := range ss[:len(ss)-1] {
 			m.Put = append(m.Put, shard.Placement{
-				Shard:    shard.ID{ID128: id.ID128{0: tagShard, 15: byte(i + 1)}},
-				Range:    sp.Range,
-				Replicas: []shard.Replica{{Node: n, Role: shard.RolePrimary}},
-				Epoch:    1,
-				Reserved: 1,
-				Sequence: 1,
+				Shard:       shard.ID{ID128: id.ID128{0: tagShard, 15: byte(i + 1)}},
+				Range:       sp.Range,
+				Replicas:    []shard.Replica{{Node: n.ID, Role: shard.RolePrimary}},
+				Epoch:       1,
+				Incarnation: n.Incarnation,
+				Reserved:    1,
+				Sequence:    1,
 			})
 		}
 		s.prior = append(s.prior, m)
 	}
+}
+
+// live checks that every shard of the scope of the cell has a writer, on a node of nodes,
+// and that its placement records the incarnation of that node in nodes.
+func (h *harness) live(tb assert.TB, nodes ...shard.Node) {
+	tb.Helper()
+	incarnations := make(map[shard.NodeID]epoch.Epoch, len(nodes))
+	for _, n := range nodes {
+		incarnations[n.ID] = n.Incarnation
+	}
+	for _, p := range h.placements(tb) {
+		assert.Length(tb, p.Replicas, 1, "every shard must have a writer")
+		inc, ok := incarnations[p.Replicas[0].Node]
+		assert.True(tb, ok, "the writer of a shard must be a node of the view")
+		expect.Equal(tb, p.Incarnation, inc, "the placement must record the live incarnation of the node of its writer")
+	}
+}
+
+// logged returns the attributes of each record that the controller has logged with the
+// message msg, in order. Each map has the text of the value of each attribute by its key.
+func (h *harness) logged(msg string) []map[string]string {
+	var got []map[string]string
+	for _, r := range h.logs.All() {
+		if r.Message != msg {
+			continue
+		}
+		attrs := make(map[string]string, r.NumAttrs())
+		r.Attrs(func(a slog.Attr) bool {
+			attrs[a.Key] = a.Value.String()
+			return true
+		})
+		got = append(got, attrs)
+	}
+	return got
 }
 
 // spans returns the spans of the cell: the four slots of fixed-slots.

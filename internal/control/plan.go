@@ -18,6 +18,7 @@ import (
 
 	"go.thesmos.sh/core/crypto/sha256"
 	"go.thesmos.sh/core/epoch"
+	"go.thesmos.sh/core/idmap"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/pcg"
 
@@ -51,7 +52,7 @@ type passes struct {
 	// moving maps the shard of each move proposal whose transition has started to the
 	// record and the reply of the proposal, until the batch that commits the first record
 	// of the transition.
-	moving map[shard.ID]moving
+	moving *idmap.Map[shard.ID, moving]
 	// running is the token of the placement pass in flight, and zero without one.
 	running machine.Token
 	// interval is the token of the Timer of the next periodic pass, and zero without one.
@@ -187,8 +188,8 @@ func seed(snap *placement.Snapshot) rand.Rand {
 // takes its place. The model of the support matrix has one replica per shard: its writer.
 // change returns the zero Replica for a cur without a writer, and reports false for a
 // target without a writer, which has a deficit. A plan lists only the shards whose
-// replicas it changes, so the writer of a target is on another node than the writer of
-// cur.
+// replicas it changes. The writer of a target is then on another node than the writer of
+// cur, unless the incarnation of the writer of cur has ended.
 func change(cur *shard.Placement, t *placement.Target, role shard.Role) (shard.Replica, shard.Replica, bool) {
 	to, ok := writer(&shard.Placement{Replicas: t.Replicas}, role)
 	from, _ := writer(cur, role)
@@ -243,13 +244,13 @@ func (c *Controller) input() *placement.Input {
 	a := c.assignment
 	in := &placement.Input{
 		Clock:       c.clock,
-		Transitions: make(map[shard.ID]placement.InFlight, len(a.transitions)),
+		Transitions: make(map[shard.ID]placement.InFlight, a.transitions.Len()),
 		Faults:      c.members.faults(),
 		Draining:    make(map[shard.NodeID]bool),
 		ShardLoad:   c.members.loads(a, c.spec.writer, c.load),
 		Model:       c.spec.model.Model,
 		Layout:      a.layout,
-		Current:     a.current(c.scopeOf),
+		Current:     a.current(c.scopeOf, &c.members),
 		Nodes:       make([]shard.Node, 0, len(c.members.view.Nodes)),
 		Metrics:     c.spec.metrics,
 		Snapshot: placement.Snapshot{
@@ -263,7 +264,7 @@ func (c *Controller) input() *placement.Input {
 		RepairFrom:  c.passes.cursor,
 	}
 	in.Rand = seed(&in.Snapshot)
-	for sid, t := range a.transitions {
+	for sid, t := range a.transitions.All() {
 		in.Transitions[sid] = placement.InFlight{To: t.To.Node, Fallback: t.Fallback.Node}
 	}
 	for _, n := range c.members.view.Nodes {
@@ -365,7 +366,7 @@ func (c *Controller) moves(pl *placement.Plan, out []machine.Effect) ([]machine.
 		if c.budget.draining(to.Node) {
 			continue
 		}
-		if !c.admits(from) {
+		if !c.admits(&cur, from) {
 			c.metrics.deferred.Add(context.Background(), 1)
 			continue
 		}
@@ -383,51 +384,44 @@ func (c *Controller) moves(pl *placement.Plan, out []machine.Effect) ([]machine.
 			c.metrics.deferred.Add(context.Background(), 1)
 			continue
 		}
-		c.count(sid, from)
+		c.count(&cur, from)
 	}
 	c.passes.refused = refused
 	return c.batchAfter(out, fault)
 }
 
-// move returns the move of the replica from of the placement cur to the replica to. Each
-// endpoint has the incarnation of its node in the view, and a source that the view does
-// not have gets incarnation zero. The fallback is the source when the view has its node,
-// the node does not drain, and its replica of the shard has no fault. The move has no
-// fallback otherwise.
+// move returns the move of the writer from of the placement cur to the replica to. The
+// source has the incarnation that cur records for its writer, and the zero Replica has the
+// zero Endpoint. The destination has the incarnation of its node in the view, and
+// incarnation zero for a node that the view does not have. The fallback is the source when
+// the view has its node at the incarnation of cur, the node does not drain, and its replica
+// of the shard has no fault. The move has no fallback otherwise.
 func (c *Controller) move(cur *shard.Placement, from, to shard.Replica) engine.Move {
 	mv := engine.Move{
-		From:        c.endpoint(from),
-		To:          c.endpoint(to),
+		From:        store.Endpoint{Node: from.Node, Incarnation: cur.Incarnation, Role: from.Role},
+		To:          store.Endpoint{Node: to.Node, Role: to.Role},
 		Placement:   *cur,
 		SpecVersion: c.spec.version,
 	}
-	mb, live := c.members.nodes[from.Node]
+	if n, ok := c.members.live(to.Node); ok {
+		mv.To.Incarnation = n.Incarnation
+	}
+	mb, live := c.members.at(from.Node, cur.Incarnation)
 	if live && !c.budget.draining(from.Node) && !mb.faulted(cur.Shard) {
 		mv.Fallback = mv.From
 	}
 	return mv
 }
 
-// endpoint returns the endpoint of the replica r at the incarnation of its node in the
-// view, and at incarnation zero for a node that the view does not have. The zero Replica
-// has the zero Endpoint.
-func (c *Controller) endpoint(r shard.Replica) store.Endpoint {
-	ep := store.Endpoint{Node: r.Node, Role: r.Role}
-	if n, ok := c.members.live(r.Node); ok {
-		ep.Incarnation = n.Incarnation
-	}
-	return ep
-}
-
-// count adds a started move of the replica from of the shard sid to the counter of its
-// reason. The reason is a failure for a missing replica, a node that the view does not
-// have and a faulted replica. It is a drain for a draining node, and a rebalance
+// count adds a started move of the writer from of the placement cur to the counter of its
+// reason. The reason is a failure for a missing writer, a writer whose incarnation the view
+// does not have and a faulted replica. It is a drain for a draining node, and a rebalance
 // otherwise.
-func (c *Controller) count(sid shard.ID, from shard.Replica) {
+func (c *Controller) count(cur *shard.Placement, from shard.Replica) {
 	ctx := context.Background()
-	mb, live := c.members.nodes[from.Node]
+	mb, live := c.members.at(from.Node, cur.Incarnation)
 	switch {
-	case !live || mb.faulted(sid):
+	case !live || mb.faulted(cur.Shard):
 		c.metrics.failure.Add(ctx, 1)
 	case c.budget.draining(from.Node):
 		c.metrics.drain.Add(ctx, 1)
@@ -468,10 +462,10 @@ func (c *Controller) moved(s *submitted, ev *machine.Planned, out []machine.Effe
 		return reply(c, s.to, protocol.Receipt{}, err, out), nil
 	}
 	c.metrics.rebalance.Add(context.Background(), 1)
-	c.passes.moving[s.shard] = moving{
+	c.passes.moving.Set(s.shard, moving{
 		applied:  store.Applied{Caller: s.caller, Proposal: *s.proposal},
 		followup: followup{proposal: s.proposal.ID, to: s.to},
-	}
+	})
 	return c.batchAfter(out, fault)
 }
 

@@ -37,7 +37,7 @@ func TestAssignment(t *testing.T) {
 
 		t.Run("keeps the ID of each shard that its scope places", func(t *testing.T) {
 			t.Parallel()
-			h := newHarness(t, crowded(t, nodeA.ID))
+			h := newHarness(t, crowded(t, nodeA))
 			h.start(t)
 			h.view(t, nodeA, nodeB)
 			got := h.shardIDs(t)
@@ -45,6 +45,68 @@ func TestAssignment(t *testing.T) {
 			for i := range shards - 1 {
 				expect.Contains(t, got, shard.ID{ID128: id.ID128{0: tagShard, 15: byte(i + 1)}},
 					"the controller must keep the ID of a placed shard")
+			}
+		})
+
+		tests := []struct {
+			name string
+			give []shard.Node
+			want []shard.Replica
+		}{
+			{
+				name: "passes a writer on the live incarnation of its node to a pass",
+				give: []shard.Node{nodeA, nodeB},
+				want: []shard.Replica{{Node: nodeA.ID, Role: shard.RolePrimary}},
+			},
+			{
+				name: "leaves a writer whose node has a new incarnation out of a pass",
+				give: []shard.Node{restarted(nodeA), nodeB},
+			},
+			{
+				name: "passes a writer on a node that has left to a pass",
+				give: []shard.Node{nodeB},
+				want: []shard.Replica{{Node: nodeA.ID, Role: shard.RolePrimary}},
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				h := newHarness(t, crowded(t, nodeA))
+				h.start(t)
+				h.paused = true
+				h.view(t, tt.give...)
+				assert.NotEmpty(t, h.plans, "the first view must start a pass")
+				current := h.plans[0].Input.Current.Placements
+				for i := range shards - 1 {
+					sid := shard.ID{ID128: id.ID128{0: tagShard, 15: byte(i + 1)}}
+					expect.Equal(
+						t,
+						current[sid].Replicas,
+						tt.want,
+						"the pass must have the writers of the live incarnations",
+						expect.EquateEmpty(),
+					)
+				}
+			})
+		}
+
+		t.Run("passes the other replicas of a placement whose writer it leaves out to a pass", func(t *testing.T) {
+			t.Parallel()
+			secondary := shard.Replica{Node: nodeB.ID, Role: shard.RoleSecondary}
+			h := newHarness(t, crowded(t, nodeA), func(s *setup) {
+				for i := range s.prior[0].Put {
+					s.prior[0].Put[i].Replicas = append(s.prior[0].Put[i].Replicas, secondary)
+				}
+			})
+			h.start(t)
+			h.paused = true
+			h.view(t, restarted(nodeA), nodeB)
+			assert.NotEmpty(t, h.plans, "the first view must start a pass")
+			current := h.plans[0].Input.Current.Placements
+			for i := range shards - 1 {
+				sid := shard.ID{ID128: id.ID128{0: tagShard, 15: byte(i + 1)}}
+				expect.Equal(t, current[sid].Replicas, []shard.Replica{secondary},
+					"the pass must have the replicas of a placement other than its lost writer")
 			}
 		})
 
@@ -142,12 +204,13 @@ func transfer(tb assert.TB, name shard.StrategyName, version uint32, action hand
 	sid := shard.ID{ID128: id.ID128{0: tagShard, 15: 1}}
 	m := &store.Mutation{
 		Put: []shard.Placement{{
-			Shard:    sid,
-			Range:    ss[0].Range,
-			Replicas: []shard.Replica{{Node: nodeA.ID, Role: shard.RolePrimary}},
-			Epoch:    1,
-			Reserved: 3,
-			Sequence: 2,
+			Shard:       sid,
+			Range:       ss[0].Range,
+			Replicas:    []shard.Replica{{Node: nodeA.ID, Role: shard.RolePrimary}},
+			Epoch:       1,
+			Incarnation: nodeA.Incarnation,
+			Reserved:    3,
+			Sequence:    2,
 		}},
 		Transitions: []store.Transition{{
 			Started:         origin,
@@ -173,12 +236,13 @@ func stray(tb assert.TB) option {
 	tb.Helper()
 	ss := spans(tb)
 	p := shard.Placement{
-		Shard:    shard.ID{ID128: id.ID128{0: tagShard, 15: 2}},
-		Range:    shard.Range{Start: append(slices.Clone(ss[1].Range.Start), offSlot...)},
-		Replicas: []shard.Replica{{Node: nodeA.ID, Role: shard.RolePrimary}},
-		Epoch:    1,
-		Reserved: 1,
-		Sequence: 1,
+		Shard:       shard.ID{ID128: id.ID128{0: tagShard, 15: 2}},
+		Range:       shard.Range{Start: append(slices.Clone(ss[1].Range.Start), offSlot...)},
+		Replicas:    []shard.Replica{{Node: nodeA.ID, Role: shard.RolePrimary}},
+		Epoch:       1,
+		Incarnation: nodeA.Incarnation,
+		Reserved:    1,
+		Sequence:    1,
 	}
 	return func(s *setup) { s.prior = append(s.prior, &store.Mutation{Put: []shard.Placement{p}}) }
 }

@@ -27,8 +27,8 @@ type gap struct {
 // open starts the writer gap of the shard sid with the histogram of its reason, unless the
 // shard has a gap in flight. A gap keeps the start and the reason of its first cause.
 func (c *Controller) open(sid shard.ID, reason telemetry.Histogram) {
-	if _, ok := c.gaps[sid]; !ok {
-		c.gaps[sid] = gap{start: c.clock.Time(), reason: reason}
+	if _, ok := c.gaps.Get(sid); !ok {
+		c.gaps.Set(sid, gap{start: c.clock.Time(), reason: reason})
 	}
 }
 
@@ -65,7 +65,7 @@ func (c *Controller) fails(ended []shard.NodeID) {
 func (c *Controller) served(r *protocol.Report) {
 	for i := range r.Replicas {
 		o := &r.Replicas[i]
-		g, ok := c.gaps[o.Shard]
+		g, ok := c.gaps.Get(o.Shard)
 		if !ok || o.Status != shard.StatusServing {
 			continue
 		}
@@ -74,7 +74,7 @@ func (c *Controller) served(r *protocol.Report) {
 			continue
 		}
 		g.reason.Record(context.Background(), c.clock.Time().Sub(g.start).Seconds())
-		delete(c.gaps, o.Shard)
+		c.gaps.Delete(o.Shard)
 	}
 }
 
@@ -85,12 +85,12 @@ func (c *Controller) served(r *protocol.Report) {
 // controller applies mu, and records the duration of each gap in the histogram of its reason.
 func (c *Controller) completed(mu *store.Mutation) {
 	for _, sid := range mu.Done {
-		g, ok := c.gaps[sid]
+		g, ok := c.gaps.Get(sid)
 		p := c.assignment.placements[sid]
 		if _, served := writer(&p, c.spec.writer); !ok || !served {
 			continue
 		}
 		g.reason.Record(context.Background(), c.clock.Time().Sub(g.start).Seconds())
-		delete(c.gaps, sid)
+		c.gaps.Delete(sid)
 	}
 }

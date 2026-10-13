@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"time"
 
+	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
+	"go.thesmos.sh/core/idmap"
 	"go.thesmos.sh/core/resilience"
 
 	"go.thesmos.sh/sharder/internal/machine"
@@ -34,8 +36,8 @@ type member struct {
 	// node is the node in the view.
 	node *shard.Node
 	// replicas maps each shard of the last accepted report to what the node reported about
-	// its replica, in the report. It is nil before the first report.
-	replicas map[shard.ID]*shard.Observed
+	// its replica, in the report. It is empty before the first report.
+	replicas *idmap.Map[shard.ID, *shard.Observed]
 	// sequence is the Sequence of the last accepted report, and zero before the first. An
 	// agent numbers the reports of an incarnation from one.
 	sequence uint64
@@ -44,18 +46,18 @@ type member struct {
 // faulted reports whether the last accepted report of mb has a permanent fault in its
 // replica of the shard sid.
 func (mb *member) faulted(sid shard.ID) bool {
-	o := mb.replicas[sid]
-	return o != nil && o.Fault == shard.FaultPermanent
+	o, ok := mb.replicas.Get(sid)
+	return ok && o.Fault == shard.FaultPermanent
 }
 
 // take makes the report r the last accepted report of mb, and reports whether r adds a
 // permanent fault to the faults that the last report had.
 func (mb *member) take(r *protocol.Report) bool {
-	replicas := make(map[shard.ID]*shard.Observed, len(r.Replicas))
+	replicas := idmap.NewTyped128[shard.ID, *shard.Observed](len(r.Replicas))
 	faulted := false
 	for i := range r.Replicas {
 		o := &r.Replicas[i]
-		replicas[o.Shard] = o
+		replicas.Set(o.Shard, o)
 		if o.Fault == shard.FaultPermanent && !mb.faulted(o.Shard) {
 			faulted = true
 		}
@@ -97,7 +99,7 @@ func (ms *members) apply(v *membership.View) ([]shard.NodeID, bool) {
 			continue
 		}
 		changed = true
-		nodes[n.ID] = &member{node: n}
+		nodes[n.ID] = &member{node: n, replicas: idmap.NewTyped128[shard.ID, *shard.Observed](0)}
 	}
 	var ended []shard.NodeID
 	for nid, old := range ms.nodes {
@@ -115,6 +117,13 @@ func (ms *members) live(nid shard.NodeID) (*shard.Node, bool) {
 		return mb.node, true
 	}
 	return nil, false
+}
+
+// at returns the member of the node nid, or nil for a node that the last view does not
+// have. It reports whether the view has the node at the incarnation inc.
+func (ms *members) at(nid shard.NodeID, inc epoch.Epoch) (*member, bool) {
+	mb, ok := ms.nodes[nid]
+	return mb, ok && mb.node.Incarnation == inc
 }
 
 // reported reports whether the first view has arrived, and every node of the last view has
@@ -137,7 +146,7 @@ func (ms *members) faults() map[shard.ID][]shard.NodeID {
 	faults := make(map[shard.ID][]shard.NodeID)
 	for i := range ms.view.Nodes {
 		mb := ms.nodes[ms.view.Nodes[i].ID]
-		for sid, o := range mb.replicas {
+		for sid, o := range mb.replicas.All() {
 			if o.Fault == shard.FaultPermanent {
 				faults[sid] = append(faults[sid], mb.node.ID)
 			}
@@ -158,8 +167,10 @@ func (ms *members) loads(a *assignment, wr shard.Role, load shard.Load) map[shar
 	}
 	for sid, p := range a.placements {
 		w, _ := writer(&p, wr)
-		if mb, ok := ms.nodes[w.Node]; ok && mb.replicas[sid] != nil && mb.replicas[sid].Load != nil {
-			loads[sid] = mb.replicas[sid].Load
+		if mb, ok := ms.nodes[w.Node]; ok {
+			if o, ok := mb.replicas.Get(sid); ok && o.Load != nil {
+				loads[sid] = o.Load
+			}
 		}
 	}
 	return loads

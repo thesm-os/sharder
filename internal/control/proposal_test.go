@@ -115,12 +115,12 @@ func TestProposal(t *testing.T) {
 			h := served(t)
 			first := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
 			h.submit(t, &first, operator)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Commit); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Commit); return ok }
 			undrain := proposalOf(t, 2, proposal.Undrain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
 			h.step(t, h.submitCall(&undrain, operator))
 			again := proposalOf(t, 3, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
 			h.step(t, h.submitCall(&again, operator))
-			h.held = nil
+			h.pause = nil
 			h.run(t)
 			assert.Equal(t, drained(h.state(t).Drains), []store.DrainKey{{Node: nodeA.ID}},
 				"the drain after the undrain must leave the manual drain of the node")
@@ -458,7 +458,7 @@ func TestProposal(t *testing.T) {
 
 		t.Run("explains a shard with the violations of its replicas", func(t *testing.T) {
 			t.Parallel()
-			h := newHarness(t, strict, crowded(t, nodeA.ID))
+			h := newHarness(t, strict, crowded(t, nodeA))
 			h.start(t)
 			h.view(t, nodeA)
 			p := proposalOf(t, 1, proposal.Explain, h.state(t).Head.Generation,
@@ -485,7 +485,7 @@ func TestProposal(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				raw := fmt.Sprintf(`{"goals":[{"name":%q,"tier":0,"weight":1}]}`, tt.goal.name)
-				h := newHarness(t, crowded(t, nodeA.ID), func(s *setup) {
+				h := newHarness(t, crowded(t, nodeA), func(s *setup) {
 					s.extend = func(r *config.Registry) error {
 						return config.Register[placement.Goal](r, config.Goal, tt.goal)
 					}

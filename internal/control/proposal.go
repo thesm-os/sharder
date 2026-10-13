@@ -130,7 +130,7 @@ func (c *Controller) movable(args *proposal.MoveArgs, p *proposal.Proposal) erro
 	if cur.Epoch != p.Base {
 		return fmt.Errorf("%w: shard %v is at the epoch %d", ErrStale, args.Shard, cur.Epoch)
 	}
-	if _, ok := c.assignment.transitions[args.Shard]; ok {
+	if _, ok := c.assignment.transitions.Get(args.Shard); ok {
 		return fmt.Errorf("%w: shard %v has a transition in flight", ErrStale, args.Shard)
 	}
 	if w, _ := writer(&cur, c.spec.writer); w.Node == args.Node {
@@ -242,7 +242,7 @@ func (c *Controller) propose(ev *machine.Submit, mu *store.Mutation, result []by
 
 // has reports whether the layout of the scope has the shard sid.
 func (c *Controller) has(sid shard.ID) bool {
-	_, ok := c.assignment.index[sid]
+	_, ok := c.assignment.index.Get(sid)
 	return ok
 }
 

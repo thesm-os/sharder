@@ -31,9 +31,11 @@
 //
 // # Passes
 //
-// A pass is a Plan effect over a copy of the committed assignment. The placement passes
-// run one at a time, and a trigger during a pass starts one more pass after it. These
-// events start a pass:
+// A pass is a Plan effect over a copy of the committed assignment. A node that restarts
+// restores no writer. The copy leaves out each writer whose node the view has at another
+// incarnation than its placement records, and the pass places the shard again. The
+// placement passes run one at a time, and a trigger during a pass starts one more pass
+// after it. These events start a pass:
 //
 //   - The first view, and each later view that ends the incarnation of a node with
 //     replicas.
@@ -41,17 +43,20 @@
 //   - The interval of the schedule of the placer, and a newer spec.
 //   - A report with a new permanent fault, a commit that leaves a shard without a writer,
 //     and a commit that adds or removes a drain.
+//   - A commit that ends the transition of a shard whose writer the view does not have at
+//     the incarnation of its placement.
 //   - The end of a transition, while the bounds of the engine refused a move of the last
 //     plan.
 //
 // The Controller seeds the source of randomness of each pass from its placement.Snapshot,
 // so a recorded pass replays. It starts the move of each shard of a plan in the order of
-// the IDs of the shards. Each endpoint of a move has the incarnation of its node in the
-// view, and a source that the view does not have gets incarnation zero. The fallback of a
-// move is its source when the view has the node of the source, the node does not drain,
-// and its replica of the shard has no fault. The Controller skips a target on a node that
-// started to drain after the input of the pass. A shard without a reported load has
-// Config.Load in a pass, or the mean load of the shards with one when Config.Load is nil.
+// the IDs of the shards. The source of a move has the incarnation that its placement
+// records for its writer. The destination has the incarnation of its node in the view. The
+// fallback of a move is its source when the view has the node of the source at that
+// incarnation, the node does not drain, and its replica of the shard has no fault. The
+// Controller skips a target on a node that started to drain after the input of the pass. A
+// shard without a reported load has Config.Load in a pass, or the mean load of the shards
+// with one when Config.Load is nil.
 //
 // # Budget
 //
@@ -79,8 +84,9 @@
 // The drain roles of the support matrix are every role of its model, so an admitted
 // negotiable disruption does not make a replica unavailable. maxUnavailable bounds the
 // moves instead. A move makes the one replica of its shard unavailable, so maxUnavailable
-// admits it above zero. A move of a replica on a node that has left the view or that an
-// admitted reservation covers makes nothing unavailable, and the budget admits it.
+// admits it above zero. A move of a writer that the view does not have at the incarnation
+// of its placement makes nothing unavailable. Neither does a move off a node that an
+// admitted reservation covers. The budget admits both.
 //
 // # Proposals
 //
@@ -123,7 +129,7 @@
 // # Dependency position
 //
 // control imports the standard library, the packages btree, clock, crypto, crypto/sha256,
-// epoch, errs, fsm, id, id/ulid, rand, rand/pcg, resilience and telemetry of
+// epoch, errs, fsm, id, id/ulid, idmap, rand, rand/pcg, resilience and telemetry of
 // go.thesmos.sh/core, and the packages budget, config, handoff, internal/engine,
 // internal/machine, internal/scope, membership, ownership, partition, placement,
 // placement/planner, proposal, protocol, replication, shard and store of

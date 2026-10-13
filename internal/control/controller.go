@@ -18,6 +18,7 @@ import (
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/fsm"
 	"go.thesmos.sh/core/id/ulid"
+	"go.thesmos.sh/core/idmap"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/telemetry"
 
@@ -277,7 +278,7 @@ type Controller struct {
 	// the order of the IDs.
 	applied *btree.MapFunc[proposal.ID, time.Time]
 	// gaps maps each shard whose writer gap runs to the gap.
-	gaps map[shard.ID]gap
+	gaps *idmap.Map[shard.ID, gap]
 	// load is the load of each shard without a reported load, or nil.
 	load shard.Load
 	// kinds lists the kinds of proposals that the controller applies.
@@ -349,11 +350,11 @@ func New(cfg *Config) (*Controller, error) {
 		operators:       make(map[shard.Identity]bool, len(cfg.Operators)),
 		proposing:       make(map[proposal.ID]bool),
 		applied:         btree.NewMapFunc[proposal.ID, time.Time](byID),
-		gaps:            make(map[shard.ID]gap),
+		gaps:            idmap.NewTyped128[shard.ID, gap](0),
 		load:            maps.Clone(cfg.Load),
 		kinds:           slices.Clone(cfg.Kinds),
 		budget:          newBudgets(),
-		passes:          passes{plans: make(map[machine.Token]*plan), moving: make(map[shard.ID]moving)},
+		passes:          passes{plans: make(map[machine.Token]*plan), moving: idmap.NewTyped128[shard.ID, moving](0)},
 		lc:              lifecycle.Start(struct{}{}),
 		node:            cfg.Node,
 		scopeOf:         cfg.Scope,
@@ -653,8 +654,7 @@ func (c *Controller) batchAfter(out []machine.Effect, err error) ([]machine.Effe
 	p := &pending{mutation: b, batch: true}
 	for i := range b.Transitions {
 		s := b.Transitions[i].Operation.Shard
-		if w, ok := c.passes.moving[s]; ok {
-			delete(c.passes.moving, s)
+		if w, ok := c.passes.moving.Delete(s); ok {
 			b.Applied = append(b.Applied, w.applied)
 			p.followups = append(p.followups, w.followup)
 		}
@@ -694,6 +694,8 @@ func (c *Controller) commit(p *pending, out []machine.Effect) ([]machine.Effect,
 //
 // These commits start a pass:
 //   - a commit that leaves a shard without a writer.
+//   - a commit that ends the transition of a shard whose writer the view does not have at
+//     the incarnation of its placement.
 //   - a commit that adds or removes a drain.
 //   - a commit that ends a transition while the bounds refused a move of the last plan.
 func (c *Controller) apply(id store.CommitID, gen epoch.Epoch, out []machine.Effect) ([]machine.Effect, error) {
@@ -754,11 +756,21 @@ func (c *Controller) follow(f *followup, gen epoch.Epoch, out []machine.Effect) 
 	return out
 }
 
-// lost reports whether the mutation mu leaves a shard without a writer, which the next pass
-// places again.
+// lost reports whether the mutation mu leaves a shard that the next pass places again: a
+// placement without a writer, or a shard whose transition mu ends while the view does not
+// have its writer at the incarnation of its placement. A pass skips a shard with a
+// transition in flight, so the end of the transition starts the pass that repairs it. lost
+// reads the assignment after mu has applied.
 func (c *Controller) lost(mu *store.Mutation) bool {
 	for i := range mu.Put {
 		if _, ok := writer(&mu.Put[i], c.spec.writer); !ok {
+			return true
+		}
+	}
+	for _, sid := range mu.Done {
+		p := c.assignment.placement(sid)
+		w, _ := writer(&p, c.spec.writer)
+		if _, live := c.members.at(w.Node, p.Incarnation); !live {
 			return true
 		}
 	}

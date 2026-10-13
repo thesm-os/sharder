@@ -5,7 +5,6 @@ package control_test
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,7 +12,6 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 	"weak"
@@ -23,12 +21,13 @@ import (
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/assert/stateful"
 	"go.thesmos.sh/core/clock/fake"
+	"go.thesmos.sh/core/coretest/telemetrytest"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/fsm"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/ulid"
 	"go.thesmos.sh/core/page"
-	"go.thesmos.sh/core/rand"
+	"go.thesmos.sh/core/rand/constant"
 	"go.thesmos.sh/core/telemetry"
 	"go.thesmos.sh/core/telemetry/noop"
 
@@ -84,6 +83,10 @@ const (
 // fails its test instead of the timeout of go test.
 const maxDeliveries = 10000
 
+// half is the value that rand.Float64 returns for the source of randomness of the tests, so
+// each backoff is half of its ceiling.
+const half = 0.5
+
 // The weights of the actions of the property of a controller that a case takes more often
 // than the others.
 const (
@@ -96,8 +99,8 @@ const (
 // The labels of the cases of the property of a controller, which its coverage requirements
 // count.
 const (
-	// labelDefinite counts a case that answers a callback with an error that a retry does not
-	// fix.
+	// labelDefinite counts a case in which an agent replies to a callback with an error that a
+	// retry does not fix.
 	labelDefinite = "a callback fails for good"
 	// labelLostReply counts a case that loses the reply of a commit.
 	labelLostReply = "the reply of a commit is lost"
@@ -121,9 +124,9 @@ const (
 	rare = 0.02
 )
 
-// answersOfAgents lists the answers with which a step of the property of a controller answers
-// a callback: success, a transient error, an error that a retry does not fix, and the end of
-// the timeout of the callback.
+// answersOfAgents lists the replies of an agent to a callback in the property of a controller.
+// The list has a success, a transient error, an error that a retry does not fix, and the end
+// of the timeout of the callback.
 var answersOfAgents = []error{nil, protocol.ErrUnreachable, errRefused, context.DeadlineExceeded}
 
 // marker is the effect that the harness passes in out with each event: an Unwatch without a
@@ -178,273 +181,53 @@ type testCase interface {
 	Cleanup(f func())
 }
 
-// halves is a source of randomness whose every draw of rand.Float64 is one half, so each
-// backoff is half of its ceiling. Its values differ in their low bits, so the IDs of the
-// shards that the controller generates differ.
-type halves struct {
-	// n counts the draws.
-	n uint64
+// readings reads what the instruments of a controller of the cell of the tests report into a
+// telemetrytest.Recorder. Each method takes the name of an instrument and the values of the
+// attributes that the controller binds after the namespace and the cell, in their order.
+type readings struct {
+	*telemetrytest.Recorder
 }
 
-var _ rand.Rand = (*halves)(nil)
-
-// Uint64 returns the next value: the top bit and the count of the draws.
-func (h *halves) Uint64() uint64 {
-	h.n++
-	return 1<<63 | h.n
-}
-
-// Read fills p with the bytes of successive values of Uint64.
-func (h *halves) Read(p []byte) (int, error) {
-	for i := 0; i < len(p); i += 8 {
-		var b [8]byte
-		binary.BigEndian.PutUint64(b[:], h.Uint64())
-		copy(p[i:], b[:])
-	}
-	return len(p), nil
-}
-
-// recorder is a telemetry.Reporter that keeps the last value of each gauge, the sum of
-// each counter, and the count and the sum of the records of each histogram, by instrument
-// and by attribute set. It also keeps the instruments that were released.
-type recorder struct {
-	// values maps each instrument and attribute set to its value: the value of a gauge or a
-	// counter, and the count of the records of a histogram.
-	values map[string]float64
-	// sums maps each histogram and attribute set to the sum of its records.
-	sums map[string]float64
-	// released contains each instrument and attribute set that was released.
-	released map[string]bool
-	// mu guards values, sums and released.
-	mu sync.Mutex
-}
-
-var _ telemetry.Reporter = (*recorder)(nil)
-
-// newRecorder returns a recorder without values.
-func newRecorder() *recorder {
-	return &recorder{
-		values:   make(map[string]float64),
-		sums:     make(map[string]float64),
-		released: make(map[string]bool),
-	}
-}
-
-// Counter returns a counter of the instrument of spec.
-func (r *recorder) Counter(spec telemetry.InstrumentSpec) telemetry.Counter {
-	return &counter{instrument{r: r, name: string(spec.Name)}}
-}
-
-// Gauge returns a gauge of the instrument of spec.
-func (r *recorder) Gauge(spec telemetry.InstrumentSpec) telemetry.Gauge {
-	return &gauge{instrument{r: r, name: string(spec.Name)}}
-}
-
-// Histogram returns a histogram of the instrument of spec.
-func (r *recorder) Histogram(spec telemetry.InstrumentSpec) telemetry.Histogram {
-	return &histogram{instrument{r: r, name: string(spec.Name)}}
-}
-
-// Tracer returns a tracer that discards every span.
-func (*recorder) Tracer(name telemetry.InstrumentName) telemetry.Tracer {
-	return noop.New().Tracer(name)
-}
-
-// value returns the value of the instrument name with the attributes attrs, after the
-// namespace and the cell of the tests.
-func (r *recorder) value(name string, attrs ...string) float64 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.values[key(name, attrs)]
-}
-
-// sum returns the sum of the records of the histogram name with the attributes attrs,
-// after the namespace and the cell of the tests.
-func (r *recorder) sum(name string, attrs ...string) float64 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.sums[key(name, attrs)]
-}
-
-// isReleased reports whether the instrument name with the attributes attrs, after the
-// namespace and the cell of the tests, was released.
-func (r *recorder) isReleased(name string, attrs ...string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.released[key(name, attrs)]
-}
-
-// instrument is one instrument of a recorder, bound to the attributes of key.
-type instrument struct {
-	// r is the recorder.
-	r *recorder
-	// name is the name of the instrument.
-	name string
-	// attrs lists the values of the bound attributes in their order, without the namespace
-	// and the cell.
-	attrs []string
-}
-
-// with returns the instrument bound to attrs. It drops the first two attributes, the
-// namespace and the cell.
-func (i *instrument) with(attrs []telemetry.Attr) instrument {
-	b := instrument{r: i.r, name: i.name}
-	for n, a := range attrs {
-		if n >= 2 {
-			b.attrs = append(b.attrs, a.Value.Str)
+// value returns the last value of the gauge name, the count of the records of the histogram
+// name, or the sum of the values of the counter name, in the series of attrs. It returns 0
+// for a series without a value.
+func (r readings) value(name string, attrs ...string) float64 {
+	values := r.Values(telemetry.InstrumentName(name), series(name, attrs)...)
+	if slices.Contains(gauges, name) {
+		if len(values) == 0 {
+			return 0
 		}
+		return values[len(values)-1]
 	}
-	return b
-}
-
-// apply calls f with the value of i, under the lock of the recorder, unless i was
-// released.
-func (i *instrument) apply(f func(v float64) float64) {
-	i.r.mu.Lock()
-	defer i.r.mu.Unlock()
-	k := key(i.name, i.attrs)
-	if i.r.released[k] {
-		return
+	if slices.Contains(histograms, name) {
+		return float64(len(values))
 	}
-	i.r.values[k] = f(i.r.values[k])
+	return r.sum(name, attrs...)
 }
 
-// release marks i as released.
-func (i *instrument) release() {
-	i.r.mu.Lock()
-	defer i.r.mu.Unlock()
-	i.r.released[key(i.name, i.attrs)] = true
-}
-
-// counter is a counter of a recorder.
-type counter struct{ instrument }
-
-// Add adds value to the counter.
-func (c *counter) Add(_ context.Context, value int64) {
-	c.apply(func(v float64) float64 { return v + float64(value) })
-}
-
-// With returns the counter bound to attrs.
-func (c *counter) With(attrs []telemetry.Attr) telemetry.Counter {
-	return &counter{c.with(attrs)}
-}
-
-// Release marks the counter as released.
-func (c *counter) Release() { c.release() }
-
-// gauge is a gauge of a recorder.
-type gauge struct{ instrument }
-
-// Set sets the gauge to value.
-func (g *gauge) Set(_ context.Context, value float64) {
-	g.apply(func(float64) float64 { return value })
-}
-
-// Add adds delta to the gauge.
-func (g *gauge) Add(_ context.Context, delta float64) {
-	g.apply(func(v float64) float64 { return v + delta })
-}
-
-// With returns the gauge bound to attrs.
-func (g *gauge) With(attrs []telemetry.Attr) telemetry.Gauge {
-	return &gauge{g.with(attrs)}
-}
-
-// Release marks the gauge as released.
-func (g *gauge) Release() { g.release() }
-
-// histogram is a histogram of a recorder. It counts its records and sums their values.
-type histogram struct{ instrument }
-
-// Record counts one record of value, and adds value to the sum of the records.
-func (h *histogram) Record(_ context.Context, value float64) {
-	h.apply(func(v float64) float64 { return v + 1 })
-	h.r.mu.Lock()
-	defer h.r.mu.Unlock()
-	h.r.sums[key(h.name, h.attrs)] += value
-}
-
-// With returns the histogram bound to attrs.
-func (h *histogram) With(attrs []telemetry.Attr) telemetry.Histogram {
-	return &histogram{h.with(attrs)}
-}
-
-// Release marks the histogram as released.
-func (h *histogram) Release() { h.release() }
-
-// journal is a slog.Handler that keeps the message and the attributes of every record. The
-// handlers that WithAttrs returns share the records of their journal.
-type journal struct {
-	// log contains the records.
-	log *entries
-	// attrs lists the attributes that WithAttrs bound, in their order.
-	attrs []slog.Attr
-}
-
-// entries is the list of the records of a journal.
-type entries struct {
-	// list lists the records in order.
-	list []entry
-	// mu guards list.
-	mu sync.Mutex
-}
-
-// entry is one record of a journal.
-type entry struct {
-	// attrs maps the key of each attribute to its value as text.
-	attrs map[string]string
-	// message is the message of the record.
-	message string
-	// level is the level of the record.
-	level slog.Level
-}
-
-var _ slog.Handler = (*journal)(nil)
-
-// newJournal returns a journal without records.
-func newJournal() *journal {
-	return &journal{log: &entries{}}
-}
-
-// Enabled reports true for every level.
-func (*journal) Enabled(context.Context, slog.Level) bool { return true }
-
-// Handle keeps the record r with the attributes that WithAttrs bound.
-func (j *journal) Handle(_ context.Context, r slog.Record) error {
-	e := entry{attrs: make(map[string]string), message: r.Message, level: r.Level}
-	for _, a := range j.attrs {
-		e.attrs[a.Key] = a.Value.String()
+// sum returns the sum of the values of the instrument name in the series of attrs: the sum
+// of the records of a histogram, and the sum of the additions of a counter.
+func (r readings) sum(name string, attrs ...string) float64 {
+	total := 0.0
+	for _, v := range r.Values(telemetry.InstrumentName(name), series(name, attrs)...) {
+		total += v
 	}
-	r.Attrs(func(a slog.Attr) bool {
-		e.attrs[a.Key] = a.Value.String()
-		return true
+	return total
+}
+
+// isReleased reports whether the controller has bound the series of attrs of the instrument
+// name, and has released every instrument of that series.
+func (r readings) isReleased(name string, attrs ...string) bool {
+	set := series(name, attrs)
+	slices.SortFunc(set, func(a, b telemetry.Attr) int { return strings.Compare(a.Key, b.Key) })
+	bound := slices.ContainsFunc(r.Series(telemetry.InstrumentName(name)), func(s []telemetry.Attr) bool {
+		return slices.EqualFunc(
+			s,
+			set,
+			func(a, b telemetry.Attr) bool { return a.Key == b.Key && a.Value.Str == b.Value.Str },
+		)
 	})
-	j.log.mu.Lock()
-	defer j.log.mu.Unlock()
-	j.log.list = append(j.log.list, e)
-	return nil
-}
-
-// WithAttrs returns a journal that shares the records of j and binds attrs after the
-// attributes of j.
-func (j *journal) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &journal{log: j.log, attrs: slices.Concat(j.attrs, attrs)}
-}
-
-// WithGroup returns j. The controller does not group its attributes.
-func (j *journal) WithGroup(string) slog.Handler { return j }
-
-// logged returns the entries with the message message.
-func (j *journal) logged(message string) []entry {
-	j.log.mu.Lock()
-	defer j.log.mu.Unlock()
-	var got []entry
-	for _, e := range j.log.list {
-		if e.message == message {
-			got = append(got, e)
-		}
-	}
-	return got
+	return bound && r.Bound(telemetry.InstrumentName(name), set...) == 0
 }
 
 // setup is the configuration of a harness before New.
@@ -480,9 +263,9 @@ type harness struct {
 	// answer returns the answer of an agent to the request r, and nil for success. With a
 	// nil answer, every agent replies with success.
 	answer func(r *protocol.Request) error
-	// held reports whether run leaves the effect e pending. With a nil held, run performs
+	// pause reports whether run leaves the effect e pending. With a nil pause, run performs
 	// every effect but a Plan while paused is set.
-	held func(e machine.Effect) bool
+	pause func(e machine.Effect) bool
 	// observe receives each effect that the controller appends, before route keeps it, or is
 	// nil.
 	observe func(e machine.Effect)
@@ -498,10 +281,10 @@ type harness struct {
 	spec *control.Strategies
 	// registry is the registry of the controller.
 	registry *config.Registry
-	// metrics are the instruments of the controller.
-	metrics *recorder
-	// logs are the logs of the controller.
-	logs *journal
+	// metrics reads every value that the instruments of the controller report.
+	metrics readings
+	// logs keeps every record that the controller logs.
+	logs *telemetrytest.Records
 	// pending lists the effects that run performs, the oldest first: the reads and the
 	// commits of the store, the callbacks and the passes.
 	pending []machine.Effect
@@ -550,7 +333,7 @@ func newHarness(tb testCase, opts ...option) *harness {
 	s := setup{
 		spec: testSpec(firstVersion),
 		cfg: control.Config{
-			Rand:        &halves{},
+			Rand:        constant.NewCounter(half),
 			Provided:    provided,
 			Kinds:       []proposal.OperationKind{proposal.Move, proposal.Drain, proposal.Undrain, proposal.Explain},
 			Operators:   []shard.Identity{operator},
@@ -568,8 +351,8 @@ func newHarness(tb testCase, opts ...option) *harness {
 	h := &harness{
 		st:      memory.New(fake.New(origin)),
 		clock:   fake.New(origin),
-		metrics: newRecorder(),
-		logs:    newJournal(),
+		metrics: readings{telemetrytest.NewRecorder()},
+		logs:    telemetrytest.NewRecords(slog.LevelDebug),
 		rng:     s.rng,
 	}
 	tb.Cleanup(func() { assert.NoError(tb, h.st.Close(), "the store must close") })
@@ -605,8 +388,8 @@ func newHarness(tb testCase, opts ...option) *harness {
 }
 
 // model is the expected state of a controller that the property of a controller drives, and
-// the record of what the controller did. Its harness holds every callback until a step
-// answers it, and passes each effect of the controller to observe.
+// the record of what the controller did. Its harness keeps every callback pending until a
+// step passes its reply, and passes each effect of the controller to observe.
 type model struct {
 	// c is the case of the property.
 	c *prop.Case
@@ -655,7 +438,7 @@ func newModel(c *prop.Case) *model {
 	m.h.observe = m.observe
 	m.h.start(c)
 	m.h.view(c, nodeA, nodeB)
-	m.h.held = func(e machine.Effect) bool { _, ok := e.(machine.Callback); return ok }
+	m.h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Callback); return ok }
 	return m
 }
 
@@ -703,7 +486,7 @@ func (m *model) view(c *prop.Case) {
 	m.h.view(c, nodes...)
 }
 
-// change passes a view in which each node is present or absent as c draws.
+// change passes a view in which each node is present or absent as c chooses.
 func (m *model) change(c *prop.Case) {
 	for i := range m.nodes {
 		present := c.Draw(prop.Boolean(), "present")
@@ -715,7 +498,7 @@ func (m *model) change(c *prop.Case) {
 	m.view(c)
 }
 
-// restart passes a view in which a node that c draws has its next incarnation.
+// restart passes a view in which a node that c chooses has its next incarnation.
 func (m *model) restart(c *prop.Case) {
 	c.Classify(labelRestart)
 	i := c.Draw(prop.Integer(0, len(m.nodes)-1), "node")
@@ -725,8 +508,8 @@ func (m *model) restart(c *prop.Case) {
 	m.view(c)
 }
 
-// report passes a report of a node of the view that c draws. The report lists each replica
-// of the node in the scope as serving, and with a permanent fault as c draws.
+// report passes a report of a node of the view that c chooses. The report lists each replica
+// of the node in the scope as serving, and c chooses which of them have a permanent fault.
 func (m *model) report(c *prop.Case) {
 	var live []shard.Node
 	for i, n := range m.nodes {
@@ -753,7 +536,7 @@ func (m *model) report(c *prop.Case) {
 	m.h.run(c)
 }
 
-// callbacks returns the indexes of the callbacks that the harness holds, in order.
+// callbacks returns the indexes of the callbacks that the harness keeps pending, in order.
 func (m *model) callbacks() []int {
 	var held []int
 	for i, e := range m.h.pending {
@@ -764,8 +547,7 @@ func (m *model) callbacks() []int {
 	return held
 }
 
-// answer answers a callback that the harness holds, which c draws, with an answer that c
-// draws.
+// answer passes a reply to a pending callback. c chooses the callback and the reply.
 func (m *model) answer(c *prop.Case) {
 	held := m.callbacks()
 	i := held[c.Draw(prop.Integer(0, len(held)-1), "callback")]
@@ -792,13 +574,13 @@ func (m *model) expire(c *prop.Case, i int) {
 	m.h.run(c)
 }
 
-// plan performs a Plan that the harness holds while plans pause.
+// plan performs a Plan that the harness keeps pending while plans pause.
 func (m *model) plan(c *prop.Case) {
 	i := slices.IndexFunc(m.h.pending, func(e machine.Effect) bool { _, ok := e.(machine.Plan); return ok })
 	m.h.pass(c, m.h.pending[i].(machine.Plan).Token)
 }
 
-// disrupt asks for the disruption of a node that c draws, as an operator.
+// disrupt asks for the disruption of a node that c chooses, as an operator.
 func (m *model) disrupt(c *prop.Case) {
 	n := m.nodes[c.Draw(prop.Integer(0, len(m.nodes)-1), "node")]
 	d := disruption(byte(len(m.disruptions)+1), n.ID)
@@ -807,7 +589,7 @@ func (m *model) disrupt(c *prop.Case) {
 	m.h.run(c)
 }
 
-// end ends the reservation of a disruption that c draws, as an operator.
+// end ends the reservation of a disruption that c chooses, as an operator.
 func (m *model) end(c *prop.Case) {
 	id := m.disruptions[c.Draw(prop.Integer(0, len(m.disruptions)-1), "disruption")]
 	m.h.step(c, m.h.doneCall(id, operator))
@@ -823,7 +605,7 @@ func (m *model) submit(c *prop.Case, k proposal.OperationKind, b epoch.Epoch, ar
 	m.h.run(c)
 }
 
-// drain drains or undrains a node that c draws by a proposal.
+// drain drains or undrains a node that c chooses by a proposal.
 func (m *model) drain(c *prop.Case) {
 	n := m.nodes[c.Draw(prop.Integer(0, len(m.nodes)-1), "node")]
 	k := c.Draw(prop.SampledFrom(proposal.Drain, proposal.Undrain), "kind")
@@ -831,7 +613,7 @@ func (m *model) drain(c *prop.Case) {
 	m.submit(c, k, n.Incarnation, proposal.NodeArgs{Node: n.ID})
 }
 
-// move proposes the move of a shard that c draws to a node that c draws.
+// move proposes the move of a shard to a node. c chooses the shard and the node.
 func (m *model) move(c *prop.Case) {
 	ids := m.h.shardIDs(c)
 	sid := ids[c.Draw(prop.Integer(0, len(ids)-1), "shard")]
@@ -852,7 +634,9 @@ func (m *model) outages(c *prop.Case) {
 
 // complete ends every fault that remains. It ends the outage, passes a view of every node,
 // resumes the passes, undrains each drained node and ends the reservation of each
-// disruption. It then answers each held callback with success and ends each Timer.
+// disruption. It then passes success as the result of each pending callback and ends each
+// Timer of a retry, until neither remains, so the retries use up every lost commit that a
+// step armed. It ends each Timer of the interval of the passes last.
 func (m *model) complete(c *prop.Case) {
 	if m.outage {
 		m.h.st.EndOutage()
@@ -876,18 +660,35 @@ func (m *model) complete(c *prop.Case) {
 	}
 	m.h.paused = false
 	m.h.run(c)
-	for range len(m.callbacks()) {
-		m.finish(c, m.callbacks()[0], nil)
+	for range maxDeliveries {
+		if held := m.callbacks(); len(held) > 0 {
+			m.finish(c, held[0], nil)
+			continue
+		}
+		i := slices.IndexFunc(m.h.timers, func(tm machine.Timer) bool { return tm.Duration != interval })
+		if i < 0 {
+			break
+		}
+		m.expire(c, i)
 	}
 	for i := range slices.Backward(m.h.timers) {
 		m.expire(c, i)
 	}
 }
 
-// incomplete reports whether the drain has more to do: a fault remains, a callback waits
-// for its answer, a transition has not ended, or a shard does not have a writer.
+// incomplete reports whether the drain has more to do: a fault remains, a pass waits to run,
+// a callback waits for its answer, a Timer other than the interval of the passes waits, a
+// transition has not ended, or a shard does not have a writer. Such a Timer is the backoff
+// of a retry, such as the retry of a commit whose reply was lost. Every backoff is below the
+// interval.
 func (m *model) incomplete() bool {
 	if m.outage || slices.Contains(m.present, false) || m.ended < len(m.disruptions) || len(m.callbacks()) > 0 {
+		return true
+	}
+	if slices.ContainsFunc(m.h.pending, func(e machine.Effect) bool { _, ok := e.(machine.Plan); return ok }) {
+		return true
+	}
+	if slices.ContainsFunc(m.h.timers, func(tm machine.Timer) bool { return tm.Duration != interval }) {
 		return true
 	}
 	for _, drained := range m.drained {
@@ -906,11 +707,14 @@ func (m *model) incomplete() bool {
 	return false
 }
 
-// invariant checks what holds after every step: no step stops the controller with an
-// error, a placement has one writer at most at an epoch that it has reserved, the reserved
-// epoch of a shard never falls, a transition does not reserve an epoch of another
-// transition, and a node of an admitted disruption hosts no replica. The store cannot be
-// read during an outage, so the checks of the scope wait for its end.
+// invariant checks the controller after every step:
+//   - No step stops the controller with an error.
+//   - A placement has one writer at most, at an epoch that it has reserved.
+//   - The reserved epoch of a shard never falls.
+//   - A transition does not reserve an epoch of another transition.
+//   - A node of an admitted disruption hosts no replica.
+//
+// The store cannot be read during an outage, so the checks of the scope wait for its end.
 func (m *model) invariant(c *prop.Case) {
 	assert.Nil(c, m.h.err, "no step of the property may stop the controller with an error")
 	if m.outage {
@@ -954,19 +758,10 @@ func (m *model) invariant(c *prop.Case) {
 }
 
 // settle checks the controller once the drain has ended the faults: every transition has
-// ended, and the writer of every shard is a node of the view.
+// ended, and the writer of every shard is on the live incarnation of a node of the view.
 func (m *model) settle(c *prop.Case) {
 	expect.Empty(c, m.h.state(c).Transitions, "every transition must end once the faults have ended")
-	live := make([]shard.NodeID, 0, len(m.nodes))
-	for _, n := range m.nodes {
-		live = append(live, n.ID)
-	}
-	for _, p := range m.h.placements(c) {
-		expect.Length(c, p.Replicas, 1, "every shard must have a writer once the faults have ended")
-		for _, r := range p.Replicas {
-			expect.Contains(c, live, r.Node, "the writer of a shard must be a node of the view")
-		}
-	}
+	m.h.live(c, m.nodes...)
 }
 
 // TestController checks the construction, the lifecycle and the steps of a controller.
@@ -1049,7 +844,7 @@ func TestController(t *testing.T) {
 
 		t.Run("releases its instruments when it refuses a config", func(t *testing.T) {
 			t.Parallel()
-			r := newRecorder()
+			r := readings{telemetrytest.NewRecorder()}
 			cfg := completeConfig(t)
 			cfg.Reporter, cfg.Term = r, epoch.Zero
 			_, err := control.New(&cfg)
@@ -1535,9 +1330,47 @@ const (
 	gapInstrument          = "sharder.writer.gap"
 )
 
-// key returns the key of the value of the instrument name with the attributes attrs.
-func key(name string, attrs []string) string {
-	return name + "|" + strings.Join(attrs, ",")
+// The keys of the attributes that a controller binds to an instrument after the namespace and
+// the cell.
+const (
+	keyProtocol = "protocol"
+	keyPhase    = "phase"
+	keyMode     = "mode"
+	keyReason   = "reason"
+	keyState    = "state"
+)
+
+// The instruments of a controller by the kind of their values. Each other instrument is a
+// counter.
+var (
+	// gauges lists the instruments that are gauges.
+	gauges = []string{transitionsInstrument, unplacedInstrument, reservationsInstrument}
+	// histograms lists the instruments that are histograms.
+	histograms = []string{passInstrument, gapInstrument}
+)
+
+// keys maps each instrument that binds attributes after the namespace and the cell to the
+// keys of those attributes, in their order.
+var keys = map[string][]string{
+	transitionsInstrument:  {keyProtocol, keyPhase},
+	passInstrument:         {keyMode},
+	movesInstrument:        {keyReason},
+	reservationsInstrument: {keyState},
+	gapInstrument:          {keyReason},
+}
+
+// series returns the attribute set of the series of attrs of the instrument name: the
+// namespace and the cell of the tests, and each value of attrs under its key in keys.
+func series(name string, attrs []string) []telemetry.Attr {
+	set := make([]telemetry.Attr, 0, 2+len(attrs))
+	set = append(set,
+		telemetry.AttrString(attrNamespaceKey, string(namespace)),
+		telemetry.AttrString(attrCellKey, string(cellID)),
+	)
+	for i, v := range attrs {
+		set = append(set, telemetry.AttrString(keys[name][i], v))
+	}
+	return set
 }
 
 // registry returns a registry with every built-in strategy of the support matrix.
@@ -1554,9 +1387,9 @@ func completeConfig(tb assert.TB) control.Config {
 	var tokens machine.Token
 	return control.Config{
 		Clock:       fake.New(origin),
-		Rand:        &halves{},
+		Rand:        constant.NewCounter(half),
 		Reporter:    noop.New(),
-		Logger:      slog.New(newJournal()),
+		Logger:      slog.New(slog.DiscardHandler),
 		Registry:    registry(tb),
 		Fits:        func(*store.Mutation) error { return nil },
 		Acquisition: func(store.Head, *store.Mutation) shard.NamespaceIncarnation { return incA },
@@ -1670,13 +1503,13 @@ func (h *harness) route(effects []machine.Effect) {
 
 // run performs the pending effects, the oldest first, and passes their results to the
 // controller until no effect is pending. It leaves a Plan pending while paused is set, and
-// each effect that held reports.
+// each effect that pause reports.
 func (h *harness) run(tb assert.TB) {
 	tb.Helper()
 	for range maxDeliveries {
 		i := slices.IndexFunc(h.pending, func(e machine.Effect) bool {
 			_, isPlan := e.(machine.Plan)
-			return (!h.paused || !isPlan) && (h.held == nil || !h.held(e))
+			return (!h.paused || !isPlan) && (h.pause == nil || !h.pause(e))
 		})
 		if i < 0 {
 			return
@@ -1886,8 +1719,8 @@ func (h *harness) shardIDs(tb assert.TB) []shard.ID {
 
 // exercise runs the steps of the case c over a controller that serves, as the agents, the
 // membership, the operators and the store drive it. The steps change the view, restart
-// nodes, report replicas, answer the held callbacks, end Timers, pause the passes and run
-// them, lose commits and their replies, start and end outages of the store, ask for
+// nodes, report replicas, reply to the pending callbacks, end Timers, pause the passes and
+// run them, lose commits and their replies, start and end outages of the store, ask for
 // disruptions and end them, drain and undrain nodes, and propose moves. The model checks
 // the safety rules of the core after every step:
 //   - No step stops the controller with an error.
@@ -1897,9 +1730,9 @@ func (h *harness) shardIDs(tb assert.TB) []shard.ID {
 //   - A node of an admitted disruption hosts no replica.
 //   - The controller replies to each call once.
 //
-// The drain ends the faults, the drains and the disruptions, and answers every callback with
-// success. Every transition has then ended, and the writer of every shard is a node of the
-// view.
+// The drain ends the faults, the drains and the disruptions, and replies to every callback
+// with success. Every transition has then ended, and the writer of every shard is on the live
+// incarnation of a node of the view.
 func exercise(c *prop.Case) {
 	m := newModel(c)
 	stateful.Steps(c, stateful.Machine[struct{}]{
