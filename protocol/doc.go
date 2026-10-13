@@ -23,6 +23,12 @@
 // makes that check, and every server and every transport calls it before it serves a
 // call. This release is major version [Current] and does not define a feature.
 //
+// # Deadlines
+//
+// A transport passes the deadline of the context of each call to the server. A server
+// bounds a call that waits by that deadline, such as the deferral of a Disrupt that waits
+// for the admission of its disruption.
+//
 // # Errors
 //
 // A transport keeps the class of an error across the wire. [CallError] is an error as a

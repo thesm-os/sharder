@@ -29,7 +29,9 @@ type ControllerServer interface {
 	// md.Caller with it.
 	Submit(ctx context.Context, md Metadata, p *proposal.Proposal) (Receipt, error)
 	// Disrupt admits a planned disruption under the budget of the cell of its nodes. Every
-	// node of d is in one cell.
+	// node of d is in one cell. A deferral of a pending disruption returns once the budget
+	// admits the disruption, once its reservation ends, or one second before the deadline of
+	// ctx. A call without a deadline returns at once.
 	Disrupt(ctx context.Context, md Metadata, d *budget.Disruption) (budget.Decision, error)
 	// Done ends the reservation a.ID.
 	Done(ctx context.Context, md Metadata, a *DoneArgs) error
