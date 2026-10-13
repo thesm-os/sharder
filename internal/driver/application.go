@@ -13,8 +13,9 @@ import (
 
 // handle performs e through the handler of the application, and returns the Handled of e.
 // The run bounds ctx by the Timeout of e. A request whose Call is protocol.Add calls
-// AddShard, and one whose Call is protocol.Drop calls DropShard. The Handled of a request
-// with any other Call has an error that wraps protocol.ErrUnsupported.
+// AddShard with the fencing token of e, and one whose Call is protocol.Drop calls
+// DropShard. The Handled of a request with any other Call has an error that wraps
+// protocol.ErrUnsupported.
 func (d *Driver) handle(ctx context.Context, e *machine.Handle) machine.Event {
 	if d.handler == nil {
 		return machine.Handled{Err: fmt.Errorf("%w: a Handle without a handler", ErrConfig), Token: e.Token}
@@ -22,7 +23,7 @@ func (d *Driver) handle(ctx context.Context, e *machine.Handle) machine.Event {
 	var err error
 	switch e.Request.Call {
 	case protocol.Add:
-		err = d.handler.AddShard(ctx, e.Request)
+		err = d.handler.AddShard(ctx, e.Request, &e.Fence)
 	case protocol.Drop:
 		err = d.handler.DropShard(ctx, e.Request)
 	default:

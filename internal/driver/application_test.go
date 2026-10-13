@@ -19,15 +19,15 @@ import (
 
 // handler is a driver.Handler whose methods call its functions.
 type handler struct {
-	add  func(ctx context.Context, r *protocol.Request) error
+	add  func(ctx context.Context, r *protocol.Request, t *fence.Token) error
 	drop func(ctx context.Context, r *protocol.Request) error
 }
 
 var _ driver.Handler = (*handler)(nil)
 
 // AddShard calls the add function of h.
-func (h *handler) AddShard(ctx context.Context, r *protocol.Request) error {
-	return h.add(ctx, r)
+func (h *handler) AddShard(ctx context.Context, r *protocol.Request, t *fence.Token) error {
+	return h.add(ctx, r, t)
 }
 
 // DropShard calls the drop function of h.
@@ -79,7 +79,7 @@ func TestApplication(t *testing.T) {
 					var method string
 					var gotRequest *protocol.Request
 					f.cfg.Handler = &handler{
-						add: func(_ context.Context, req *protocol.Request) error {
+						add: func(_ context.Context, req *protocol.Request, _ *fence.Token) error {
 							method, gotRequest = addShard, req
 							return errBusy
 						},
@@ -97,6 +97,27 @@ func TestApplication(t *testing.T) {
 				})
 			})
 		}
+
+		t.Run("passes the fencing token of a Handle to AddShard", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t, performing(machine.Handle{
+					Request: &protocol.Request{Call: protocol.Add},
+					Fence:   fencing,
+					Token:   1,
+				}))
+				var gotToken fence.Token
+				f.cfg.Handler = &handler{
+					add: func(_ context.Context, _ *protocol.Request, ft *fence.Token) error {
+						gotToken = *ft
+						return nil
+					},
+				}
+				_, ok := f.results(t, 1)[0].(machine.Handled)
+				assert.True(t, ok, "the run must pass a Handled")
+				assert.Equal(t, gotToken, fencing, "the run must pass the fencing token of the Handle")
+			})
+		})
 
 		t.Run("passes ErrUnsupported for a Handle of a call that is not valid", func(t *testing.T) {
 			t.Parallel()
@@ -120,7 +141,7 @@ func TestApplication(t *testing.T) {
 					),
 				)
 				f.cfg.Handler = &handler{
-					add: func(ctx context.Context, _ *protocol.Request) error { return blocked(ctx) },
+					add: func(ctx context.Context, _ *protocol.Request, _ *fence.Token) error { return blocked(ctx) },
 				}
 				got, ok := f.results(t, 1)[0].(machine.Handled)
 				assert.True(t, ok, "the run must pass a Handled")

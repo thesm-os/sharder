@@ -24,11 +24,12 @@ import (
 
 // Handler is the handler of the application. The driver calls AddShard for a
 // machine.Handle of a request whose Call is protocol.Add, and DropShard for a request whose
-// Call is protocol.Drop. AddShard and DropShard do not modify the request, and do not keep
-// it after they return.
+// Call is protocol.Drop. AddShard and DropShard do not modify the request or the token, and
+// do not keep them after they return.
 type Handler interface {
-	// AddShard starts serving r.Shard in r.Role.
-	AddShard(ctx context.Context, r *protocol.Request) error
+	// AddShard starts serving r.Shard in r.Role. t is the fencing token of the tenure that r
+	// starts.
+	AddShard(ctx context.Context, r *protocol.Request, t *fence.Token) error
 	// DropShard stops serving r.Shard, and releases its local resources.
 	DropShard(ctx context.Context, r *protocol.Request) error
 }
