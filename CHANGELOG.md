@@ -1,5 +1,11 @@
 # go.thesmos.sh/sharder
 
+## 0.1.1
+
+### Patch Changes
+
+- 2849811: Add each node whose live incarnation failed an add of a shard definitively to the `placement.Input.Faults` of the shard.
+
 ## 0.1.0
 
 ### Minor Changes
