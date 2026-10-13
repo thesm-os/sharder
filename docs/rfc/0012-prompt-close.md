@@ -2,7 +2,7 @@
 rfc: 0012
 title: A Disrupt that waits for its admission, and a Close that ends the root sessions of a controller
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-10-13
 updated: 2026-10-13
 discussion: none

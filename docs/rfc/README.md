@@ -20,5 +20,5 @@ Each RFC proposes one part of the design of `sharder` and records the alternativ
 | [0009](0009-horizontal-scaling-with-cells.md) | Horizontal scaling with cells and a root controller | Accepted |
 | [0010](0010-keyed-examples.md) | A catalogue of examples keyed by registered names | Accepted |
 | [0011](0011-embedded-process-and-tenure-runner.md) | An embedded process, a runner of tenures and a pass after a refused move | Accepted |
-| [0012](0012-prompt-close.md) | A Disrupt that waits for its admission, and a Close that ends the root sessions of a controller | Draft |
-| [0013](0013-observed-generation-of-a-node.md) | The generation that the agent of a node has observed, for the refusal of a request | Draft |
+| [0012](0012-prompt-close.md) | A Disrupt that waits for its admission, and a Close that ends the root sessions of a controller | Accepted |
+| [0013](0013-observed-generation-of-a-node.md) | The generation that the agent of a node has observed, for the refusal of a request | Accepted |

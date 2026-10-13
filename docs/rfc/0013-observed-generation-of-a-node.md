@@ -2,7 +2,7 @@
 rfc: 0013
 title: The generation that the agent of a node has observed, for the refusal of a request
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-10-13
 updated: 2026-10-13
 discussion: none
