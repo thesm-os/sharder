@@ -100,8 +100,8 @@
     {
       "path": ".golangci.yml",
       "producer": "go",
-      "local": "79795a430126a0a0d8bd760681f7bc06b8e5b152044502cdf116452649da6245",
-      "sha256": "82c160d33a6e41ab973bbcd0885e8f4b270034ef3d261aacc8404b3c1df15802"
+      "local": "dcc18a08c557a2deee86aaa74d08bf0b43b4a0af545cfcde61deecc45d365050",
+      "sha256": "de925776ea20d9f7b7f25618e87302d00501134b050cf7d6007d84771fb3c2a2"
     },
     {
       "path": ".markdownlint.yml",
@@ -131,7 +131,7 @@
     {
       "path": "Makefile",
       "producer": "common",
-      "sha256": "039d9fc990c11bff81c193d4e6d20cdab2bd356657bc6f038b0e44bf68a1c4dc"
+      "sha256": "b7fc4f9d74bead5517e8e215530752b829254b5f1bb063ac57d876be99d7bb5c"
     }
   ],
   "settings": {

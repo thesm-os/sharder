@@ -254,13 +254,13 @@ go:
   bench:
     match: .
     time: 1s
-    args: [-benchmem]
+    args: [-benchmem, '-cpu=1,4']
     count: 6
   # mutate-go runs dokimi-mutate-go with workers mutants of a module at a time and args, and ends
   # the run after timeout. A timeout of 0s sets no limit.
   mutate:
     timeout: 0s
-    args: []
+    args: [-confirm]
     workers: 1
   # generate-go runs command with args and the paths in every module. verify-generate-go, the step
   # generate of check, runs the same and fails when the run changes a tracked file or writes a file

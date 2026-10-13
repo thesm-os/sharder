@@ -278,6 +278,7 @@ linters:
         - context\.Cause\(
         - (fs|filepath)\.WalkDir\(
         - filepath\.Walk\(
+        - errs\.WithClass\(
     # G115 analyses each function alone. The sharder bounds each count where it validates a
     # configuration or a range, so G115 reports conversions of values that an earlier check
     # bounds.
