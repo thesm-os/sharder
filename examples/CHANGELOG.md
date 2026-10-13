@@ -1,5 +1,12 @@
 # go.thesmos.sh/sharder/examples
 
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies [2849811]
+  - go.thesmos.sh/sharder@0.1.1
+
 ## 0.1.0
 
 ### Minor Changes
