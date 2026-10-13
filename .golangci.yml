@@ -191,6 +191,14 @@ linters:
               desc: a strategy package does not import a component
             - pkg: go.thesmos.sh/sharder/internal
               desc: a strategy package does not import an internal package
+        # The examples use only the exported API of the root module, as an application does.
+        examples:
+          list-mode: lax
+          files:
+            - "**/examples/**/*.go"
+          deny:
+            - pkg: go.thesmos.sh/sharder/internal
+              desc: an example uses only the exported API of the root module
     exhaustive:
       default-signifies-exhaustive: true
       check:
