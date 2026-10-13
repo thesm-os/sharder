@@ -21,6 +21,7 @@ import (
 	"go.thesmos.sh/sharder/budget"
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/handoff"
 	"go.thesmos.sh/sharder/internal/control"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/partition/fixedslots"
@@ -251,7 +252,7 @@ func TestProposal(t *testing.T) {
 			assert.Length(t, h.plans, passes, "the controller must refuse the move before a pass")
 		})
 
-		t.Run("returns ErrStale for a move of a shard with a transition in flight", func(t *testing.T) {
+		t.Run("returns ErrBusy for a move of a shard with a transition in flight", func(t *testing.T) {
 			t.Parallel()
 			h := served(t)
 			sid := h.shardOn(t, nodeA.ID)
@@ -261,7 +262,25 @@ func TestProposal(t *testing.T) {
 			p := proposalOf(t, 1, proposal.Move, h.placements(t)[sid].Epoch,
 				proposal.MoveArgs{Node: nodeB.ID, Shard: sid})
 			got := h.submit(t, &p, operator)
-			assert.ErrorIs(t, got.Err, control.ErrStale, "the controller must refuse a move of a shard in transition")
+			assert.ErrorIs(t, got.Err, control.ErrBusy, "the controller must refuse a move of a shard in transition")
+		})
+
+		t.Run("returns ErrStale for a move that the protocol cannot script", func(t *testing.T) {
+			t.Parallel()
+			h := served(t, selects(config.Handoff, "", func(r *config.Registry) error {
+				return config.Register[handoff.Protocol](
+					r,
+					config.Handoff,
+					refusing{Factory: builtin.BreakBeforeMake()},
+				)
+			}))
+			sid := h.shardOn(t, nodeA.ID)
+			p := proposalOf(t, 1, proposal.Move, h.placements(t)[sid].Epoch,
+				proposal.MoveArgs{Node: nodeB.ID, Shard: sid})
+			got := h.submit(t, &p, operator)
+			expect.That(t, got.Err).
+				ErrorIs(control.ErrStale, "the controller must refuse a move that the protocol cannot script").
+				ErrorIs(handoff.ErrTransfer, "the error must wrap the error of the protocol")
 		})
 
 		t.Run("returns ErrCall for a move to the node of the writer", func(t *testing.T) {
@@ -394,7 +413,7 @@ func TestProposal(t *testing.T) {
 				"the controller must refuse a move whose shard moved during its pass")
 		})
 
-		t.Run("returns ErrStale for a move of a shard whose transition started during its pass", func(t *testing.T) {
+		t.Run("returns ErrBusy for a move of a shard whose transition started during its pass", func(t *testing.T) {
 			t.Parallel()
 			h := served(t)
 			sid := h.shardOn(t, nodeA.ID)
@@ -408,8 +427,8 @@ func TestProposal(t *testing.T) {
 			h.disrupt(t, disruption(1, nodeA.ID), operator)
 			h.pass(t, h.plans[len(h.plans)-1].Token)
 			h.pass(t, pass)
-			assert.ErrorIs(t, replyTo[protocol.Receipt](t, h, call.Reply).Err, control.ErrStale,
-				"the controller must refuse a move whose shard has a transition")
+			assert.ErrorIs(t, replyTo[protocol.Receipt](t, h, call.Reply).Err, control.ErrBusy,
+				"the controller must refuse a move whose shard has a transition for now")
 		})
 
 		t.Run("returns ErrStale for a move to a node that started to drain during its pass", func(t *testing.T) {

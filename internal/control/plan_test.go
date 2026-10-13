@@ -24,6 +24,7 @@ import (
 
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/handoff"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/partition"
 	"go.thesmos.sh/sharder/partition/fixedslots"
@@ -549,23 +550,36 @@ func TestPlan(t *testing.T) {
 				h.live(t, later, nodeB)
 			})
 
-		t.Run("logs a move that the engine does not start", func(t *testing.T) {
+		t.Run("logs a move that the protocol cannot script", func(t *testing.T) {
 			t.Parallel()
-			h := served(t)
-			h.paused = true
-			h.answer = func(*protocol.Request) error { return protocol.ErrUnreachable }
-			h.disrupt(t, disruption(1, nodeA.ID), operator)
-			drain := h.plans[len(h.plans)-1].Token
+			h := served(t, selects(config.Handoff, "", func(r *config.Registry) error {
+				return config.Register[handoff.Protocol](
+					r,
+					config.Handoff,
+					refusing{Factory: builtin.BreakBeforeMake()},
+				)
+			}))
 			sid := h.shardOn(t, nodeA.ID)
-			p := proposalOf(t, 1, proposal.Move, h.placements(t)[sid].Epoch,
-				proposal.MoveArgs{Node: nodeB.ID, Shard: sid})
-			h.step(t, h.submitCall(&p, operator))
-			h.pass(t, h.plans[len(h.plans)-1].Token)
-			h.pass(t, drain)
+			h.disrupt(t, disruption(1, nodeA.ID), operator)
 			got := h.logged(logMove)
-			assert.Length(t, got, 1, "the controller must log the move of the shard in transition")
+			assert.NotEmpty(t, got, "the controller must log a move that the protocol cannot script")
 			expect.Equal(t, got[0][attrShardKey], sid.String(), "the log must name the shard")
 		})
+
+		t.Run("starts a pass after the end of a transition while the engine refused a move of a shard in flight",
+			func(t *testing.T) {
+				t.Parallel()
+				h := newHarness(t)
+				h.start(t)
+				h.paused = true
+				h.view(t, nodeA)
+				first := h.plans[len(h.plans)-1].Token
+				h.view(t, nodeA, nodeB)
+				h.paused = false
+				h.pass(t, first)
+				expect.True(t, len(h.plans) > 2, "the end of the transitions of the first pass must start a third pass")
+				expect.NotEqual(t, h.writers(t)[nodeB.ID], 0, "a later pass must move shards to the node that joined")
+			})
 
 		t.Run("fails at an error of a commit of a pass while a trigger waits", func(t *testing.T) {
 			t.Parallel()

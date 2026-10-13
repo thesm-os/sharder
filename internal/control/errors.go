@@ -46,7 +46,8 @@ var (
 	ErrApplied = errs.WithClass(errors.New("control: the scope has applied the proposal"), errs.Conflict)
 
 	// ErrBusy reports a move proposal that the bounds on the transitions in flight refuse
-	// now. The caller submits a new proposal later. It classifies as errs.Transient.
+	// now. One of the bounds allows one transition per shard. The caller submits a new
+	// proposal later. It classifies as errs.Transient.
 	ErrBusy = errs.WithClass(errors.New("control: the bounds of the controller refuse the move now"),
 		errs.Transient)
 )

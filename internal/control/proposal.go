@@ -120,8 +120,9 @@ func (c *Controller) relocate(ev *machine.Submit, out []machine.Effect) ([]machi
 // Error modes:
 //   - an error that wraps ErrCall for a shard that the scope does not have, and for a
 //     writer that is on the node already.
-//   - an error that wraps ErrStale for a placement whose epoch is not p.Base, for a shard
-//     with a transition in flight, and for a node that the view does not have.
+//   - an error that wraps ErrStale for a placement whose epoch is not p.Base, and for a
+//     node that the view does not have.
+//   - an error that wraps ErrBusy for a shard with a transition in flight.
 func (c *Controller) movable(args *proposal.MoveArgs, p *proposal.Proposal) error {
 	if !c.has(args.Shard) {
 		return fmt.Errorf("%w: the scope has no shard %v", ErrCall, args.Shard)
@@ -131,7 +132,7 @@ func (c *Controller) movable(args *proposal.MoveArgs, p *proposal.Proposal) erro
 		return fmt.Errorf("%w: shard %v is at the epoch %d", ErrStale, args.Shard, cur.Epoch)
 	}
 	if _, ok := c.assignment.transitions.Get(args.Shard); ok {
-		return fmt.Errorf("%w: shard %v has a transition in flight", ErrStale, args.Shard)
+		return fmt.Errorf("%w: shard %v has a transition in flight", ErrBusy, args.Shard)
 	}
 	if w, _ := writer(&cur, c.spec.writer); w.Node == args.Node {
 		return fmt.Errorf("%w: the writer of shard %v is on node %s", ErrCall, args.Shard, args.Node)

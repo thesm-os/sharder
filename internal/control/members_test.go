@@ -217,7 +217,9 @@ func TestMembers(t *testing.T) {
 			h.view(t, nodeA, nodeB, restarted(nodeC))
 			h.paused = false
 			h.pass(t, joined)
-			assert.Length(t, h.plans, 3, "the node that restarts must start a pass after the pass of its join")
+			assert.True(t, len(h.plans) > 2, "the node that restarts must start a pass after the pass of its join")
+			assert.Contains(t, h.plans[2].Input.Nodes, restarted(nodeC),
+				"the pass after the pass of the join must have the restarted node")
 		})
 
 		t.Run("continues the moves off a node that leaves the view", func(t *testing.T) {

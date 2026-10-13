@@ -6,6 +6,7 @@ package control_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -83,6 +84,41 @@ func (f *fragile[T]) Capabilities(cfg config.Parsed) config.Capabilities {
 func (*fragile[T]) New(config.Parsed) (T, error) {
 	var zero T
 	return zero, errFragile
+}
+
+// refusing is a factory of the name fragileName. It parses and declares its configuration as
+// its Factory does, and its protocols refuse every transfer with a source.
+type refusing struct {
+	config.Factory[handoff.Protocol]
+}
+
+var _ config.Factory[handoff.Protocol] = refusing{}
+
+// Name returns fragileName.
+func (refusing) Name() shard.StrategyName { return fragileName }
+
+// New returns the protocol of the Factory of r with cfg, behind a sourceless protocol.
+func (r refusing) New(cfg config.Parsed) (handoff.Protocol, error) {
+	p, err := r.Factory.New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return sourceless{Protocol: p}, nil
+}
+
+// sourceless is a protocol that scripts a transfer without a source as its Protocol does, and
+// refuses a transfer with a source.
+type sourceless struct {
+	handoff.Protocol
+}
+
+// Script returns an error that wraps handoff.ErrTransfer for a transfer with a source, and
+// the script of the Protocol of s otherwise.
+func (s sourceless) Script(t handoff.Transfer) (handoff.Script, error) {
+	if t.From != "" {
+		return handoff.Script{}, fmt.Errorf("test: a transfer from %s: %w", t.From, handoff.ErrTransfer)
+	}
+	return s.Protocol.Script(t)
 }
 
 // none is the configuration of a strategy of the tests without settings.
