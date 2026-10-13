@@ -62,6 +62,7 @@
 //   - It cancels every effect in flight when the context of the run ends, and then passes
 //     [Stopped]. It performs only the replies that the machine returns for Stopped, and it
 //     does not pass a later event.
+//   - It stops the run in the same way once Machine.Err returns an error after a step.
 //
 // # Concurrency
 //

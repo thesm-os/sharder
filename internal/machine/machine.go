@@ -61,6 +61,10 @@ type Machine interface {
 	// Step ignores an event whose token it does not wait for, such as a [Watched] that
 	// arrives after the [Unwatch] of its watch.
 	Step(ev Event, out []Effect) []Effect
+	// Err returns the error with which the machine has stopped itself, and nil while the
+	// machine runs and after Stopped. A machine that stops itself replies to the calls that
+	// wait in the same step, and ignores every later event. Err is safe for concurrent use.
+	Err() error
 }
 
 // Started is the first event of a run. It is also the inbound call of the constructor of
