@@ -15,6 +15,7 @@ var kanonSpecPlacement = kanontest.Spec[Placement]{
 		{Name: "Range", Number: 2},
 		{Name: "Replicas", Number: 6},
 		{Name: "Epoch", Number: 3},
+		{Name: "Incarnation", Number: 7},
 		{Name: "Reserved", Number: 4},
 		{Name: "Sequence", Number: 5},
 		{Name: "Shard", Number: 1},

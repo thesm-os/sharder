@@ -15,9 +15,9 @@ import "go.thesmos.sh/core/epoch"
 // # Encoding
 //
 // kanon generates the codec of Placement. Shard is field 1, Range is field 2, Epoch is
-// field 3, Reserved is field 4, Sequence is field 5, and Replicas is field 6. The
-// codec returns an error that wraps [ErrUnknownRole] for a replica whose Role is not
-// Valid.
+// field 3, Reserved is field 4, Sequence is field 5, Replicas is field 6, and
+// Incarnation is field 7. The codec returns an error that wraps [ErrUnknownRole] for a
+// replica whose Role is not Valid.
 //
 // # Concurrency
 //
@@ -39,6 +39,10 @@ type Placement struct {
 	// while the shard has no assigned writer, and fenced storage admits a zero epoch
 	// without fencing it.
 	Epoch epoch.Epoch
+	// Incarnation is the incarnation of the node of the assigned writer when the writer
+	// joined the placement. It is zero while the shard has no assigned writer. A node
+	// that restarts has a new incarnation, and the new incarnation restores no writer.
+	Incarnation epoch.Epoch
 	// Reserved is the highest epoch that any transition of the shard has reserved. It
 	// includes an epoch that an abort path reserved and that a callback did not use.
 	// The core reserves every later epoch above it, so it never grants an epoch twice.

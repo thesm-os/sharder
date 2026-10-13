@@ -15,23 +15,25 @@ import (
 
 // recordedPlacementHex pins the encoding of recordedPlacement, which every cell
 // scope persists: field 1 is the shard, field 2 the range, field 3 the epoch 2, field
-// 4 the reserved epoch 3, field 5 the sequence 4, and field 6 one replica, as an
-// element with the length of its encoding.
+// 4 the reserved epoch 3, field 5 the sequence 4, field 6 one replica as an element
+// with the length of its encoding, and field 7 the incarnation 5.
 const recordedPlacementHex = "0a10" + recordedIDHex +
 	"1206" + recordedRangeHex +
 	"1802" +
 	"2003" +
 	"2804" +
-	"3207" + "06" + recordedReplicaHex
+	"3207" + "06" + recordedReplicaHex +
+	"3805"
 
 // recordedPlacement is the placement whose encoding recordedPlacementHex pins.
 var recordedPlacement = shard.Placement{
-	Shard:    recordedID,
-	Range:    recordedRange,
-	Epoch:    2,
-	Reserved: 3,
-	Sequence: 4,
-	Replicas: []shard.Replica{recordedReplica},
+	Shard:       recordedID,
+	Range:       recordedRange,
+	Epoch:       2,
+	Incarnation: 5,
+	Reserved:    3,
+	Sequence:    4,
+	Replicas:    []shard.Replica{recordedReplica},
 }
 
 // TestPlacement checks the recorded encoding of a Placement, and the refusal of a
@@ -51,7 +53,7 @@ func TestPlacement(t *testing.T) {
 				t,
 				hex.EncodeToString(got),
 				recordedPlacementHex,
-				"AppendBinary must write fields 1 to 6 as recorded",
+				"AppendBinary must write fields 1 to 7 as recorded",
 			)
 		})
 
@@ -95,8 +97,8 @@ func TestPlacementAllocs(t *testing.T) {
 		var got shard.Placement
 		expect.MaxAllocs(t, func() {
 			got = shard.Placement{
-				Shard: p.Shard, Range: p.Range, Epoch: p.Epoch, Reserved: p.Reserved, Sequence: p.Sequence,
-				Replicas: p.Replicas,
+				Shard: p.Shard, Range: p.Range, Epoch: p.Epoch, Incarnation: p.Incarnation, Reserved: p.Reserved,
+				Sequence: p.Sequence, Replicas: p.Replicas,
 			}
 		}, 0, "constructing a Placement must not allocate")
 		assert.Equal(t, got, recordedPlacement, "the test must measure the construction of the Placement")
