@@ -72,9 +72,9 @@ A package may import the packages in its row, and every package that those packa
 
 | Package | Contains | Imports from sharder |
 |---|---|---|
-| `controller` | `Controller` with its options, and the topologies | `shard`, `config`, `proposal`, `budget`, `store`, `membership`, `protocol` and its internal packages |
-| `replica` | `Agent`, `Config`, `Handler` and the optional interfaces of a handler | `shard`, `config`, `proposal`, `fence`, `store`, `membership`, `protocol` and its internal packages |
-| `router` | `Router`, `Watcher`, `Do`, `NotOwnerError` and the routing sources | `shard`, `config`, `partition`, `store`, `protocol` and its internal packages |
+| `controller` | `Controller` with its `Config`, and the errors of a controller process | `shard`, `config`, `proposal`, `budget`, `store`, `membership`, `protocol` and its internal packages |
+| `replica` | `Agent` with its `Config`, `Handler` with its requests and results, `LoadReporter`, and the errors of an agent | `shard`, `config`, `fence`, `store`, `membership`, `protocol` and its internal packages |
+| `router` | `Router` with its requests and results, `Watcher` with its `Config`, `Do`, `NotOwnerError`, and the errors of a router | `shard`, `config`, `store`, `membership` and its internal packages |
 | `sim` | The deterministic simulator, with its scheduler, faults, safety properties and crash points | Every package of the root module |
 
 ## Internal packages
