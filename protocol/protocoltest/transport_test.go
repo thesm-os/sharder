@@ -13,6 +13,10 @@ import (
 	"go.thesmos.sh/sharder/protocol/protocoltest"
 )
 
+// controllerAddress is the address of the controller of the suite on the network of package
+// local.
+const controllerAddress = "controller-1:7000"
+
 // TestTransport runs the suite against the transport of package local.
 func TestTransport(t *testing.T) {
 	t.Parallel()
@@ -27,7 +31,8 @@ func TestTransport(t *testing.T) {
 			) {
 				n := local.NewNetwork()
 				n.AddAgent(e.Scope.Namespace, e.Node.ID, e.Agent)
-				n.AddController(e.Scope, e.Controller)
+				e.Cell.Controller = controllerAddress
+				n.AddController(controllerAddress, e.Controller)
 				l := n.Local(md)
 				return l, l
 			})

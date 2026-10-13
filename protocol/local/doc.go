@@ -9,11 +9,20 @@
 // it, as over an authenticating transport. [New] gives one process a network of its own,
 // through which a controller calls the agent of its own process.
 //
+// # Routes
+//
+// A Local passes a callback to the agent that the network contains for the namespace of the
+// request and the node. It passes every other call to the controller process at the
+// address in the record of the cell of the call, which [Network.AddController] registers.
+// A call follows the record of a cell that the root moves to another process, as over a
+// transport adapter that dials that address.
+//
 // # Errors
 //
 // A Local returns the error of Metadata.Check before it calls a server, and an error that
 // wraps protocol.ErrUnreachable for a call to a server that its network does not contain.
-// It returns the error of a server wrapped, with the class of the error of the server.
+// It returns the same error for a call of a controller whose record has no address. It
+// returns the error of a server wrapped, with the class of the error of the server.
 //
 // # Concurrency
 //

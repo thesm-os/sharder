@@ -16,9 +16,10 @@ import (
 // Local is the client of one process of a Network. It implements protocol.AgentClient and
 // protocol.ControllerClient, passes the metadata of the process with every call, and
 // checks the metadata with Metadata.Check before it calls a server, as a transport adapter
-// does. It routes a callback by the namespace of the request and the node, and every other
-// call by the scope of its message. It does not check the identity of a controller,
-// because its network registers none.
+// does. It routes a callback by the namespace of the request and the node. It routes every
+// other call to the controller process at the address in the record of the cell of the
+// call, as a transport adapter dials that address. It does not check the identity of a
+// controller, because its network registers none.
 //
 // The zero Local is not usable. Construct one with New or Network.Local.
 //
@@ -70,15 +71,14 @@ func (l *Local) Do(ctx context.Context, node *shard.Node, r *protocol.Request) e
 	return nil
 }
 
-// Report passes r to the controller that the network contains for the scope of r, and
-// returns its ack.
+// Report passes r to the controller process at the address in cell, and returns its ack.
 //
 // Error modes:
 //   - the error of Metadata.Check for the metadata of l.
 //   - an error that wraps protocol.ErrUnreachable without such a controller.
 //   - an error that wraps the error of the controller.
-func (l *Local) Report(ctx context.Context, _ *shard.Cell, r *protocol.Report) (protocol.Ack, error) {
-	srv, err := l.controller(r.Scope)
+func (l *Local) Report(ctx context.Context, cell *shard.Cell, r *protocol.Report) (protocol.Ack, error) {
+	srv, err := l.controller(cell)
 	if err != nil {
 		return protocol.Ack{}, err
 	}
@@ -89,15 +89,15 @@ func (l *Local) Report(ctx context.Context, _ *shard.Cell, r *protocol.Report) (
 	return ack, nil
 }
 
-// Submit passes p to the controller that the network contains for the scope of p, and
-// returns its receipt.
+// Submit passes p to the controller process at the address in cell, and returns its
+// receipt.
 //
 // Error modes:
 //   - the error of Metadata.Check for the metadata of l.
 //   - an error that wraps protocol.ErrUnreachable without such a controller.
 //   - an error that wraps the error of the controller.
-func (l *Local) Submit(ctx context.Context, _ *shard.Cell, p *proposal.Proposal) (protocol.Receipt, error) {
-	srv, err := l.controller(p.Scope)
+func (l *Local) Submit(ctx context.Context, cell *shard.Cell, p *proposal.Proposal) (protocol.Receipt, error) {
+	srv, err := l.controller(cell)
 	if err != nil {
 		return protocol.Receipt{}, err
 	}
@@ -108,15 +108,15 @@ func (l *Local) Submit(ctx context.Context, _ *shard.Cell, p *proposal.Proposal)
 	return receipt, nil
 }
 
-// Disrupt passes d to the controller that the network contains for the scope of d, and
-// returns its decision.
+// Disrupt passes d to the controller process at the address in cell, and returns its
+// decision.
 //
 // Error modes:
 //   - the error of Metadata.Check for the metadata of l.
 //   - an error that wraps protocol.ErrUnreachable without such a controller.
 //   - an error that wraps the error of the controller.
-func (l *Local) Disrupt(ctx context.Context, _ *shard.Cell, d *budget.Disruption) (budget.Decision, error) {
-	srv, err := l.controller(d.Scope)
+func (l *Local) Disrupt(ctx context.Context, cell *shard.Cell, d *budget.Disruption) (budget.Decision, error) {
+	srv, err := l.controller(cell)
 	if err != nil {
 		return budget.Decision{}, err
 	}
@@ -127,14 +127,14 @@ func (l *Local) Disrupt(ctx context.Context, _ *shard.Cell, d *budget.Disruption
 	return decision, nil
 }
 
-// Done passes a to the controller that the network contains for the scope of a.
+// Done passes a to the controller process at the address in cell.
 //
 // Error modes:
 //   - the error of Metadata.Check for the metadata of l.
 //   - an error that wraps protocol.ErrUnreachable without such a controller.
 //   - an error that wraps the error of the controller.
-func (l *Local) Done(ctx context.Context, _ *shard.Cell, a *protocol.DoneArgs) error {
-	srv, err := l.controller(a.Scope)
+func (l *Local) Done(ctx context.Context, cell *shard.Cell, a *protocol.DoneArgs) error {
+	srv, err := l.controller(cell)
 	if err != nil {
 		return err
 	}
@@ -144,18 +144,25 @@ func (l *Local) Done(ctx context.Context, _ *shard.Cell, a *protocol.DoneArgs) e
 	return nil
 }
 
-// controller returns the controller of the scope s for a call of l.
+// controller returns the controller server of the process at the address in the record
+// cell, for a call of l. A nil cell and a record without a controller have the empty
+// address.
 //
 // Error modes:
 //   - the error of Metadata.Check for the metadata of l.
-//   - an error that wraps protocol.ErrUnreachable for a scope without a controller.
-func (l *Local) controller(s shard.Scope) (protocol.ControllerServer, error) {
-	if err := l.md.Check(); err != nil {
-		return nil, fmt.Errorf("local: call of the controller of %v: %w", s, err)
+//   - an error that wraps protocol.ErrUnreachable for an address without a controller
+//     server.
+func (l *Local) controller(cell *shard.Cell) (protocol.ControllerServer, error) {
+	var address string
+	if cell != nil {
+		address = cell.Controller
 	}
-	srv, ok := l.n.controllerOf(s)
+	if err := l.md.Check(); err != nil {
+		return nil, fmt.Errorf("local: call of the controller at %q: %w", address, err)
+	}
+	srv, ok := l.n.controllerAt(address)
 	if !ok {
-		return nil, fmt.Errorf("%w: no controller of %v", protocol.ErrUnreachable, s)
+		return nil, fmt.Errorf("%w: no controller at %q", protocol.ErrUnreachable, address)
 	}
 	return srv, nil
 }

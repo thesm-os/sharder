@@ -27,8 +27,8 @@ type agent struct {
 type Network struct {
 	// agents maps the namespace and the node of each agent to the agent.
 	agents map[agent]protocol.AgentServer
-	// controllers maps the scope of each controller to the controller.
-	controllers map[shard.Scope]protocol.ControllerServer
+	// controllers maps the address of each controller process to its controller server.
+	controllers map[string]protocol.ControllerServer
 	mu          sync.RWMutex
 }
 
@@ -36,7 +36,7 @@ type Network struct {
 func NewNetwork() *Network {
 	return &Network{
 		agents:      make(map[agent]protocol.AgentServer),
-		controllers: make(map[shard.Scope]protocol.ControllerServer),
+		controllers: make(map[string]protocol.ControllerServer),
 	}
 }
 
@@ -48,12 +48,13 @@ func (n *Network) AddAgent(ns shard.Namespace, node shard.NodeID, s protocol.Age
 	n.agents[agent{namespace: ns, node: node}] = s
 }
 
-// AddController makes srv the controller of the scope s, the root when s.Cell is empty, for
-// every Local of the network. A later call for s replaces srv.
-func (n *Network) AddController(s shard.Scope, srv protocol.ControllerServer) {
+// AddController makes srv the controller server of the process at address for every Local
+// of the network. A Local passes each call of a controller to the server of the address in
+// the record of the cell of the call. A later call for the same address replaces srv.
+func (n *Network) AddController(address string, srv protocol.ControllerServer) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.controllers[s] = srv
+	n.controllers[address] = srv
 }
 
 // Local returns the client of the process whose calls have the metadata md: md.Caller is
@@ -73,11 +74,11 @@ func (n *Network) agentOf(ns shard.Namespace, node shard.NodeID) (protocol.Agent
 	return s, ok
 }
 
-// controllerOf returns the controller of the scope s, and reports whether the network has
-// one.
-func (n *Network) controllerOf(s shard.Scope) (protocol.ControllerServer, bool) {
+// controllerAt returns the controller server of the process at address, and reports whether
+// the network has one.
+func (n *Network) controllerAt(address string) (protocol.ControllerServer, bool) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
-	srv, ok := n.controllers[s]
+	srv, ok := n.controllers[address]
 	return srv, ok
 }

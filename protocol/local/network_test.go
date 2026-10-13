@@ -4,53 +4,14 @@
 package local_test
 
 import (
-	"context"
-	"errors"
 	"testing"
 
 	"go.dokimi.dev/assert"
 
-	"go.thesmos.sh/sharder/budget"
-	"go.thesmos.sh/sharder/proposal"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/protocol/local"
+	"go.thesmos.sh/sharder/shard"
 )
-
-// The errors that the servers of the tests return, one per server.
-var (
-	errFirst  = errors.New("local_test: the first server")
-	errSecond = errors.New("local_test: the second server")
-)
-
-// failing is an agent and a controller that return err from every call.
-type failing struct {
-	err error
-}
-
-// Do returns the error of the server.
-func (f failing) Do(context.Context, protocol.Metadata, *protocol.Request) error {
-	return f.err
-}
-
-// Report returns the error of the server.
-func (f failing) Report(context.Context, protocol.Metadata, *protocol.Report) (protocol.Ack, error) {
-	return protocol.Ack{}, f.err
-}
-
-// Submit returns the error of the server.
-func (f failing) Submit(context.Context, protocol.Metadata, *proposal.Proposal) (protocol.Receipt, error) {
-	return protocol.Receipt{}, f.err
-}
-
-// Disrupt returns the error of the server.
-func (f failing) Disrupt(context.Context, protocol.Metadata, *budget.Disruption) (budget.Decision, error) {
-	return budget.Decision{}, f.err
-}
-
-// Done returns the error of the server.
-func (f failing) Done(context.Context, protocol.Metadata, *protocol.DoneArgs) error {
-	return f.err
-}
 
 // TestNetwork checks that a later server of an address replaces the earlier one.
 func TestNetwork(t *testing.T) {
@@ -84,12 +45,13 @@ func TestNetwork(t *testing.T) {
 	t.Run("AddController", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("replaces the controller of the same scope", func(t *testing.T) {
+		t.Run("replaces the controller of the same address", func(t *testing.T) {
 			t.Parallel()
 			n := local.NewNetwork()
-			n.AddController(scope, failing{err: errFirst})
-			n.AddController(scope, failing{err: errSecond})
-			_, err := n.Local(current).Report(t.Context(), nil, &protocol.Report{Scope: scope})
+			n.AddController(controllerA, failing{err: errFirst})
+			n.AddController(controllerA, failing{err: errSecond})
+			record := shard.Cell{ID: cell, Controller: controllerA}
+			_, err := n.Local(current).Report(t.Context(), &record, &protocol.Report{Scope: scope})
 			assert.ErrorIs(t, err, errSecond, "the network passes a report to the later controller")
 		})
 
@@ -97,11 +59,12 @@ func TestNetwork(t *testing.T) {
 			t.Parallel()
 			n := local.NewNetwork()
 			l := n.Local(current)
+			record := shard.Cell{ID: cell, Controller: controllerA}
 			r := protocol.Report{Scope: scope}
-			_, err := l.Report(t.Context(), nil, &r)
+			_, err := l.Report(t.Context(), &record, &r)
 			assert.ErrorIs(t, err, protocol.ErrUnreachable, "a report before AddController returns ErrUnreachable")
-			n.AddController(scope, failing{err: errFirst})
-			_, err = l.Report(t.Context(), nil, &r)
+			n.AddController(controllerA, failing{err: errFirst})
+			_, err = l.Report(t.Context(), &record, &r)
 			assert.ErrorIs(t, err, errFirst, "a report after AddController returns the error of the controller")
 		})
 	})
