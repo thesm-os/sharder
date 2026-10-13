@@ -35,8 +35,9 @@ type Input struct {
 	// such a shard.
 	Transitions map[shard.ID]InFlight
 	// Faults maps a shard to the nodes whose replica of the shard has a permanent
-	// fault, as the live incarnations of the nodes reported it. A placer treats each
-	// such replica as missing, and does not place a replica of the shard on those
+	// fault, as the live incarnations of the nodes reported it. It also lists each node
+	// whose live incarnation failed an add of the shard definitively. A placer treats
+	// each such replica as missing, and does not place a replica of the shard on those
 	// nodes.
 	Faults map[shard.ID][]shard.NodeID
 	// Draining contains the live nodes whose replicas must move off. A draining node
