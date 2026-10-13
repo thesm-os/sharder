@@ -34,6 +34,10 @@ const (
 // tagDisruption is the first byte of the IDs of the disruptions of the tests.
 const tagDisruption byte = 0xd1
 
+// callFor is the time from the start of the clock to the deadline of a Disrupt call that
+// waits.
+const callFor = time.Minute
+
 // TestBudget checks the reservations, the drains and the admissions of the budget of a
 // scope.
 func TestBudget(t *testing.T) {
@@ -760,7 +764,327 @@ func TestBudget(t *testing.T) {
 			assert.ErrorIs(t, last[machine.Reply[budget.Decision]](t, h).Err, control.ErrNotServing,
 				"a disruption that waits for its commit must get ErrNotServing when the controller stops")
 		})
+
+		t.Run("keeps the deferral of a disruption with a deadline until the budget admits it", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			d := disruption(1, nodeA.ID)
+			to := h.wait(t, &d, origin.Add(callFor))
+			h.reportAll(t)
+			assert.True(t, replyTo[budget.Decision](t, h, to).Value.Allowed,
+				"the call must get the admission of its disruption")
+		})
+
+		t.Run("replies to a waiting call once the commit of the admission has applied", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			d := disruption(1, nodeA.ID)
+			to := h.wait(t, &d, origin.Add(callFor))
+			before := len(h.replies)
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Commit); return ok }
+			h.reportAll(t)
+			expect.False(t, slices.ContainsFunc(h.replies[before:], func(e machine.Effect) bool {
+				r, ok := e.(machine.Reply[budget.Decision])
+				return ok && r.To == to
+			}), "the call must wait for the commit of the admission")
+			h.pause = nil
+			h.run(t)
+			assert.True(t, replyTo[budget.Decision](t, h, to).Value.Allowed,
+				"the call must get the admission once its commit has applied")
+		})
+
+		t.Run(
+			"admits the waiting reservations of one step in one commit in the order of their IDs",
+			func(t *testing.T) {
+				t.Parallel()
+				h := spare(t)
+				h.view(t, nodeA, nodeB, nodeC, nodeD)
+				second, first := disruption(2, nodeC.ID), disruption(1, nodeD.ID)
+				h.wait(t, &second, origin.Add(callFor))
+				h.wait(t, &first, origin.Add(callFor))
+				before := len(h.commits)
+				h.reportAll(t)
+				var admitted []budget.ID
+				for _, m := range h.commits[before:] {
+					for _, r := range m.Reserve {
+						admitted = append(admitted, r.Disruption.ID)
+					}
+				}
+				assert.Equal(t, admitted, []budget.ID{first.ID, second.ID},
+					"one commit must admit both reservations in the order of their IDs")
+			},
+		)
+
+		t.Run("replies to a waiting call with the deferral of the end once its reservation ends", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			d := disruption(1, nodeA.ID)
+			to := h.wait(t, &d, origin.Add(callFor))
+			h.done(t, d.ID, operator)
+			got := replyTo[budget.Decision](t, h, to)
+			expect.False(t, got.Value.Allowed, "the end of a reservation must not admit its disruption")
+			expect.Equal(t, got.Value.RetryAfter, control.RetryAfter,
+				"the deferral of the end must have the RetryAfter of the controller")
+		})
+
+		t.Run("replies to a waiting call with a RetryAfter of zero WaitMargin before its deadline", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			d := disruption(1, nodeA.ID)
+			to := h.wait(t, &d, origin.Add(callFor))
+			h.elapse(t, callFor-machine.WaitMargin)
+			got := replyTo[budget.Decision](t, h, to)
+			expect.False(t, got.Value.Allowed, "the controller must defer a disruption before the reports")
+			expect.Equal(t, got.Value.RetryAfter, time.Duration(0), "the reply at the deadline must have no RetryAfter")
+			expect.NotEmpty(t, got.Value.Reason, "the reply at the deadline must have the reason of the deferral")
+		})
+
+		t.Run("admits a waiting reservation once the commit of the last move off its node has applied",
+			func(t *testing.T) {
+				t.Parallel()
+				h := served(t)
+				h.reportAll(t)
+				d := disruption(1, nodeA.ID)
+				call := h.disruptCall(&d, operator)
+				call.Deadline = origin.Add(callFor)
+				h.step(t, call)
+				h.run(t)
+				assert.True(t, replyTo[budget.Decision](t, h, call.Reply).Value.Allowed,
+					"the call must get the admission once the replicas have moved off its node")
+			})
+
+		t.Run("fails at an error of the commit of an admission after a commit", func(t *testing.T) {
+			t.Parallel()
+			h := served(t, refuseAdmissions)
+			h.reportAll(t)
+			d := disruption(1, nodeA.ID)
+			call := h.disruptCall(&d, operator)
+			call.Deadline = origin.Add(callFor)
+			h.step(t, call)
+			h.run(t)
+			assert.ErrorIs(t, h.err, store.ErrTooLarge,
+				"the controller must fail when the admission after the last move does not fit")
+		})
+
+		t.Run("fails at an error of the commit of an admission after a view", func(t *testing.T) {
+			t.Parallel()
+			h := served(t, refuseAdmissions)
+			h.step(t, h.report(&nodeA, 1))
+			h.run(t)
+			d := disruption(1, nodeC.ID)
+			h.wait(t, &d, origin.Add(callFor))
+			h.revision++
+			v := membership.View{Scope: cellScope, Nodes: []shard.Node{nodeA}, Revision: h.revision, Incarnation: incA}
+			res, _, _ := h.controller.Step(machine.Viewed{View: v, Token: h.views}, nil)
+			assert.ErrorIs(t, res.Err, store.ErrTooLarge,
+				"the view must fail the controller when its admission does not fit")
+		})
+
+		t.Run("fails at an error of the commit of an admission after a report with a fault", func(t *testing.T) {
+			t.Parallel()
+			h := served(t, refuseAdmissions)
+			h.step(t, h.report(&nodeA, 1))
+			h.run(t)
+			d := disruption(1, nodeC.ID)
+			h.wait(t, &d, origin.Add(callFor))
+			sid := h.shardOn(t, nodeB.ID)
+			o := faulty(sid)
+			o.Epoch = h.placements(t)[sid].Epoch
+			res, _, _ := h.controller.Step(h.report(&nodeB, 1, o), nil)
+			assert.ErrorIs(t, res.Err, store.ErrTooLarge,
+				"the report must fail the controller when its admission does not fit")
+		})
+
+		t.Run("takes the Timer of a waiting call", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			d := disruption(1, nodeA.ID)
+			h.wait(t, &d, origin.Add(callFor))
+			i := slices.IndexFunc(
+				h.timers,
+				func(tm machine.Timer) bool { return tm.Duration == callFor-machine.WaitMargin },
+			)
+			assert.True(t, i >= 0, "the waiting call must have a Timer")
+			_, _, ok := h.controller.Step(machine.Elapsed{Token: h.timers[i].Token}, nil)
+			assert.True(t, ok, "the controller must take the Timer of a waiting call")
+		})
+
+		t.Run("replies to the waiting call of a Timer among the calls of two reservations", func(t *testing.T) {
+			t.Parallel()
+			h := spare(t)
+			h.view(t, nodeA, nodeB, nodeC, nodeD)
+			first, second := disruption(1, nodeC.ID), disruption(2, nodeD.ID)
+			h.wait(t, &first, origin.Add(callFor))
+			to := h.wait(t, &second, origin.Add(2*callFor))
+			h.elapse(t, 2*callFor-machine.WaitMargin)
+			assert.Equal(t, replyTo[budget.Decision](t, h, to).Value.RetryAfter, time.Duration(0),
+				"the call of the Timer must get its deferral without a RetryAfter")
+		})
+
+		t.Run("keeps a disruption that is not negotiable waiting while the budget allows it", func(t *testing.T) {
+			t.Parallel()
+			h := spare(t)
+			h.reportAll(t)
+			d := disruption(1, nodeC.ID)
+			d.Negotiable = false
+			to := h.wait(t, &d, origin.Add(endAfter))
+			h.reportAll(t)
+			assert.False(t, slices.ContainsFunc(h.replies, func(e machine.Effect) bool {
+				r, ok := e.(machine.Reply[budget.Decision])
+				return ok && r.To == to
+			}), "a disruption that is not negotiable must wait for its start")
+		})
+
+		t.Run("replies with its deferral to a new disruption that a repeated call admits before its commit applies",
+			func(t *testing.T) {
+				t.Parallel()
+				h := spare(t)
+				h.step(t, h.report(&nodeA, 1))
+				h.step(t, h.report(&nodeB, 1))
+				h.run(t)
+				d := disruption(1, nodeC.ID)
+				h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Commit); return ok }
+				first := h.disruptCall(&d, operator)
+				first.Deadline = origin.Add(callFor)
+				h.step(t, first)
+				h.step(t, h.report(&nodeC, 1))
+				second := h.disruptCall(&d, operator)
+				h.step(t, second)
+				h.pause = nil
+				h.run(t)
+				expect.False(t, replyTo[budget.Decision](t, h, first.Reply).Value.Allowed,
+					"the first call must get the deferral of its step")
+				expect.True(t, replyTo[budget.Decision](t, h, second.Reply).Value.Allowed,
+					"the repeated call must get the admission")
+			})
+
+		t.Run("keeps a second waiting call of a reservation after the Timer of the first", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			d := disruption(1, nodeA.ID)
+			h.wait(t, &d, origin.Add(callFor))
+			to := h.wait(t, &d, origin.Add(2*callFor))
+			h.elapse(t, callFor-machine.WaitMargin)
+			h.reportAll(t)
+			assert.True(t, replyTo[budget.Decision](t, h, to).Value.Allowed,
+				"the second call must wait for the admission after the Timer of the first")
+		})
+
+		t.Run("does not admit a reservation once its only waiting call has its reply", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			d := disruption(1, nodeA.ID)
+			h.wait(t, &d, origin.Add(callFor))
+			h.elapse(t, callFor-machine.WaitMargin)
+			h.reportAll(t)
+			assert.Length(t, h.state(t).Reservations, 1, "the scope must keep the reservation")
+			expect.True(t, h.state(t).Reservations[0].Admitted.IsZero(),
+				"a reservation without a waiting call must wait for the next Disrupt")
+		})
+
+		t.Run("replies at once to a deferral whose deadline is WaitMargin away", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			d := disruption(1, nodeA.ID)
+			call := h.disruptCall(&d, operator)
+			call.Deadline = origin.Add(machine.WaitMargin)
+			h.step(t, call)
+			h.run(t)
+			got := replyTo[budget.Decision](t, h, call.Reply)
+			expect.False(t, got.Value.Allowed, "the controller must defer a disruption before the reports")
+			expect.Equal(t, got.Value.RetryAfter, control.RetryAfter,
+				"a deferral at once must have the RetryAfter of the controller")
+		})
+
+		t.Run(
+			"keeps the deferral of a repeated disruption with a deadline until the budget admits it",
+			func(t *testing.T) {
+				t.Parallel()
+				h := served(t)
+				d := disruption(1, nodeA.ID)
+				h.disrupt(t, d, operator)
+				to := h.wait(t, &d, origin.Add(callFor))
+				h.reportAll(t)
+				assert.True(t, replyTo[budget.Decision](t, h, to).Value.Allowed,
+					"the repeated call must get the admission of its disruption")
+			},
+		)
+
+		t.Run("replies with ErrNotServing to a waiting call when the controller stops", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			d := disruption(1, nodeA.ID)
+			to := h.wait(t, &d, origin.Add(callFor))
+			h.stop(t)
+			assert.ErrorIs(t, replyTo[budget.Decision](t, h, to).Err, control.ErrNotServing,
+				"a waiting call must get ErrNotServing when the controller stops")
+		})
+
+		t.Run("replies to a waiting call of a disruption that is not negotiable at its start", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			d := disruption(1, nodeA.ID)
+			d.Negotiable = false
+			to := h.wait(t, &d, origin.Add(endAfter))
+			h.clock.Advance(startAfter)
+			h.elapse(t, startAfter)
+			assert.True(t, replyTo[budget.Decision](t, h, to).Value.Allowed,
+				"the call must get the admission at the start of its disruption")
+		})
+
+		t.Run("admits a waiting reservation at its Timer while a commit ends the reservation that defers it",
+			func(t *testing.T) {
+				t.Parallel()
+				h := spare(t, func(s *setup) { s.spec.Budget.MaxConcurrentNodes = new(int) })
+				h.reportAll(t)
+				h.paused = true
+				forced := disruption(1, nodeA.ID)
+				forced.Negotiable = false
+				h.disrupt(t, forced, operator)
+				h.elapse(t, startAfter)
+				d := disruption(2, nodeC.ID)
+				to := h.wait(t, &d, origin.Add(callFor))
+				h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Commit); return ok }
+				h.step(t, h.doneCall(forced.ID, operator))
+				h.elapse(t, callFor-machine.WaitMargin)
+				h.pause = nil
+				h.run(t)
+				assert.True(t, replyTo[budget.Decision](t, h, to).Value.Allowed,
+					"the Timer must admit a disruption that the budget allows")
+				i := slices.IndexFunc(h.state(t).Reservations, func(r budget.Reservation) bool {
+					return r.Disruption.ID == d.ID
+				})
+				assert.True(t, i >= 0, "the scope must have the reservation of the disruption")
+				expect.False(t, h.state(t).Reservations[i].Admitted.IsZero(),
+					"the Timer must commit the admission of the reservation")
+			})
 	})
+}
+
+// refuseAdmissions sets the bound of a commit to refuse each mutation that admits a
+// reservation, as a store refuses a mutation that does not fit in one commit.
+func refuseAdmissions(s *setup) {
+	s.fits = func(m *store.Mutation) error {
+		if slices.ContainsFunc(m.Reserve, func(r budget.Reservation) bool { return !r.Admitted.IsZero() }) {
+			return store.ErrTooLarge
+		}
+		return nil
+	}
+}
+
+// wait passes the Disrupt of d from an operator with the deadline deadline, and runs the
+// controller. It checks that the call waits, and returns the token of the call.
+func (h *harness) wait(tb assert.TB, d *budget.Disruption, deadline time.Time) machine.ReplyToken {
+	tb.Helper()
+	call := h.disruptCall(d, operator)
+	call.Deadline = deadline
+	h.step(tb, call)
+	h.run(tb)
+	assert.False(tb, slices.ContainsFunc(h.replies, func(e machine.Effect) bool {
+		r, ok := e.(machine.Reply[budget.Decision])
+		return ok && r.To == call.Reply
+	}), "a deferral with a deadline must wait")
+	return call.Reply
 }
 
 // served returns a harness of a controller that serves with a view of the nodes A and B,

@@ -81,6 +81,17 @@
 // node. The Controller ends an admitted reservation at a Done, or once its nodes have left
 // the view or restarted and do not host a replica.
 //
+// A deferred Disrupt whose deadline is more than machine.WaitMargin away waits for its
+// pending reservation:
+//
+//   - After each step that applies a commit, takes a report or takes a view, the
+//     Controller evaluates each reservation with a waiting call, in the order of the IDs.
+//     One commit admits each negotiable one that the budget allows.
+//   - A waiting call gets the admission once the commit that admits its reservation has
+//     applied, and the deferral of the end once the commit that ends it has applied.
+//   - A Timer at machine.WaitMargin before the deadline of a call replies with the deferral
+//     of the reservation and a RetryAfter of zero.
+//
 // The drain roles of the support matrix are every role of its model, so an admitted
 // negotiable disruption does not make a replica unavailable. maxUnavailable bounds the
 // moves instead. A move makes the one replica of its shard unavailable, so maxUnavailable
@@ -113,7 +124,8 @@
 // # Replies
 //
 // The Controller replies to a report at once, and to a proposal or a disruption once its
-// commit has applied. A call that waits for its reply when the Controller stops gets
+// commit has applied. A deferral with a deadline waits for its reservation, as the section
+// Budget states. A call that waits for its reply when the Controller stops gets
 // [ErrNotServing].
 //
 // # Errors

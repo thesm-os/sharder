@@ -228,7 +228,7 @@ func (c *Controller) viewed(ev *machine.Viewed, out []machine.Effect) ([]machine
 	if joined := errors.Join(err, serr); joined != nil {
 		return out, true, joined
 	}
-	if first || changed && c.spec.schedule.OnMembership || lost {
+	if out, err = c.admit(out); err == nil && (first || changed && c.spec.schedule.OnMembership || lost) {
 		out, err = c.trigger(out)
 	}
 	return out, true, err
@@ -278,9 +278,9 @@ func (c *Controller) report(ev *machine.Report, out []machine.Effect) ([]machine
 		c.served(r)
 	}
 	ack := protocol.Ack{Sequence: mb.sequence, Generation: c.assignment.generation, ControllerEpoch: c.term}
-	out = reply(c, ev.Reply, ack, nil, out)
-	if !faulted {
-		return out, nil
+	out, err := c.admit(reply(c, ev.Reply, ack, nil, out))
+	if err == nil && faulted {
+		return c.trigger(out)
 	}
-	return c.trigger(out)
+	return out, err
 }

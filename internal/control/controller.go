@@ -191,12 +191,18 @@ const (
 // followup is the reply to a Submit, a Disrupt or a Done that the controller sends once a
 // commit has applied.
 type followup struct {
+	// deadline is the deadline of a Disrupt whose deferral can wait for its reservation, and
+	// the zero time for every other call.
+	deadline time.Time
 	// result is the Result of the receipt of a Submit.
 	result []byte
 	// decision is the decision of a Disrupt.
 	decision budget.Decision
 	// proposal is the ID of the proposal of a Submit, and the zero ID for another call.
 	proposal proposal.ID
+	// reservation is the ID of the reservation of a Disrupt whose deferral can wait, and the
+	// zero ID for every other call.
+	reservation budget.ID
 	// to is the token of the call.
 	to machine.ReplyToken
 }
@@ -627,8 +633,8 @@ func (c *Controller) acquired(snap *scope.Snapshot, out []machine.Effect) ([]mac
 }
 
 // elapsed takes the end of a Timer of the controller: the backoff of the watch of the
-// views, the interval of the periodic passes, or a timer of a reservation. It reports
-// whether the Timer is of the controller.
+// views, the interval of the periodic passes, the deadline of a waiting call, or a timer of
+// a reservation. It reports whether the Timer is of the controller.
 func (c *Controller) elapsed(ev machine.Elapsed, out []machine.Effect) ([]machine.Effect, bool, error) {
 	switch ev.Token {
 	case c.members.wait:
@@ -637,6 +643,10 @@ func (c *Controller) elapsed(ev machine.Elapsed, out []machine.Effect) ([]machin
 		c.passes.interval = 0
 		var err error
 		out, err = c.trigger(c.periodic(out))
+		return out, true, err
+	}
+	out, ok, err := c.timeout(ev.Token, out)
+	if ok {
 		return out, true, err
 	}
 	return c.expire(ev.Token, out)
@@ -665,7 +675,8 @@ func (c *Controller) batchAfter(out []machine.Effect, err error) ([]machine.Effe
 
 // commit commits the mutation of p after the commits in flight, and keeps p until the
 // commit applies. The reservations, the drains and the undrains of the mutation take
-// effect in the budget at once.
+// effect in the budget at once. The Disrupt calls that wait for a reservation that the
+// mutation admits or ends get their replies once the commit has applied.
 //
 // Error modes:
 //   - the error of Config.Fits for a mutation that one commit cannot apply.
@@ -679,6 +690,7 @@ func (c *Controller) commit(p *pending, out []machine.Effect) ([]machine.Effect,
 	if err != nil {
 		return out, fmt.Errorf("control: a commit to %v: %w", c.scopeOf, err)
 	}
+	p.followups = c.budget.followups(p.mutation, p.followups)
 	c.commits[commit] = p
 	c.budget.commit(p.mutation)
 	return out, nil
@@ -692,7 +704,8 @@ func (c *Controller) commit(p *pending, out []machine.Effect) ([]machine.Effect,
 //   - The controller then replies to the calls that wait for the commit.
 //   - After a batch of the engine, the controller continues the transitions.
 //
-// These commits start a pass:
+// The controller then evaluates the reservations with waiting calls. These commits start a
+// pass:
 //   - a commit that leaves a shard without a writer.
 //   - a commit that ends the transition of a shard whose writer the view does not have at
 //     the incarnation of its placement.
@@ -731,6 +744,9 @@ func (c *Controller) apply(id store.CommitID, gen epoch.Epoch, out []machine.Eff
 	if err != nil {
 		return out, err
 	}
+	if out, err = c.admit(out); err != nil {
+		return out, err
+	}
 	if c.lost(mu) || len(mu.Drain) > 0 || len(mu.Undrain) > 0 || len(mu.Done) > 0 && c.passes.refused {
 		return c.trigger(out)
 	}
@@ -738,7 +754,8 @@ func (c *Controller) apply(id store.CommitID, gen epoch.Epoch, out []machine.Eff
 }
 
 // follow sends the reply of f to its call after the commit that created the generation gen.
-// The proposal of a Submit then has applied.
+// The proposal of a Submit then has applied. The deferral of a new disruption waits for its
+// reservation when the deadline of the call allows it.
 func (c *Controller) follow(f *followup, gen epoch.Epoch, out []machine.Effect) []machine.Effect {
 	delete(c.proposing, f.proposal)
 	kind, _ := c.calls.Get(f.to)
@@ -747,6 +764,9 @@ func (c *Controller) follow(f *followup, gen epoch.Epoch, out []machine.Effect) 
 		receipt := protocol.Receipt{Result: f.result, Generation: gen, Incarnation: c.incarnation, Applied: true}
 		return reply(c, f.to, receipt, nil, out)
 	case callDisrupt:
+		if e, ok := c.budget.reservations.Get(f.reservation); ok && c.waits(e, f.deadline) {
+			return c.queue(f.reservation, f.to, f.deadline, out)
+		}
 		return reply(c, f.to, f.decision, nil, out)
 	case callDone:
 		return reply(c, f.to, struct{}{}, nil, out)

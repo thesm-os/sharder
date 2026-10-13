@@ -93,10 +93,10 @@ type submitted struct {
 // moving is a move proposal whose transition has started: the record that the commit of
 // the first record of the transition adds, and the reply that follows that commit.
 type moving struct {
-	// followup is the reply to the Submit of the proposal.
-	followup followup
 	// applied is the record of the proposal.
 	applied store.Applied
+	// followup is the reply to the Submit of the proposal.
+	followup followup
 }
 
 // movePlacer is the placer of the pass of a move proposal. It returns the target that the

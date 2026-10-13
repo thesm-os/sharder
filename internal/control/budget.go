@@ -48,6 +48,16 @@ type reserved struct {
 	ending bool
 }
 
+// waiting is a Disrupt call that waits for the admission or the end of the pending
+// reservation of its disruption. A call whose caller has gone waits until its Timer or until
+// the commit that admits or ends the reservation, and reply then drops its reply.
+type waiting struct {
+	// timer is the token of the Timer at machine.WaitMargin before the deadline of the call.
+	timer machine.Token
+	// to is the token of the call.
+	to machine.ReplyToken
+}
+
 // budgets is the budget of a scope: its reservations and its drains. It takes the
 // reservations and the drains of each commit when the controller sends the commit.
 type budgets struct {
@@ -57,17 +67,22 @@ type budgets struct {
 	// drains maps the key of each drain to the drain, in the order of the nodes and then of
 	// the disruption IDs.
 	drains *btree.MapFunc[store.DrainKey, store.Drain]
+	// waits maps the ID of each pending reservation to the Disrupt calls that wait for it, in
+	// the order of the IDs. The commit that admits or ends the reservation takes its calls,
+	// so every reservation in waits is pending, and no commit ends it. A reservation keeps
+	// its entry without a call once the Timers of its calls have elapsed.
+	waits *btree.MapFunc[budget.ID, []waiting]
 }
 
-// newBudgets returns a budget without reservations and drains.
+// newBudgets returns a budget without reservations, drains and waiting calls.
 func newBudgets() budgets {
+	byID := func(a, b budget.ID) int { return a.Compare(b.ID) }
 	return budgets{
-		reservations: btree.NewMapFunc[budget.ID, *reserved](func(a, b budget.ID) int {
-			return a.Compare(b.ID)
-		}),
+		reservations: btree.NewMapFunc[budget.ID, *reserved](byID),
 		drains: btree.NewMapFunc[store.DrainKey, store.Drain](func(a, b store.DrainKey) int {
 			return cmp.Or(cmp.Compare(a.Node, b.Node), a.Disruption.Compare(b.Disruption.ID))
 		}),
+		waits: btree.NewMapFunc[budget.ID, []waiting](byID),
 	}
 }
 
@@ -107,6 +122,27 @@ func (b *budgets) apply(mu *store.Mutation) {
 	for _, id := range mu.Release {
 		b.reservations.Delete(id)
 	}
+}
+
+// followups ends the waits of the Disrupt calls of each reservation that the mutation mu of
+// a commit admits or ends. It appends a followup of each call to fs: the admission, or the
+// deferral of the end. The calls get their replies once the commit has applied.
+func (b *budgets) followups(mu *store.Mutation, fs []followup) []followup {
+	for i := range mu.Reserve {
+		if r := &mu.Reserve[i]; !r.Admitted.IsZero() {
+			ws, _ := b.waits.Delete(r.Disruption.ID)
+			for _, w := range ws {
+				fs = append(fs, followup{decision: budget.Decision{Allowed: true}, to: w.to})
+			}
+		}
+	}
+	for _, id := range mu.Release {
+		ws, _ := b.waits.Delete(id)
+		for _, w := range ws {
+			fs = append(fs, followup{decision: budget.Decision{Reason: reasonEnding, RetryAfter: RetryAfter}, to: w.to})
+		}
+	}
+	return fs
 }
 
 // draining reports whether the node n has a drain.
@@ -173,7 +209,8 @@ func release(es ...*reserved) *store.Mutation {
 // disrupt takes a planned disruption. The controller commits a pending reservation of a new
 // disruption with the drains of its nodes, or its admission, before it replies. It replies
 // at once to a call that it refuses, and to a repeated disruption whose reservation it does
-// not change.
+// not change. A deferral whose deadline is more than machine.WaitMargin away waits for the
+// admission or the end of its reservation.
 func (c *Controller) disrupt(ev *machine.Disrupt, out []machine.Effect) ([]machine.Effect, error) {
 	c.calls.Set(ev.Reply, callDisrupt)
 	d := ev.Disruption
@@ -193,10 +230,7 @@ func (c *Controller) disrupt(ev *machine.Disrupt, out []machine.Effect) ([]machi
 	}
 	now := c.clock.Time()
 	r := budget.Reservation{Disruption: *d, Digest: sum, Owner: ev.Metadata.Caller, Incarnations: c.incarnations(d)}
-	decision := budget.Decision{Reason: reasonStart, RetryAfter: RetryAfter}
-	if d.Negotiable {
-		decision = c.evaluate(d)
-	}
+	decision := c.decide(d)
 	if decision.Allowed {
 		r.Admitted = now
 	} else {
@@ -206,7 +240,8 @@ func (c *Controller) disrupt(ev *machine.Disrupt, out []machine.Effect) ([]machi
 	for _, n := range d.Nodes {
 		mu.Drain = append(mu.Drain, store.Drain{Since: now, Node: n, Caller: r.Owner, Disruption: d.ID})
 	}
-	return c.commit(&pending{mutation: mu, followups: []followup{{decision: decision, to: ev.Reply}}}, out)
+	f := followup{decision: decision, deadline: ev.Deadline, reservation: d.ID, to: ev.Reply}
+	return c.commit(&pending{mutation: mu, followups: []followup{f}}, out)
 }
 
 // redisrupt takes a disruption whose ID the scope has reserved as e, and whose encoding has
@@ -225,13 +260,14 @@ func (c *Controller) redisrupt(ev *machine.Disrupt, e *reserved, sum crypto.Dige
 		decision = budget.Decision{Allowed: true}
 	case e.ending:
 		decision = budget.Decision{Reason: reasonEnding, RetryAfter: RetryAfter}
-	case !r.Disruption.Negotiable:
-		decision = budget.Decision{Reason: reasonStart, RetryAfter: RetryAfter}
 	default:
-		decision = c.evaluate(&r.Disruption)
+		decision = c.decide(&r.Disruption)
 	}
 	if !decision.Allowed {
 		c.metrics.deferred.Add(context.Background(), 1)
+		if c.waits(e, ev.Deadline) {
+			return c.queue(r.Disruption.ID, ev.Reply, ev.Deadline, out), nil
+		}
 	}
 	if !decision.Allowed || !r.Admitted.IsZero() {
 		return reply(c, ev.Reply, decision, nil, out), nil
@@ -240,6 +276,105 @@ func (c *Controller) redisrupt(ev *machine.Disrupt, e *reserved, sum crypto.Dige
 	admitted.Admitted = c.clock.Time()
 	mu := &store.Mutation{Reserve: []budget.Reservation{admitted}}
 	return c.commit(&pending{mutation: mu, followups: []followup{{decision: decision, to: ev.Reply}}}, out)
+}
+
+// decide returns the decision of the budget for the pending disruption d at this step. The
+// controller admits a disruption that is not negotiable at its Start, and evaluates every
+// other one.
+func (c *Controller) decide(d *budget.Disruption) budget.Decision {
+	if !d.Negotiable {
+		return budget.Decision{Reason: reasonStart, RetryAfter: RetryAfter}
+	}
+	return c.evaluate(d)
+}
+
+// waits reports whether a deferred Disrupt call waits for the reservation e until its
+// deadline. The call waits when these conditions are true:
+//   - e is pending.
+//   - No commit ends e.
+//   - deadline is more than machine.WaitMargin away.
+//
+// A call without a deadline gets its deferral at once.
+func (c *Controller) waits(e *reserved, deadline time.Time) bool {
+	return e.r.Admitted.IsZero() && !e.ending && deadline.Sub(c.clock.Time()) > machine.WaitMargin
+}
+
+// queue makes the deferred Disrupt call tok wait for the reservation id. It appends the Timer
+// of the call to out, at machine.WaitMargin before deadline.
+func (c *Controller) queue(id budget.ID, tok machine.ReplyToken, deadline time.Time, out []machine.Effect,
+) []machine.Effect {
+	w := waiting{timer: c.next(), to: tok}
+	ws, _ := c.budget.waits.Get(id)
+	c.budget.waits.Set(id, append(ws, w))
+	return append(out, machine.Timer{Token: w.timer, Duration: deadline.Add(-machine.WaitMargin).Sub(c.clock.Time())})
+}
+
+// admit evaluates each reservation with a waiting call, in the order of the IDs, after a step
+// that applies a commit, takes a report or takes a view. It admits each negotiable one that the
+// budget allows, in one commit, and its calls get the admission once the commit has applied.
+// An admission does not leave a replica of the drain roles on its nodes, and the drain roles
+// are every role, so the admissions of one step do not change the count of
+// maxConcurrentNodes.
+// admit costs O(w × r) for w waiting reservations and r reservations.
+//
+// Error modes:
+//   - the error of commit.
+func (c *Controller) admit(out []machine.Effect) ([]machine.Effect, error) {
+	mu := &store.Mutation{}
+	now := c.clock.Time()
+	for id, ws := range c.budget.waits.All() {
+		if len(ws) == 0 {
+			continue
+		}
+		e, _ := c.budget.reservations.Get(id)
+		if d := &e.r.Disruption; d.Negotiable && c.evaluate(d).Allowed {
+			admitted := *e.r
+			admitted.Admitted = now
+			mu.Reserve = append(mu.Reserve, admitted)
+		}
+	}
+	if len(mu.Reserve) == 0 {
+		return out, nil
+	}
+	return c.commit(&pending{mutation: mu}, out)
+}
+
+// timeout takes the Timer tok of a waiting call at machine.WaitMargin before the deadline of
+// the call. It reports whether tok is such a Timer.
+//
+// The call gets the decision of its reservation with a RetryAfter of zero, and stops waiting.
+// Its caller then asks again before its deadline. A reservation without a waiting call keeps
+// its entry in waits until the commit that admits or ends it, and admit skips it.
+//
+// The budget can allow the reservation at the Timer, such as after a Done whose commit is in
+// flight. timeout then admits the waiting reservations, and the call gets the admission once
+// the commit has applied.
+//
+// Error modes:
+//   - the error of admit.
+func (c *Controller) timeout(tok machine.Token, out []machine.Effect) ([]machine.Effect, bool, error) {
+	var id budget.ID
+	var ws []waiting
+	i := -1
+	for k, v := range c.budget.waits.All() {
+		if i = slices.IndexFunc(v, func(w waiting) bool { return w.timer == tok }); i >= 0 {
+			id, ws = k, v
+			break
+		}
+	}
+	if i < 0 {
+		return out, false, nil
+	}
+	e, _ := c.budget.reservations.Get(id)
+	decision := c.decide(&e.r.Disruption)
+	if decision.Allowed {
+		next, err := c.admit(out)
+		return next, true, err
+	}
+	to := ws[i].to
+	c.budget.waits.Set(id, slices.Delete(ws, i, i+1))
+	decision.RetryAfter = 0
+	return reply(c, to, decision, nil, out), true, nil
 }
 
 // authorize returns nil when the controller authorises caller to request d: an operator,

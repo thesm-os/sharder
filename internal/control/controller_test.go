@@ -412,6 +412,8 @@ type model struct {
 	present []bool
 	// disruptions lists the ID of each disruption that a step asked for.
 	disruptions []budget.ID
+	// disrupts lists the token of each Disrupt call of a step, in order.
+	disrupts []machine.ReplyToken
 	// ended is the index in disruptions of the first disruption whose reservation the drain
 	// has not ended.
 	ended int
@@ -580,12 +582,18 @@ func (m *model) plan(c *prop.Case) {
 	m.h.pass(c, m.h.pending[i].(machine.Plan).Token)
 }
 
-// disrupt asks for the disruption of a node that c chooses, as an operator.
+// disrupt asks for the disruption of a node that c chooses, as an operator. Every second call
+// has a deadline, so its deferral waits for the admission or the end of its reservation.
 func (m *model) disrupt(c *prop.Case) {
 	n := m.nodes[c.Draw(prop.Integer(0, len(m.nodes)-1), "node")]
 	d := disruption(byte(len(m.disruptions)+1), n.ID)
 	m.disruptions = append(m.disruptions, d.ID)
-	m.h.step(c, m.h.disruptCall(&d, operator))
+	call := m.h.disruptCall(&d, operator)
+	if len(m.disruptions)%2 == 0 {
+		call.Deadline = origin.Add(callFor)
+	}
+	m.disrupts = append(m.disrupts, call.Reply)
+	m.h.step(c, call)
 	m.h.run(c)
 }
 
@@ -758,10 +766,14 @@ func (m *model) invariant(c *prop.Case) {
 }
 
 // settle checks the controller once the drain has ended the faults: every transition has
-// ended, and the writer of every shard is on the live incarnation of a node of the view.
+// ended, the writer of every shard is on the live incarnation of a node of the view, and every
+// Disrupt call has its reply.
 func (m *model) settle(c *prop.Case) {
 	expect.Empty(c, m.h.state(c).Transitions, "every transition must end once the faults have ended")
 	m.h.live(c, m.nodes...)
+	for _, to := range m.disrupts {
+		expect.Equal(c, m.replies[to], 1, "every Disrupt call must have its reply once its reservation has ended")
+	}
 }
 
 // TestController checks the construction, the lifecycle and the steps of a controller.
@@ -1731,8 +1743,8 @@ func (h *harness) shardIDs(tb assert.TB) []shard.ID {
 //   - The controller replies to each call once.
 //
 // The drain ends the faults, the drains and the disruptions, and replies to every callback
-// with success. Every transition has then ended, and the writer of every shard is on the live
-// incarnation of a node of the view.
+// with success. Every transition has then ended, the writer of every shard is on the live
+// incarnation of a node of the view, and every Disrupt call has its reply.
 func exercise(c *prop.Case) {
 	m := newModel(c)
 	stateful.Steps(c, stateful.Machine[struct{}]{
