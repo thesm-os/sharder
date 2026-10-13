@@ -16,8 +16,7 @@ var (
 	ErrConfig = errs.WithClass(errors.New("engine: invalid configuration"), errs.Invalid)
 
 	// ErrMove reports a move that the Engine cannot start. Start returns an error that wraps
-	// it for a move of a shard that has a transition in flight, and for a move that the
-	// protocol cannot script. It classifies as errs.Invalid.
+	// it for a move that the protocol cannot script. It classifies as errs.Invalid.
 	ErrMove = errs.WithClass(errors.New("engine: invalid move"), errs.Invalid)
 
 	// ErrRecord reports a record of a transition that the Engine cannot continue, such as a

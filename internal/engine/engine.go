@@ -261,23 +261,20 @@ func New(cfg *Config) (*Engine, error) {
 }
 
 // Start starts the transition of m when the bounds admit it, and reports whether they
-// did. The transition reserves the sequence after m.Placement.Sequence and the two epochs
-// after m.Placement.Reserved. The next batch commits its record, with the placement and
-// its new reserved epoch and sequence. A move that the bounds refuse does not change the
-// Engine.
+// did. The bounds refuse a move of a shard that has a transition in flight, as they refuse
+// a move above the limits on the transitions in flight. The transition reserves the
+// sequence after m.Placement.Sequence and the two epochs after m.Placement.Reserved. The
+// next batch commits its record, with the placement and its new reserved epoch and
+// sequence. A move that the bounds refuse does not change the Engine.
 //
 // Error modes:
-//   - an error that wraps ErrMove for a move of a shard that has a transition in flight.
 //   - an error that wraps ErrMove and the error of the protocol for a move that the
 //     protocol cannot script, and for a script that handoff.Script.Validate refuses.
 //   - an error that wraps fsm.ErrRejected when the phase or the wait of a transition
 //     refuses an event.
 func (e *Engine) Start(m *Move) (bool, error) {
 	id := m.Placement.Shard
-	if _, ok := e.transitions.Get(id); ok {
-		return false, fmt.Errorf("%w: shard %v has a transition in flight", ErrMove, id)
-	}
-	if len(e.order) >= e.maxTransitions || e.full(m) {
+	if _, ok := e.transitions.Get(id); ok || len(e.order) >= e.maxTransitions || e.full(m) {
 		return false, nil
 	}
 	transfer := handoff.Transfer{From: m.From.Node, To: m.To.Node, Fallback: m.Fallback.Node}

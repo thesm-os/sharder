@@ -62,8 +62,8 @@
 // # Bounds
 //
 // The Engine starts a transition only while fewer than Config.MaxTransitions transitions
-// are in flight. Fewer than Config.MaxNodeTransitions transitions may count against each
-// node of the move. A transition counts against the node of its destination and of its
+// are in flight, and only for a shard without a transition in flight. Fewer than
+// Config.MaxNodeTransitions transitions may count against each node of the move. A transition counts against the node of its destination and of its
 // fallback, and against the node of its source while the session of the source is in the
 // view. Each node has Config.NodeCallbacks permits for callbacks. A callback without a
 // free permit waits in the first-in, first-out queue of its node.

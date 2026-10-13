@@ -498,14 +498,13 @@ func TestEngine(t *testing.T) {
 				"a move must not count against a source that has left the view")
 		})
 
-		t.Run("returns ErrMove for a shard with a transition in flight", func(t *testing.T) {
+		t.Run("returns false for a shard with a transition in flight", func(t *testing.T) {
 			t.Parallel()
 			p := placement(1, nodeA)
 			h := newHarness(t, []shard.Placement{p})
 			assert.True(t, h.start(t, moveOf(p, nodeA, nodeB, nodeA)), "Start must admit the first move")
-			m := moveOf(p, nodeA, nodeC, nodeA)
-			_, err := h.engine.Start(&m)
-			assert.ErrorIs(t, err, engine.ErrMove, "Start must refuse a second transition of a shard")
+			assert.False(t, h.start(t, moveOf(p, nodeA, nodeC, nodeA)),
+				"Start must refuse a second transition of a shard as a bound")
 		})
 
 		t.Run("returns ErrMove for a move that the protocol cannot script", func(t *testing.T) {
