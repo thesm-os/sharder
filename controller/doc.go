@@ -40,6 +40,14 @@
 // moves the cell. Every other error of a controller of a cell stops the run, as the error of
 // a root or of an agent of a root does.
 //
+// # Close
+//
+// [Controller.Close] ends the session of the agent of the root of each namespace in the root
+// scope, and then stops the run. The view of each root then no longer lists the process, so
+// the root places the cells of the process on the other controller processes at its next
+// pass. Run then returns nil. The end of the context of Run stops the process without a
+// Leave, and the session of the process then expires a TTL after its last renewal.
+//
 // # Calls
 //
 // [Controller.Do] takes the callbacks of the roots, which protocol.Dispatch passes to it.
@@ -56,7 +64,7 @@
 // # Concurrency
 //
 // A Controller is safe for concurrent use. Run runs once, and any number of goroutines call
-// the methods of the servers.
+// Close and the methods of the servers.
 //
 // # Dependency position
 //

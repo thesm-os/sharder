@@ -28,4 +28,8 @@ var (
 	// for a cell that it does not host. Do, Report, Submit, Disrupt and Done return it
 	// before Run and once Run has returned. It classifies as errs.Transient.
 	ErrNotServing = errs.WithClass(errors.New("controller: not serving"), errs.Transient)
+
+	// errClosed is the cause with which Close ends the context of the run. Run returns nil for
+	// a run that it ends. It classifies as errs.Transient.
+	errClosed = errs.WithClass(errors.New("controller: the process has closed"), errs.Transient)
 )

@@ -113,8 +113,10 @@ func (c *Controller) Submit(ctx context.Context, md protocol.Metadata, p *propos
 }
 
 // Disrupt passes the disruption d to the controller of its cell, and returns the decision of
-// the budget of the cell once the controller has committed it. Disrupt does not modify or
-// keep d.
+// the budget of the cell once the controller has committed it. A deferral of a pending
+// disruption returns once the budget admits the disruption, once its reservation ends, or
+// one second before the deadline of ctx, with a RetryAfter of zero. A call without a deadline
+// returns its deferral at once. Disrupt does not modify or keep d.
 //
 // Error modes:
 //   - an error that wraps the error of Metadata.Check.
@@ -131,8 +133,9 @@ func (c *Controller) Disrupt(ctx context.Context, md protocol.Metadata, d *budge
 		return budget.Decision{}, err
 	}
 	m := d.CloneKanon()
+	deadline, _ := ctx.Deadline()
 	return call[budget.Decision](ctx, s, callDisruption, func(tok machine.ReplyToken) machine.Event {
-		return machine.Disrupt{Disruption: m, Metadata: md, Reply: tok}
+		return machine.Disrupt{Disruption: m, Metadata: md, Deadline: deadline, Reply: tok}
 	})
 }
 

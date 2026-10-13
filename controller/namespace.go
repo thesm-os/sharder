@@ -12,6 +12,7 @@ import (
 
 	"go.thesmos.sh/sharder/config"
 	"go.thesmos.sh/sharder/internal/driver"
+	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/machine/agent"
 	"go.thesmos.sh/sharder/internal/machine/cell"
 	"go.thesmos.sh/sharder/internal/machine/root"
@@ -60,6 +61,24 @@ func (n *namespace) supervise(d *driver.Driver, what string) func(ctx context.Co
 	return func(ctx context.Context) error {
 		return fmt.Errorf("controller: %s of %s: %w", what, n.name, d.Run(ctx))
 	}
+}
+
+// leave closes the agent of the root, which ends its session in the root scope without a
+// disruption. leave returns once the Leave of the session has returned. It returns nil for an
+// agent without a session to end: an agent that does not serve, and an agent whose run has
+// stopped.
+//
+// Error modes:
+//   - an error that wraps the error of the Leave, and an error that wraps the cause of ctx
+//     when ctx ends before the Leave returns.
+func (n *namespace) leave(ctx context.Context) error {
+	_, err := n.agent.Call[struct{}](ctx, func(tok machine.ReplyToken) machine.Event {
+		return machine.Close{Reply: tok}
+	})
+	if err == nil || errors.Is(err, driver.ErrStopped) || errors.Is(err, agent.ErrNotServing) {
+		return nil
+	}
+	return fmt.Errorf("controller: the close of %s of %s: %w", agentMachine, n.name, err)
 }
 
 // newNamespace returns what the process runs for the namespace of the spec s.

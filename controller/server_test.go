@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/id"
@@ -22,7 +23,9 @@ import (
 	"go.thesmos.sh/sharder/config"
 	"go.thesmos.sh/sharder/controller"
 	"go.thesmos.sh/sharder/internal/control"
+	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/machine/agent"
+	"go.thesmos.sh/sharder/internal/streamtest"
 	"go.thesmos.sh/sharder/proposal"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
@@ -312,6 +315,35 @@ func TestServer(t *testing.T) {
 				_, err := p.ctrl.Disrupt(t.Context(), operatorMetadata, disruption(procB.ID, 1))
 				assert.ErrorIs(t, err, controller.ErrNotServing,
 					"Disrupt must return ErrNotServing for a cell that the process does not host")
+			})
+		})
+
+		t.Run("returns a deferral without a RetryAfter WaitMargin before the deadline of ctx", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f, p := hosting(t)
+				d := disruption(procB.ID, 1)
+				d.Negotiable = false
+				d.Start, d.End = origin.Add(time.Hour), origin.Add(2*time.Hour)
+				ctx, cancel := context.WithDeadline(t.Context(), origin.Add(time.Minute))
+				defer cancel()
+				decided := make(chan budget.Decision, 1)
+				go func() {
+					decision, err := p.ctrl.Disrupt(ctx, operatorMetadata, d)
+					assert.NoError(t, err, "the controller of the cell must decide the disruption")
+					decided <- decision
+				}()
+				synctest.Wait()
+				streamtest.Blocks(t, decided, "the deferral must wait while its deadline is ahead")
+				f.clock.Advance(time.Minute - machine.WaitMargin)
+				got := received(t, decided, "Disrupt returns")
+				expect.False(t, got.Allowed, "the controller must defer a disruption before its start")
+				expect.Equal(
+					t,
+					got.RetryAfter,
+					time.Duration(0),
+					"the deferral at the deadline must have no RetryAfter",
+				)
 			})
 		})
 	})

@@ -27,6 +27,7 @@ import (
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
+	"go.thesmos.sh/sharder/store/memory"
 )
 
 // errCause is the cause with which a test ends the context of Run.
@@ -581,6 +582,130 @@ func TestController(t *testing.T) {
 				cell := placed(t, f)
 				assert.Equal(t, record(t, f, shard.Scope{Namespace: namespace, Cell: cell}).Controller, procA.Address,
 					"the controller of the process must control the cell that the root placed on it")
+			})
+		})
+
+		t.Run("returns nil once Close has stopped it", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.newRoot(t)
+				p := f.start(t, procA, spec(namespace))
+				synctest.Wait()
+				assert.NoError(t, p.ctrl.Close(t.Context()), "Close ends the session of the process")
+				assert.NoError(t, p.result(t), "Run must return nil once Close has stopped it")
+			})
+		})
+
+		t.Run("returns ErrRun after Close", func(t *testing.T) {
+			t.Parallel()
+			ctrl := idle(t)
+			assert.NoError(t, ctrl.Close(t.Context()), "a Close before Run returns nil")
+			assert.ErrorIs(t, ctrl.Run(t.Context(), spec(namespace)), controller.ErrRun,
+				"Run must refuse a run after Close")
+			assert.NoError(t, ctrl.Close(t.Context()), "a Close after a refused Run must return nil")
+		})
+	})
+
+	t.Run("Close", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("ends the session of the process in the root scope", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				r := f.newRoot(t)
+				p := f.start(t, procA, spec(namespace))
+				synctest.Wait()
+				r.session(t, procA.ID)
+				assert.NoError(t, p.ctrl.Close(t.Context()), "Close ends the session of the process")
+				v := view(t, f, rootScope)
+				_, ok := v.Node(procA.ID)
+				assert.False(t, ok, "the view of the root must not list a process that has closed")
+			})
+		})
+
+		t.Run("returns once Run has returned", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				r := f.newRoot(t)
+				p := f.start(t, procA, spec(namespace))
+				synctest.Wait()
+				f.st.block()
+				assert.NoError(t, r.host(t, p, procA.ID, firstEpoch, 1), "the add starts a controller")
+				closed := make(chan error, 1)
+				go func() { closed <- p.ctrl.Close(t.Context()) }()
+				synctest.Wait()
+				streamtest.Blocks(t, closed, "Close must wait while the controller of the cell runs")
+				f.st.unblock()
+				assert.NoError(t, received(t, closed, "Close returns"), "Close must return once Run has returned")
+			})
+		})
+
+		t.Run("returns the error of a Leave that fails", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.newRoot(t)
+				p := f.start(t, procA, spec(namespace))
+				synctest.Wait()
+				f.st.StartOutage()
+				assert.ErrorIs(
+					t,
+					p.ctrl.Close(t.Context()),
+					memory.ErrOutage,
+					"Close must return the error of the Leave",
+				)
+			})
+		})
+
+		t.Run("returns the cause of its context when the context ends before a Leave returns", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.newRoot(t)
+				p := f.start(t, procA, spec(namespace))
+				synctest.Wait()
+				f.st.stalled.Store(true)
+				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+				defer cancel()
+				assert.ErrorIs(t, p.ctrl.Close(ctx), context.DeadlineExceeded,
+					"Close must return the cause of its context")
+			})
+		})
+
+		t.Run("returns nil before the agent of the root serves", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.st.StartOutage()
+				p := f.start(t, procA, spec(namespace))
+				synctest.Wait()
+				assert.NoError(t, p.ctrl.Close(t.Context()), "an agent of the root that does not serve has no session")
+			})
+		})
+
+		t.Run("returns nil once the run has ended", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.newRoot(t)
+				p := f.start(t, procA, spec(namespace))
+				synctest.Wait()
+				assert.ErrorIs(t, p.halt(t), context.Canceled, "Run returns the cause of its context")
+				assert.NoError(t, p.ctrl.Close(t.Context()), "a Close after the run must return nil")
+			})
+		})
+
+		t.Run("returns nil after a run whose context ended before the call", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				ctrl := idle(t)
+				ctx, cancel := context.WithCancelCause(t.Context())
+				cancel(errCause)
+				assert.ErrorIs(t, ctrl.Run(ctx, spec(namespace)), errCause, "Run returns the cause of its context")
+				assert.NoError(t, ctrl.Close(t.Context()), "a Close must not wait for a machine that never ran")
 			})
 		})
 	})

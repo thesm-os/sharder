@@ -31,6 +31,7 @@ import (
 	"go.thesmos.sh/sharder/controller"
 	"go.thesmos.sh/sharder/internal/streamtest"
 	"go.thesmos.sh/sharder/membership"
+	"go.thesmos.sh/sharder/ownership"
 	"go.thesmos.sh/sharder/partition/fixedslots"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/protocol/local"
@@ -116,7 +117,8 @@ type cleaner interface {
 
 // faulty is a memory store whose commits to the scope of a cell fail with errBroken while
 // the test breaks them. While the test blocks the store, a watch of the views of the scope
-// of a cell does not return after its context ends.
+// of a cell does not return after its context ends. While the test stalls the leaves of the
+// store, the Leave of a session returns once its context ends.
 type faulty struct {
 	*memory.Store
 	// blocked is the channel that each new watch of the views of the scope of a cell waits
@@ -129,6 +131,8 @@ type faulty struct {
 	broken atomic.Bool
 	// tight is true while no mutation of the scope of a cell fits one commit.
 	tight atomic.Bool
+	// stalled is true while the Leave of a session waits until its context ends.
+	stalled atomic.Bool
 }
 
 var _ store.Store = (*faulty)(nil)
@@ -174,6 +178,36 @@ type faultyMembership struct {
 	*memory.Membership
 	// f is the store of the membership.
 	f *faulty
+}
+
+// Join joins the node n to the scope s, as the membership of the memory store does. While
+// the test stalls the leaves of the store, the Leave of the session returns once its context
+// ends.
+func (m *faultyMembership) Join(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, n *shard.Node,
+	l ownership.Lease,
+) (membership.Session, error) {
+	ss, err := m.Membership.Join(ctx, s, inc, n, l)
+	if err != nil {
+		return nil, fmt.Errorf("test: the join of %s: %w", n.ID, err)
+	}
+	return &faultySession{Session: ss, f: m.f}, nil
+}
+
+// faultySession is a session of the membership of a faulty store.
+type faultySession struct {
+	membership.Session
+	// f is the store of the session.
+	f *faulty
+}
+
+// Leave returns the cause of ctx once ctx ends while the test stalls the leaves of the store.
+// It leaves the session through the memory store otherwise.
+func (s *faultySession) Leave(ctx context.Context) error {
+	if s.f.stalled.Load() {
+		<-ctx.Done()
+		return context.Cause(ctx)
+	}
+	return s.Session.Leave(ctx)
 }
 
 // Watch yields the views of the scope s, as the membership of the memory store does. Once

@@ -12,6 +12,7 @@ import (
 	"math"
 	"runtime"
 	"slices"
+	"sync"
 	"sync/atomic"
 
 	"go.thesmos.sh/core/clock"
@@ -128,7 +129,7 @@ func (c *Config) validate() error {
 // # Concurrency
 //
 // A Controller is safe for concurrent use. Run runs once, and any number of goroutines
-// call the methods of the servers.
+// call Close and the methods of the servers.
 type Controller struct {
 	// served maps each namespace of the run to what the process runs for it. It points to a
 	// nil map before Run.
@@ -139,14 +140,20 @@ type Controller struct {
 	// drivers is the configuration of the driver of each machine, without its machine and
 	// its handler.
 	drivers driver.Config
+	// stopped is closed once Run has returned.
+	stopped chan struct{}
+	// cancel ends the context of the run with a cause. It is nil before Run.
+	cancel context.CancelCauseFunc
 	// node is the description of the process in each root scope, with its cell capacity.
 	node shard.Node
 	// cfg is the configuration of the process.
 	cfg Config
 	// parallelism is the most evaluations that a planning pass runs at once.
 	parallelism int
-	// ran reports that Run has been called.
-	ran atomic.Bool
+	// mu guards cancel and closed.
+	mu sync.Mutex
+	// closed is true once Close has been called.
+	closed bool
 }
 
 // The servers that a Controller implements.
@@ -193,6 +200,7 @@ func New(cfg *Config) (*Controller, error) {
 			Clock:      cfg.Clock,
 			Logger:     cfg.Logger,
 		},
+		stopped:     make(chan struct{}),
 		cfg:         *cfg,
 		node:        node,
 		parallelism: runtime.GOMAXPROCS(0),
@@ -212,11 +220,11 @@ func New(cfg *Config) (*Controller, error) {
 // The run stops when a root or an agent of a root stops itself. It stops when the
 // controller of a cell stops itself after it served, unless a newer controller of the cell
 // has fenced it. A controller of a cell whose acquisition fails, and a controller that the
-// root drops, end without the run. Run always returns an error, because only an error
-// stops the run.
+// root drops, end without the run. Run returns nil once Close has stopped the run, and an
+// error after every other stop.
 //
 // Error modes:
-//   - ErrRun when Run has been called before.
+//   - ErrRun when Run has been called before, and after Close.
 //   - an error that wraps ErrConfig for a run without a spec, and for two specs of one
 //     namespace.
 //   - an error that wraps ErrConfig for a spec that the root refuses, such as a spec that
@@ -227,9 +235,17 @@ func New(cfg *Config) (*Controller, error) {
 //     it served.
 //   - an error that wraps the cause of ctx once ctx ends.
 func (c *Controller) Run(ctx context.Context, specs ...config.Spec) error {
-	if c.ran.Swap(true) {
+	c.mu.Lock()
+	if c.cancel != nil || c.closed {
+		c.mu.Unlock()
 		return ErrRun
 	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	c.cancel = cancel
+	c.mu.Unlock()
+	defer close(c.stopped)
+	//dokimi:mutate-skip sbr-delete: cancel releases the context of a run that has returned, which no caller reads
+	defer cancel(nil)
 	served, err := c.namespaces(specs)
 	if err != nil {
 		return err
@@ -243,7 +259,51 @@ func (c *Controller) Run(ctx context.Context, specs ...config.Spec) error {
 		//dokimi:mutate-skip sbr-zero: the group records each refusal of Go as its own error, so task.Run returns the same error without started
 		return started
 	})
+	if errors.Is(err, errClosed) {
+		return nil
+	}
 	return fmt.Errorf("controller: the run of %s stopped: %w", c.cfg.Node.ID, err)
+}
+
+// Close ends the session of the agent of the root of each namespace of the process, and then
+// stops the run. The view of each root then ends the incarnation of the process, and the root
+// places the cells of the process on the other controller processes. The controller of a cell
+// of the process runs until the run stops. Close leaves the root scopes at once, and ctx
+// bounds the leaves. Close returns once Run has returned, and Run then returns nil.
+//
+// A Close before Run makes a later Run return ErrRun. A Close after the end of the run
+// returns nil. An agent of the root without a session, such as an agent that does not serve
+// yet, has no session to end.
+//
+// Error modes:
+//   - an error that wraps the error of a Leave, and an error that wraps the cause of ctx when
+//     ctx ends before a Leave returns. Close stops the run in every case.
+func (c *Controller) Close(ctx context.Context) error {
+	c.mu.Lock()
+	c.closed = true
+	cancel := c.cancel
+	c.mu.Unlock()
+	if cancel == nil {
+		return nil
+	}
+	// A driver whose run the group refused never replies, so the leaves end once Run has
+	// returned.
+	leaves, stop := context.WithCancelCause(ctx)
+	go func() {
+		<-c.stopped
+		stop(driver.ErrStopped)
+	}()
+	served := *c.served.Load()
+	names := slices.Sorted(maps.Keys(served))
+	failures := make([]error, len(names))
+	var wg sync.WaitGroup
+	for i, ns := range names {
+		wg.Go(func() { failures[i] = served[ns].leave(leaves) })
+	}
+	wg.Wait()
+	cancel(errClosed)
+	<-c.stopped
+	return errors.Join(failures...)
 }
 
 // namespaces returns what the process runs for the namespace of each spec in specs.
