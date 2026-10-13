@@ -266,17 +266,20 @@ func (p *Process) Router(ns shard.Namespace) (*router.Watcher, bool) {
 	return w, w != nil
 }
 
-// Close moves the replicas of the node away through Agent.Close of every namespace at once,
-// then closes every router and stops the controller. The controller stops last, because it
-// can host the controller of the cell that admits the drains. ctx bounds the moves, and
-// requires a deadline. When ctx ends first, the replicas of the node fail over as after a
-// crash. A Close before Start stops nothing, and a later Start returns ErrStarted. A Close
-// after the end of the run returns nil.
+// Close moves the replicas of the node away through Agent.Close of every namespace at once.
+// It then ends the sessions of the process in the root scopes through Controller.Close, which
+// stops the controller, and then closes every router. The controller stops after the drains,
+// because it can host the controller of the cell that admits them. The roots then place the
+// cells of the process on the other processes without waiting for the sessions to expire.
+// ctx bounds the moves and the leaves, and requires a deadline. When ctx ends first, the
+// replicas of the node fail over as after a crash. A Close before Start stops nothing, and a
+// later Start returns ErrStarted. A Close after the end of the run returns nil.
 //
 // Error modes:
 //   - an error that wraps the error of Agent.Close of each namespace, such as replica.ErrConfig
 //     for a ctx without a deadline, or the cause of ctx when ctx ends before the replicas have
 //     moved.
+//   - an error that wraps the error of Controller.Close, such as the error of a Leave.
 //
 // Close returns once every goroutine of the process has returned.
 func (p *Process) Close(ctx context.Context) error {
@@ -293,16 +296,18 @@ func (p *Process) Close(ctx context.Context) error {
 		return nil
 	default:
 	}
-	drains := make([]error, len(p.cfg.Namespaces))
+	// The error of each drain, and the error of the leaves of the controller last.
+	closes := make([]error, len(p.cfg.Namespaces)+1)
 	var wg sync.WaitGroup
 	for i := range p.cfg.Namespaces {
 		a := p.agents[p.cfg.Namespaces[i].Spec.Namespace]
-		wg.Go(func() { drains[i] = a.Close(ctx) })
+		wg.Go(func() { closes[i] = a.Close(ctx) })
 	}
 	wg.Wait()
+	closes[len(p.cfg.Namespaces)] = p.controller.Close(ctx)
 	cancel()
 	<-p.done
-	if err := errors.Join(drains...); err != nil {
+	if err := errors.Join(closes...); err != nil {
 		return fmt.Errorf("embedded: the close of process %s: %w", p.cfg.Node.ID, err)
 	}
 	return nil

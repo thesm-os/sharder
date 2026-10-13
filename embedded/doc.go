@@ -25,9 +25,12 @@
 // The process runs until [Process.Close], until the context of Start ends, or until a
 // component stops itself, such as an agent after the root has created its namespace again.
 // The end of one component stops every component. Close moves the replicas of the node away
-// through the agent of each namespace, and then stops the routers and the controller.
-// [Process.Done] is closed once every goroutine of the process has returned. [Process.Err]
-// then returns the error that ended the run, or nil after a Close.
+// through the agent of each namespace. It then ends the sessions of the process in the root
+// scopes through controller.Controller.Close, which stops the controller, and stops the
+// routers. The roots then place the cells of the process on the other processes without
+// waiting for the sessions to expire. [Process.Done] is closed once every goroutine of the
+// process has returned. [Process.Err] then returns the error that ended the run, or nil after
+// a Close.
 //
 // # Errors
 //

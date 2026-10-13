@@ -323,6 +323,31 @@ func TestProcess(t *testing.T) {
 			})
 		})
 
+		t.Run("ends the session of the process in each root scope", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				s := newSystem(t)
+				s.start(t, nodeA)
+				b := s.start(t, nodeB)
+				ctx, cancel := context.WithTimeout(t.Context(), drainFor)
+				defer cancel()
+				assert.NoError(t, b.Close(ctx), "Close must end the sessions of the process")
+				for _, ns := range []shard.Namespace{orders, audits} {
+					rs := shard.Scope{Namespace: ns}
+					head, err := s.st.Head(t.Context(), rs)
+					assert.NoError(t, err, "the store returns the header of the root scope")
+					ended, stop := context.WithCancel(t.Context())
+					stop()
+					for v, err := range s.st.Membership().Watch(ended, rs, head.Incarnation) {
+						assert.NoError(t, err, "the membership returns the view of the root scope")
+						_, ok := v.Node(nodeB.ID)
+						expect.False(t, ok, "the view of the root must not list a process that has closed")
+						break
+					}
+				}
+			})
+		})
+
 		t.Run("returns nil before Start", func(t *testing.T) {
 			t.Parallel()
 			p := newSystem(t).build(t, nodeA)
