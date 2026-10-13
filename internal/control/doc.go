@@ -48,6 +48,12 @@
 //   - The end of a transition, while the bounds of the engine refused a move of the last
 //     plan.
 //
+// The input of a pass lists a fault of a shard for each node whose live incarnation reports
+// the replica of the shard with a permanent fault, or failed an add of the shard
+// definitively. The placer does not place a replica of the shard on such a node. The
+// Emergency of the input is true when a shard without a transition in flight has no writer
+// on a live node, or has its writer on a node with a fault of the shard.
+//
 // The Controller seeds the source of randomness of each pass from its placement.Snapshot,
 // so a recorded pass replays. It starts the move of each shard of a plan in the order of
 // the IDs of the shards. The source of a move has the incarnation that its placement

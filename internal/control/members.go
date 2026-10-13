@@ -17,6 +17,7 @@ import (
 	"go.thesmos.sh/sharder/membership"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
+	"go.thesmos.sh/sharder/store"
 )
 
 // The bounds of the backoff before the controller watches the views of its membership
@@ -38,6 +39,9 @@ type member struct {
 	// replicas maps each shard of the last accepted report to what the node reported about
 	// its replica, in the report. It is empty before the first report.
 	replicas *idmap.Map[shard.ID, *shard.Observed]
+	// refused contains each shard whose add on the incarnation of the node failed
+	// definitively.
+	refused *idmap.Map[shard.ID, struct{}]
 	// sequence is the Sequence of the last accepted report, and zero before the first. An
 	// agent numbers the reports of an incarnation from one.
 	sequence uint64
@@ -99,7 +103,11 @@ func (ms *members) apply(v *membership.View) ([]shard.NodeID, bool) {
 			continue
 		}
 		changed = true
-		nodes[n.ID] = &member{node: n, replicas: idmap.NewTyped128[shard.ID, *shard.Observed](0)}
+		nodes[n.ID] = &member{
+			node:     n,
+			replicas: idmap.NewTyped128[shard.ID, *shard.Observed](0),
+			refused:  idmap.NewTyped128[shard.ID, struct{}](0),
+		}
 	}
 	var ended []shard.NodeID
 	for nid, old := range ms.nodes {
@@ -140,14 +148,20 @@ func (ms *members) reported() bool {
 	return true
 }
 
-// faults returns each shard whose replica the live incarnation of its node reports with a
-// permanent fault, with those nodes in the order of their IDs.
+// faults returns each shard whose replica the live incarnation of a node reports with a
+// permanent fault, or whose add on the live incarnation of a node failed definitively. It
+// lists the nodes of each shard once, in the order of their IDs.
 func (ms *members) faults() map[shard.ID][]shard.NodeID {
 	faults := make(map[shard.ID][]shard.NodeID)
 	for i := range ms.view.Nodes {
 		mb := ms.nodes[ms.view.Nodes[i].ID]
 		for sid, o := range mb.replicas.All() {
 			if o.Fault == shard.FaultPermanent {
+				faults[sid] = append(faults[sid], mb.node.ID)
+			}
+		}
+		for sid := range mb.refused.All() {
+			if !mb.faulted(sid) {
 				faults[sid] = append(faults[sid], mb.node.ID)
 			}
 		}
@@ -232,6 +246,16 @@ func (c *Controller) viewed(ev *machine.Viewed, out []machine.Effect) ([]machine
 		out, err = c.trigger(out)
 	}
 	return out, true, err
+}
+
+// refuse takes the definite failure of the add of the shard sid on the endpoint at. Each
+// pass treats the replica of sid on the node of at as having a permanent fault until the
+// view ends the incarnation of at, so the pass places sid on another node. refuse ignores
+// an endpoint whose incarnation the view has ended already.
+func (c *Controller) refuse(sid shard.ID, at store.Endpoint) {
+	if mb, ok := c.members.at(at.Node, at.Incarnation); ok {
+		mb.refused.Set(sid, struct{}{})
+	}
 }
 
 // repairs reports whether a replica of the scope is on one of the nodes nodes, whose

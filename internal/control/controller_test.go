@@ -400,6 +400,12 @@ type model struct {
 	// owners maps each shard to the operation of each epoch that a transition of the shard
 	// has reserved.
 	owners map[shard.ID]map[epoch.Epoch]shard.OperationID
+	// refusals maps each shard to the incarnation of each node that refused an add of the
+	// shard.
+	refusals map[shard.ID]map[shard.NodeID]epoch.Epoch
+	// faulted maps each node to the shards that the last report of its live incarnation
+	// lists with a permanent fault.
+	faulted map[shard.NodeID]map[shard.ID]bool
 	// replies counts the replies of the controller to each call.
 	replies map[machine.ReplyToken]int
 	// sequences maps each node to the Sequence of the last report of its live incarnation.
@@ -431,6 +437,8 @@ func newModel(c *prop.Case) *model {
 		h:         newHarness(c),
 		reserved:  make(map[shard.ID]epoch.Epoch),
 		owners:    make(map[shard.ID]map[epoch.Epoch]shard.OperationID),
+		refusals:  make(map[shard.ID]map[shard.NodeID]epoch.Epoch),
+		faulted:   make(map[shard.NodeID]map[shard.ID]bool),
 		replies:   make(map[machine.ReplyToken]int),
 		sequences: make(map[shard.NodeID]uint64),
 		drained:   make(map[shard.NodeID]bool),
@@ -507,11 +515,13 @@ func (m *model) restart(c *prop.Case) {
 	m.nodes[i].Incarnation++
 	m.present[i] = true
 	m.sequences[m.nodes[i].ID] = 0
+	delete(m.faulted, m.nodes[i].ID)
 	m.view(c)
 }
 
 // report passes a report of a node of the view that c chooses. The report lists each replica
 // of the node in the scope as serving, and c chooses which of them have a permanent fault.
+// The model records the shards that the report lists with a fault.
 func (m *model) report(c *prop.Case) {
 	var live []shard.Node
 	for i, n := range m.nodes {
@@ -521,6 +531,7 @@ func (m *model) report(c *prop.Case) {
 	}
 	n := live[c.Draw(prop.Integer(0, len(live)-1), "node")]
 	var replicas []shard.Observed
+	faulted := make(map[shard.ID]bool)
 	for _, sid := range m.h.shardIDs(c) {
 		p := m.h.placements(c)[sid]
 		if !slices.ContainsFunc(p.Replicas, func(r shard.Replica) bool { return r.Node == n.ID }) {
@@ -529,10 +540,12 @@ func (m *model) report(c *prop.Case) {
 		o := healthy(sid)
 		if c.Draw(prop.Boolean(), "fault") {
 			o = faulty(sid)
+			faulted[sid] = true
 		}
 		o.Epoch = p.Epoch
 		replicas = append(replicas, o)
 	}
+	m.faulted[n.ID] = faulted
 	m.sequences[n.ID]++
 	m.h.step(c, m.h.report(&n, m.sequences[n.ID], replicas...))
 	m.h.run(c)
@@ -549,13 +562,20 @@ func (m *model) callbacks() []int {
 	return held
 }
 
-// answer passes a reply to a pending callback. c chooses the callback and the reply.
+// answer passes a reply to a pending callback. c chooses the callback and the reply. The
+// model records each add that the reply refuses.
 func (m *model) answer(c *prop.Case) {
 	held := m.callbacks()
 	i := held[c.Draw(prop.Integer(0, len(held)-1), "callback")]
 	err := c.Draw(prop.SampledFrom(answersOfAgents...), "answer")
 	if errors.Is(err, errRefused) {
 		c.Classify(labelDefinite)
+		if r := m.h.pending[i].(machine.Callback).Request; r.Call == protocol.Add {
+			if m.refusals[r.Shard] == nil {
+				m.refusals[r.Shard] = make(map[shard.NodeID]epoch.Epoch)
+			}
+			m.refusals[r.Shard][r.Node] = r.NodeIncarnation
+		}
 	}
 	m.finish(c, i, err)
 }
@@ -642,15 +662,32 @@ func (m *model) outages(c *prop.Case) {
 
 // complete ends every fault that remains. It ends the outage, passes a view of every node,
 // resumes the passes, undrains each drained node and ends the reservation of each
-// disruption. It then passes success as the result of each pending callback and ends each
-// Timer of a retry, until neither remains, so the retries use up every lost commit that a
-// step armed. It ends each Timer of the interval of the passes last.
+// disruption. A node has a fault of a shard when its live incarnation refused an add of the
+// shard or reported the shard with a permanent fault. complete restarts every node for a
+// shard without a writer while every node has a fault of the shard, because a pass does not
+// place such a shard. It then passes success as the result of each pending callback and
+// ends each Timer of a retry, until neither remains, so the retries use up every lost commit
+// that a step armed. It ends each Timer of the interval of the passes last.
 func (m *model) complete(c *prop.Case) {
 	if m.outage {
 		m.h.st.EndOutage()
 		m.outage = false
 	}
-	if slices.Contains(m.present, false) {
+	restart := false
+	for sid, p := range m.h.placements(c) {
+		blocked := !slices.ContainsFunc(m.nodes, func(n shard.Node) bool {
+			return m.refusals[sid][n.ID] != n.Incarnation && !m.faulted[n.ID][sid]
+		})
+		restart = restart || len(p.Replicas) == 0 && blocked
+	}
+	if restart {
+		for i := range m.nodes {
+			m.nodes[i].Incarnation++
+			m.sequences[m.nodes[i].ID] = 0
+			delete(m.faulted, m.nodes[i].ID)
+		}
+	}
+	if restart || slices.Contains(m.present, false) {
 		for i := range m.present {
 			m.present[i] = true
 		}

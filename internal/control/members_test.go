@@ -6,6 +6,8 @@ package control_test
 import (
 	"encoding/json"
 	"errors"
+	"maps"
+	"slices"
 	"testing"
 	"time"
 
@@ -417,6 +419,151 @@ func TestMembers(t *testing.T) {
 			assert.Length(t, h.plans, 2, "a fault that the node reported before must not start another pass")
 		})
 	})
+
+	t.Run("Called", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("passes the node of an add that fails definitively as a fault of its shard", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.answer = refuses(nodeA)
+			h.view(t, nodeA, nodeB)
+			assert.True(t, len(h.plans) > 1, "the moves that end without a writer must start a pass")
+			faults := h.plans[1].Input.Faults
+			assert.NotEmpty(t, faults, "the second pass must have the faults of the refused adds")
+			for sid, nodes := range faults {
+				expect.Equal(
+					t,
+					nodes,
+					[]shard.NodeID{nodeA.ID},
+					"the node of the refused add must be the fault of "+sid.String(),
+				)
+			}
+		})
+
+		t.Run("places a shard on another node after its add fails definitively", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.answer = refuses(nodeA)
+			h.view(t, nodeA, nodeB)
+			assert.Equal(t, h.writers(t)[nodeB.ID], shards, "every shard must move to the node that did not refuse it")
+		})
+
+		t.Run("sends no add again to the incarnation that refused it", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.answer = refuses(nodeA)
+			h.view(t, nodeA)
+			assert.Length(t, h.sent, shards, "the controller must send one add of each shard")
+		})
+
+		t.Run("places a shard on the next incarnation of a node that refused its add", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.answer = refuses(nodeA)
+			h.view(t, nodeA)
+			h.answer = nil
+			h.view(t, restarted(nodeA))
+			assert.Equal(t, h.writers(t)[nodeA.ID], shards, "the next incarnation of the node must take every shard")
+		})
+
+		t.Run("places a shard on the node of an add that the view ended", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.pause = func(e machine.Effect) bool {
+				cb, ok := e.(machine.Callback)
+				return ok && cb.Request.NodeIncarnation == nodeA.Incarnation
+			}
+			h.view(t, nodeA)
+			h.view(t, restarted(nodeA))
+			assert.Equal(t, h.writers(t)[nodeA.ID], shards,
+				"the add that the view ended must not keep the shard off the next incarnation")
+		})
+
+		t.Run("keeps the fault of an add that failed definitively after the shard has a writer", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.answer = refuses(nodeA)
+			h.view(t, nodeA, nodeB)
+			h.elapse(t, interval)
+			assert.True(t, len(h.plans) > 1, "the moves that end without a writer must start a pass")
+			first, latest := h.plans[1].Input.Faults, h.plans[len(h.plans)-1].Input.Faults
+			assert.NotEmpty(t, first, "the second pass must have the faults of the refused adds")
+			for sid, nodes := range first {
+				expect.Equal(
+					t,
+					latest[sid],
+					nodes,
+					"the periodic pass must have the fault of the refused add of "+sid.String(),
+				)
+			}
+		})
+
+		t.Run("does not make a pass an emergency for the fault of an add that failed definitively", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.answer = refuses(nodeA)
+			h.view(t, nodeA, nodeB)
+			h.elapse(t, interval)
+			assert.False(t, h.plans[len(h.plans)-1].Input.Emergency,
+				"a fault of a node without the replica of its shard must not be an emergency")
+		})
+
+		t.Run("sends no add again to the incarnation that refused it while the shard has another writer",
+			func(t *testing.T) {
+				t.Parallel()
+				h := served(t)
+				h.answer = refuses(nodeC)
+				h.view(t, nodeA, nodeB, nodeC)
+				for range shards {
+					h.elapse(t, interval)
+				}
+				var added []shard.ID
+				for _, r := range h.sent {
+					if r.Call == protocol.Add && r.Node == nodeC.ID {
+						added = append(added, r.Shard)
+					}
+				}
+				assert.NotEmpty(t, added, "the join must start a move to the node")
+				assert.NoDuplicates(t, func() ([]shard.ID, error) { return added, nil },
+					"the controller must send one add of each shard to the node that refuses it")
+			})
+
+		t.Run("lists a node once for a refused shard that the node reports with a permanent fault",
+			func(t *testing.T) {
+				t.Parallel()
+				h := newHarness(t)
+				h.start(t)
+				h.answer = refuses(nodeA)
+				h.view(t, nodeA, nodeB)
+				assert.True(t, len(h.plans) > 1, "the moves that end without a writer must start a pass")
+				faults := h.plans[1].Input.Faults
+				assert.NotEmpty(t, faults, "the second pass must have the faults of the refused adds")
+				sid := slices.MinFunc(slices.Collect(maps.Keys(faults)), shard.ID.Compare)
+				h.step(t, h.report(&nodeA, 1, faulty(sid)))
+				h.run(t)
+				assert.Equal(t, h.plans[len(h.plans)-1].Input.Faults[sid], []shard.NodeID{nodeA.ID},
+					"the pass must list the node of a refused add and a reported fault once")
+			})
+	})
+}
+
+// refuses returns an answer that returns errRefused for every add on the incarnation of n,
+// and nil for every other callback.
+func refuses(n shard.Node) func(r *protocol.Request) error {
+	return func(r *protocol.Request) error {
+		if r.Call == protocol.Add && r.Node == n.ID && r.NodeIncarnation == n.Incarnation {
+			return errRefused
+		}
+		return nil
+	}
 }
 
 // quiet sets the planner of the spec to the goal count without a pass on a change of the

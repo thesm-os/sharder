@@ -279,19 +279,18 @@ func (c *Controller) input() *placement.Input {
 }
 
 // emergency reports whether a shard of in without a transition in flight has no writer on
-// a live node, or a replica that in.Faults lists. The writer of a shard without one is the
-// zero Replica, whose node the view does not have.
+// a live node, or a writer on a node that in.Faults lists for the shard. The writer of a
+// shard without one is the zero Replica, whose node the view does not have. A fault on a
+// node without a replica of the shard is not an emergency. The faults of refused adds are
+// on such nodes.
 func (c *Controller) emergency(in *placement.Input) bool {
-	if len(in.Faults) > 0 {
-		return true
-	}
 	for _, s := range in.Layout.Shards {
 		if _, ok := in.Transitions[s.ID]; ok {
 			continue
 		}
 		p := in.Current.Placements[s.ID]
 		w, _ := writer(&p, c.spec.writer)
-		if _, live := c.members.live(w.Node); !live {
+		if _, live := c.members.live(w.Node); !live || slices.Contains(in.Faults[s.ID], w.Node) {
 			return true
 		}
 	}

@@ -605,6 +605,7 @@ func (c *Controller) acquired(snap *scope.Snapshot, out []machine.Effect) ([]mac
 			Rand:        c.rand,
 			Tokens:      c.tokens,
 			Fits:        c.fits,
+			Refused:     c.refuse,
 			Scope:       c.scopeOf,
 			Term:        c.term,
 			Incarnation: c.incarnation,
