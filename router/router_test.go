@@ -369,13 +369,27 @@ func BenchmarkRouter(b *testing.B) {
 	served := func(router.Route) error { return nil }
 
 	b.Run("Do", func(b *testing.B) {
-		var err error
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-		for c.Loop() {
-			err = router.Do(ctx, w, key, 1, served)
-		}
-		assert.NoError(b, err, "the benchmark must measure a call that the server serves")
+		b.Run("serial", func(b *testing.B) {
+			var err error
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+			for c.Loop() {
+				err = router.Do(ctx, w, key, 1, served)
+			}
+			assert.NoError(b, err, "the benchmark must measure a call that the server serves")
+		})
+
+		b.Run("parallel", func(b *testing.B) {
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+			c.RunParallel(func(pb *bench.PB) {
+				var err error
+				for pb.Next() {
+					err = router.Do(ctx, w, key, 1, served)
+				}
+				expect.NoError(b, err, "the benchmark must measure a call that the server serves")
+			})
+		})
 	})
 }
 

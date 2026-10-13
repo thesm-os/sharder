@@ -539,16 +539,42 @@ func BenchmarkWatcher(b *testing.B) {
 	ctx, key := b.Context(), f.keys[0]
 
 	b.Run("Route", func(b *testing.B) {
-		var res router.RouteResult
-		var err error
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-		for c.Loop() {
-			req := router.RouteRequest{Key: key}
-			res, err = w.Route(ctx, &req)
-		}
-		assert.NoError(b, err, "the benchmark must measure the route of a placed shard")
-		assert.Equal(b, res.Route.Epoch, firstEpoch, "the benchmark must measure the route of a placed shard")
+		b.Run("serial", func(b *testing.B) {
+			var res router.RouteResult
+			var err error
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+			for c.Loop() {
+				req := router.RouteRequest{Key: key}
+				res, err = w.Route(ctx, &req)
+			}
+			assert.NoError(b, err, "the benchmark must measure the route of a placed shard")
+			assert.Equal(b, res.Route.Epoch, firstEpoch, "the benchmark must measure the route of a placed shard")
+		})
+
+		b.Run("parallel", func(b *testing.B) {
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+			c.RunParallel(func(pb *bench.PB) {
+				var res router.RouteResult
+				var err error
+				routed := 0
+				for pb.Next() {
+					req := router.RouteRequest{Key: key}
+					res, err = w.Route(ctx, &req)
+					routed++
+				}
+				if routed > 0 {
+					expect.NoError(b, err, "the benchmark must measure the route of a placed shard")
+					expect.Equal(
+						b,
+						res.Route.Epoch,
+						firstEpoch,
+						"the benchmark must measure the route of a placed shard",
+					)
+				}
+			})
+		})
 	})
 }
 
