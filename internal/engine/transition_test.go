@@ -8,6 +8,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
+	"go.thesmos.sh/core/epoch"
 
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
@@ -96,6 +97,37 @@ func TestTransition(t *testing.T) {
 			assert.Length(t, m.Put, 1, "the batch must put the placement")
 			expect.Equal(t, m.Put[0].Replicas, []shard.Replica{primaryB}, "the destination must be the writer")
 			expect.Equal(t, m.Put[0].Epoch, newEpoch, "the writer must have the new epoch")
+		})
+
+		t.Run("commits the incarnation of the destination with the writer", func(t *testing.T) {
+			t.Parallel()
+			p := placement(1, nodeA)
+			later := restarted(nodeA)
+			h := newHarness(t, []shard.Placement{p})
+			h.view(t, later, nodeB)
+			h.start(t, moveOf(p, nodeA, later, shard.Node{}))
+			h.drain(t)
+			got := h.placement(t, p.Shard)
+			expect.Equal(
+				t,
+				got.Replicas,
+				[]shard.Replica{primaryA},
+				"the later incarnation of the node must be the writer",
+			)
+			expect.Equal(t, got.Incarnation, later.Incarnation,
+				"the placement must record the incarnation of the destination")
+		})
+
+		t.Run("commits the zero incarnation without a writer", func(t *testing.T) {
+			t.Parallel()
+			p := placement(1, nodeA)
+			h := newHarness(t, []shard.Placement{p})
+			h.view(t, nodeA, nodeB)
+			h.answer = refuse(protocol.Add, nodeB.ID)
+			h.start(t, moveOf(p, nodeA, nodeB, shard.Node{}))
+			h.drain(t)
+			assert.Equal(t, h.placement(t, p.Shard).Incarnation, epoch.Zero,
+				"a placement without a writer must have the zero incarnation")
 		})
 
 		t.Run("keeps the replicas on nodes outside the move", func(t *testing.T) {

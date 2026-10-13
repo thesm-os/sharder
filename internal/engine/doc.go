@@ -18,7 +18,9 @@
 // sequence of the move, and scripts the move with its handoff.Protocol. It checks the
 // script with handoff.Script.Validate. The first batch of a transition commits its record,
 // and the Engine then runs the steps of the script in order. It sends a callback for an
-// add or a drop, and a commit step joins the next batch. After each step, the next batch
+// add or a drop, and a commit step joins the next batch. A commit step makes the node of
+// its side the writer of the placement, at the epoch of the side. The placement then
+// records the incarnation of the endpoint of that side. After each step, the next batch
 // commits the next step of the record, so a new controller continues the transition with
 // [Engine.Resume].
 //
@@ -97,7 +99,7 @@
 //
 // # Dependency position
 //
-// engine imports the standard library, the packages clock, epoch, errs, fsm, rand and
-// resilience of go.thesmos.sh/core, and the packages handoff, internal/machine,
+// engine imports the standard library, the packages clock, epoch, errs, fsm, idmap, rand
+// and resilience of go.thesmos.sh/core, and the packages handoff, internal/machine,
 // membership, protocol, shard and store of go.thesmos.sh/sharder.
 package engine

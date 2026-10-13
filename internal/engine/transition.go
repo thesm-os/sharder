@@ -158,19 +158,21 @@ func (t *transition) involves(n shard.NodeID) bool {
 
 // commit changes the placement of t to the placement that a commit step on the side s
 // commits. The replicas on the nodes of the sides of t leave the placement, and the
-// replica of s joins it at the epoch of s. For the zero Side, the placement has no
-// assigned writer and the zero epoch.
+// replica of s joins it as the writer at the epoch of s. The placement records the
+// incarnation of the endpoint of s. For the zero Side, the placement has no assigned
+// writer, the zero epoch and the zero incarnation.
 func (t *transition) commit(s handoff.Side) {
+	ep := t.endpoint(s)
 	replicas := make([]shard.Replica, 0, len(t.placement.Replicas)+1)
 	for _, r := range t.placement.Replicas {
 		if !t.involves(r.Node) {
 			replicas = append(replicas, r)
 		}
 	}
-	if ep := t.endpoint(s); ep.Node != "" {
+	if ep.Node != "" {
 		replicas = append(replicas, shard.Replica{Node: ep.Node, Role: ep.Role})
 	}
-	t.placement.Replicas, t.placement.Epoch = replicas, t.epoch(s)
+	t.placement.Replicas, t.placement.Epoch, t.placement.Incarnation = replicas, t.epoch(s), ep.Incarnation
 	t.put = true
 }
 

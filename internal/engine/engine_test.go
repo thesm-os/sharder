@@ -1699,17 +1699,18 @@ func settings(tb assert.TB) engine.Settings {
 	}
 }
 
-// placement returns the placement of the shard n of the tests on the node on, at the
-// epoch, the reserved epoch and the sequence placed.
+// placement returns the placement of the shard n of the tests with its writer on the
+// incarnation of the node on, at the epoch, the reserved epoch and the sequence placed.
 func placement(n int, on shard.Node) shard.Placement {
 	pos := binary.BigEndian.AppendUint32(nil, uint32(n))
 	return shard.Placement{
-		Shard:    shard.ID{ID128: id.ID128{0: tagShard, 12: pos[0], 13: pos[1], 14: pos[2], 15: pos[3]}},
-		Range:    shard.Range{Start: pos},
-		Replicas: []shard.Replica{{Node: on.ID, Role: shard.RolePrimary}},
-		Epoch:    placed,
-		Reserved: placed,
-		Sequence: uint64(placed),
+		Shard:       shard.ID{ID128: id.ID128{0: tagShard, 12: pos[0], 13: pos[1], 14: pos[2], 15: pos[3]}},
+		Range:       shard.Range{Start: pos},
+		Replicas:    []shard.Replica{{Node: on.ID, Role: shard.RolePrimary}},
+		Epoch:       placed,
+		Incarnation: on.Incarnation,
+		Reserved:    placed,
+		Sequence:    uint64(placed),
 	}
 }
 

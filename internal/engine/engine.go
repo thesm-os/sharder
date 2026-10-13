@@ -14,6 +14,7 @@ import (
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/fsm"
+	"go.thesmos.sh/core/idmap"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/resilience"
 
@@ -175,7 +176,7 @@ type Engine struct {
 	// fits returns nil when one commit can apply a mutation.
 	fits func(m *store.Mutation) error
 	// transitions maps the shard of each transition in flight to the transition.
-	transitions map[shard.ID]*transition
+	transitions *idmap.Map[shard.ID, *transition]
 	// waits maps the token of each callback and Timer in flight to its transition.
 	waits map[machine.Token]*transition
 	// nodes maps each node that a callback has addressed to its permits and its queue.
@@ -246,7 +247,7 @@ func New(cfg *Config) (*Engine, error) {
 		retrier:            retrier,
 		tokens:             cfg.Tokens,
 		fits:               cfg.Fits,
-		transitions:        make(map[shard.ID]*transition),
+		transitions:        idmap.NewTyped128[shard.ID, *transition](0),
 		waits:              make(map[machine.Token]*transition),
 		nodes:              make(map[shard.NodeID]*node),
 		scope:              cfg.Scope,
@@ -273,7 +274,7 @@ func New(cfg *Config) (*Engine, error) {
 //     refuses an event.
 func (e *Engine) Start(m *Move) (bool, error) {
 	id := m.Placement.Shard
-	if _, ok := e.transitions[id]; ok {
+	if _, ok := e.transitions.Get(id); ok {
 		return false, fmt.Errorf("%w: shard %v has a transition in flight", ErrMove, id)
 	}
 	if len(e.order) >= e.maxTransitions || e.full(m) {
@@ -348,7 +349,7 @@ func (e *Engine) Resume(rec *store.Transition, p *shard.Placement, out []machine
 	if err != nil {
 		return out, fmt.Errorf("%w: shard %v has the phase %v: %w", ErrProtocol, id, rec.Phase, err)
 	}
-	if _, ok := e.transitions[id]; ok {
+	if _, ok := e.transitions.Get(id); ok {
 		return out, fmt.Errorf("%w: shard %v has a second record", ErrRecord, id)
 	}
 	script, err := e.protocol.Script(
@@ -492,7 +493,7 @@ func (e *Engine) Applied(out []machine.Effect) ([]machine.Effect, error) {
 			out = e.begin(t, out)
 			continue
 		}
-		delete(e.transitions, t.record.Operation.Shard)
+		e.transitions.Delete(t.record.Operation.Shard)
 		e.order = slices.DeleteFunc(e.order, func(o *transition) bool { return o == t })
 	}
 	return out, e.fault
@@ -516,7 +517,7 @@ func (e *Engine) Inbound(n shard.NodeID, roles []shard.Role) int {
 
 // add adds t to the transitions in flight.
 func (e *Engine) add(t *transition) {
-	e.transitions[t.record.Operation.Shard] = t
+	e.transitions.Set(t.record.Operation.Shard, t)
 	e.order = append(e.order, t)
 }
 
