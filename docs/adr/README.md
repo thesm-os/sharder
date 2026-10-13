@@ -44,3 +44,7 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0033](0033-placement-records-the-writer-incarnation.md) | A placement records the incarnation of its writer | Accepted |
 | [0034](0034-replica-declares-the-agent-of-the-matrix.md) | Package replica declares the agent of the support matrix in the form of the interfaces standard | Accepted |
 | [0035](0035-router-declares-the-router-of-the-matrix.md) | Package router declares the router of the support matrix in the form of the interfaces standard | Accepted |
+| [0036](0036-local-routes-controller-calls-by-address.md) | The local transport routes the calls of a controller by the address in the record of the cell | Accepted |
+| [0037](0037-replica-separates-new-and-start.md) | Package replica constructs an agent with New and starts it with Agent.Start | Accepted |
+| [0038](0038-example-programs-are-one-file.md) | An example keeps its program in main.go and its application in a package under internal | Superseded by [0039](0039-example-applications-are-in-main.md) |
+| [0039](0039-example-applications-are-in-main.md) | An example keeps its application in main.go, and examples/internal keeps the storage that the examples share | Accepted |

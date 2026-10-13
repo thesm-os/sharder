@@ -15,7 +15,7 @@ The repository has five Go modules. The root module is the library, and the othe
 | `go.thesmos.sh/sharder/etcd` | `etcd/` | `store.Store` and `membership.Membership` over etcd | The root module and the etcd client |
 | `go.thesmos.sh/sharder/httptransport` | `httptransport/` | The clients of the protocol, and an HTTP/2 handler that calls its servers | The root module |
 | `go.thesmos.sh/sharder/cmd` | `cmd/` | `sharderctl` | The root module, `etcd` and `httptransport` |
-| `go.thesmos.sh/sharder/examples` | `examples/` | One example per preset of the support matrix, and an example of two processes over etcd | The root module, `etcd` and `httptransport` |
+| `go.thesmos.sh/sharder/examples` | `examples/` | One example per preset and per topology of the support matrix | The root module and `go.thesmos.sh/core`. Its tests also require `go.dokimi.dev/assert` |
 
 Each backend is a module of its own, so the module graph of an application contains only the backends that it imports. The tree does not contain a `grpc` module, a `sharderd` program or a `membership/static` package, because the support matrix does not contain the gRPC transport, the `service` topology or a static membership.
 
@@ -73,8 +73,9 @@ A package may import the packages in its row, and every package that those packa
 | Package | Contains | Imports from sharder |
 |---|---|---|
 | `controller` | `Controller` with its `Config`, and the errors of a controller process | `shard`, `config`, `proposal`, `budget`, `store`, `membership`, `protocol` and its internal packages |
-| `replica` | `Agent` with its `Config`, `Handler` with its requests and results, `LoadReporter`, and the errors of an agent | `shard`, `config`, `fence`, `store`, `membership`, `protocol` and its internal packages |
+| `replica` | `Agent` with its `Config`, `Handler` with its requests and results, `Runner` with its `Opener`, `LoadReporter`, and the errors of an agent | `shard`, `config`, `fence`, `store`, `membership`, `protocol` and its internal packages |
 | `router` | `Router` with its requests and results, `Watcher` with its `Config`, `Do`, `NotOwnerError`, and the errors of a router | `shard`, `config`, `store`, `membership` and its internal packages |
+| `embedded` | `Process` with its `Config` and its `Namespace`, the `Transport` of a process, and the errors of a process | `shard`, `config`, `fence`, `store`, `membership`, `protocol`, `controller`, `replica` and `router` |
 | `sim` | The deterministic simulator, with its scheduler, faults, safety properties and crash points | Every package of the root module |
 
 ## Internal packages
@@ -102,7 +103,7 @@ Each internal package has at least two callers, so the logic that two components
 - `etcd/` contains package `etcd`. Its `internal/keys` declares the key layout, and its `internal/txn` builds each transaction and computes `Fits`. Its tests run real etcd servers through etcd's `embed` package, with a proxy that drops a connection before or after a commit applies.
 - `httptransport/` contains package `httptransport`, with the framing of each family of calls in a file of its own.
 - `cmd/sharderctl/` is a package `main`. `cmd/internal/ctl` contains the commands, so that tests run them in-process.
-- `examples/` contains one directory per preset of the support matrix: `exclusiveworker/`, `consumergroup/`, `actorentities/` and `leaderelection/`. `examples/twoprocess/` runs two processes over etcd, and `examples/internal/fencedstore` contains the fenced storage that the examples share.
+- `examples/` contains one directory per example. The key of each directory is the kind of the example and the registered name that it shows: `preset-actor-entities/`, `preset-consumer-group/`, `preset-exclusive-worker/`, `preset-leader-election/` and `topology-embedded/`. Each directory contains the program in `main.go` and its test in `main_test.go`. The program contains the application of the example. `examples/internal/fencedstore` is the fenced storage that the examples share.
 
 ## Import rules
 
