@@ -28,7 +28,8 @@
 // its retries, or at once when it fails definitively. A failed step of an abort path runs
 // again after [RetryMax], and a definite failure abandons the abort path. An abandoned
 // transition ends without an assigned writer. Its last batch commits the placement of the
-// shard without the replicas of the nodes of the move.
+// shard without the replicas of the nodes of the move. Config.Refused receives the shard and
+// the endpoint of each add that fails definitively.
 //
 // # Lifecycle
 //

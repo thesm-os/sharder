@@ -94,6 +94,13 @@ type Config struct {
 	// Fits returns nil when one commit can apply the mutation m, as store.Store.Fits does
 	// for the scope of the transitions.
 	Fits func(m *store.Mutation) error
+	// Refused receives the shard sid and the endpoint at of each add that fails
+	// definitively. The Engine calls it during the call that fails the add. An add fails
+	// definitively in these cases:
+	//   - A later incarnation of the node refused the add.
+	//   - The view has ended the incarnation of the endpoint.
+	//   - The handler of the node returned an error that a retry cannot fix.
+	Refused func(sid shard.ID, at store.Endpoint)
 	// Scope is the scope of the transitions.
 	Scope shard.Scope
 	// Settings are the settings that a new version of the spec changes.
@@ -113,6 +120,9 @@ func (c *Config) validate() error {
 	}
 	if c.Fits == nil {
 		return fmt.Errorf("%w: no bound of a commit", ErrConfig)
+	}
+	if c.Refused == nil {
+		return fmt.Errorf("%w: no receiver of the refused adds", ErrConfig)
 	}
 	if c.Scope.Namespace == "" {
 		return fmt.Errorf("%w: no namespace", ErrConfig)
@@ -175,6 +185,8 @@ type Engine struct {
 	tokens *machine.Token
 	// fits returns nil when one commit can apply a mutation.
 	fits func(m *store.Mutation) error
+	// refused receives each add that fails definitively.
+	refused func(sid shard.ID, at store.Endpoint)
 	// transitions maps the shard of each transition in flight to the transition.
 	transitions *idmap.Map[shard.ID, *transition]
 	// waits maps the token of each callback and Timer in flight to its transition.
@@ -215,7 +227,7 @@ type Engine struct {
 //
 // Error modes:
 //   - an error that wraps ErrConfig for a nil cfg, and for a cfg without Tokens,
-//     Protocol, Fits, the namespace of Scope, Incarnation or Term.
+//     Protocol, Fits, Refused, the namespace of Scope, Incarnation or Term.
 //   - an error that wraps ErrConfig for a negative LockDelay, and for a MaxTransitions, a
 //     MaxNodeTransitions or a NodeCallbacks below one.
 //   - an error that wraps ErrConfig and the error of resilience.NewRetrier for a cfg
@@ -247,6 +259,7 @@ func New(cfg *Config) (*Engine, error) {
 		retrier:            retrier,
 		tokens:             cfg.Tokens,
 		fits:               cfg.Fits,
+		refused:            cfg.Refused,
 		transitions:        idmap.NewTyped128[shard.ID, *transition](0),
 		waits:              make(map[machine.Token]*transition),
 		nodes:              make(map[shard.NodeID]*node),
@@ -676,8 +689,12 @@ func (e *Engine) complete(t *transition) {
 // it to out. Fail moves a running transition to its abort path, and keeps a transition on
 // its abort path in its phase. A failed step of the script starts its abort path. A
 // definite failure of a step of an abort path abandons the transition. A step of an abort
-// path whose round of attempts failed runs again after RetryMax.
+// path whose round of attempts failed runs again after RetryMax. Config.Refused receives
+// each add that fails definitively.
 func (e *Engine) fail(t *transition, f failure, out []machine.Effect) []machine.Effect {
+	if step := t.step(); f == definite && step.Action == handoff.Add {
+		e.refused(t.record.Operation.Shard, t.endpoint(step.Side))
+	}
 	from := t.phase.State()
 	if phase := e.fire(t, &t.phase, handoff.Fail); phase != from {
 		t.record.Phase, t.record.Failed, t.record.Step = phase, t.record.Step, 0

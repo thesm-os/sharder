@@ -188,6 +188,14 @@ var (
 	}
 )
 
+// refusalOf is an add that failed definitively, as Config.Refused receives it.
+type refusalOf struct {
+	// at is the endpoint of the add.
+	at store.Endpoint
+	// sid is the shard of the add.
+	sid shard.ID
+}
+
 // testCase is the test, or the case of a property, that a harness runs in.
 type testCase interface {
 	assert.TB
@@ -226,6 +234,8 @@ type harness struct {
 	waits []time.Duration
 	// batches lists every batch that applied, in order.
 	batches []*store.Mutation
+	// refusals lists every add that the Engine reported as failed definitively, in order.
+	refusals []refusalOf
 	// tokens is the counter of the tokens of the machine of the Engine.
 	tokens machine.Token
 	// seq is the Seq of the last commit to the store.
@@ -253,6 +263,7 @@ func newHarness(tb testCase, ps []shard.Placement, opts ...func(*setup)) *harnes
 	h := &harness{st: memory.New(fake.New(origin)), tokens: taken}
 	tb.Cleanup(func() { assert.NoError(tb, h.st.Close(), "the store must close") })
 	s.cfg.Tokens = &h.tokens
+	s.cfg.Refused = func(sid shard.ID, at store.Endpoint) { h.refusals = append(h.refusals, refusalOf{at: at, sid: sid}) }
 	s.cfg.Fits = s.fits
 	if s.fits == nil {
 		s.cfg.Fits = func(m *store.Mutation) error { return h.st.Fits(cellScope, m) }
@@ -341,6 +352,10 @@ func TestEngine(t *testing.T) {
 				give: func(c *engine.Config) { c.Fits = nil },
 			},
 			{
+				name: "returns ErrConfig for a config without a receiver of the refused adds",
+				give: func(c *engine.Config) { c.Refused = nil },
+			},
+			{
 				name: "returns ErrConfig for a config without a namespace",
 				give: func(c *engine.Config) { c.Scope.Namespace = "" },
 			},
@@ -379,6 +394,7 @@ func TestEngine(t *testing.T) {
 					Rand:        constant.FromFloat64(half),
 					Tokens:      &tokens,
 					Fits:        func(*store.Mutation) error { return nil },
+					Refused:     func(shard.ID, store.Endpoint) {},
 					Scope:       cellScope,
 					Term:        term,
 					Incarnation: incA,
@@ -853,6 +869,61 @@ func TestEngine(t *testing.T) {
 			expect.Empty(t, h.records(t), "the end of the transition must remove its record")
 		})
 
+		t.Run("reports the destination of an add that fails definitively", func(t *testing.T) {
+			t.Parallel()
+			p := placement(1, nodeA)
+			h := newHarness(t, []shard.Placement{p})
+			h.view(t, nodeA, nodeB, nodeC)
+			h.answer = refuse(protocol.Add, nodeB.ID)
+			h.start(t, moveOf(p, nodeA, nodeB, nodeC))
+			h.drain(t)
+			assert.Equal(t, h.refusals, []refusalOf{{at: endpoint(nodeB), sid: p.Shard}},
+				"the Engine must report the destination of the refused add")
+		})
+
+		t.Run("reports the fallback of an abort path whose add fails definitively", func(t *testing.T) {
+			t.Parallel()
+			p := placement(1, nodeA)
+			h := newHarness(t, []shard.Placement{p})
+			h.view(t, nodeA, nodeB, nodeC)
+			h.answer = refuse(protocol.Add, "")
+			h.start(t, moveOf(p, nodeA, nodeB, nodeC))
+			h.drain(t)
+			assert.Equal(
+				t,
+				h.refusals,
+				[]refusalOf{{at: endpoint(nodeB), sid: p.Shard}, {at: endpoint(nodeC), sid: p.Shard}},
+				"the Engine must report the destination and then the fallback",
+			)
+		})
+
+		t.Run("does not report a drop that fails definitively", func(t *testing.T) {
+			t.Parallel()
+			p := placement(1, nodeA)
+			h := newHarness(t, []shard.Placement{p})
+			h.view(t, nodeA, nodeB)
+			h.answer = refuse(protocol.Drop, nodeA.ID)
+			h.start(t, moveOf(p, nodeA, nodeB, nodeA))
+			h.drain(t)
+			assert.Empty(t, h.refusals, "the Engine must report only a refused add")
+		})
+
+		t.Run("does not report an add that fails after its attempts", func(t *testing.T) {
+			t.Parallel()
+			p := placement(1, nodeA)
+			h := newHarness(t, []shard.Placement{p})
+			h.view(t, nodeA, nodeB, nodeC)
+			h.answer = func(r *protocol.Request) error {
+				if r.Call == protocol.Add && r.Node == nodeB.ID {
+					return protocol.ErrUnreachable
+				}
+				return nil
+			}
+			h.start(t, moveOf(p, nodeA, nodeB, nodeC))
+			h.drain(t)
+			assert.Empty(t, h.refusals, "an add that a retry could fix must not be reported")
+		})
+
 		t.Run("runs a step of an abort path again after RetryMax", func(t *testing.T) {
 			t.Parallel()
 			p := placement(1, nodeA)
@@ -1088,6 +1159,20 @@ func TestEngine(t *testing.T) {
 			h.drain(t)
 			expect.Equal(t, h.placement(t, p.Shard).Replicas, []shard.Replica{primaryC},
 				"the abort path must make the fallback the writer")
+		})
+
+		t.Run("reports an add whose node has ended the incarnation", func(t *testing.T) {
+			t.Parallel()
+			p := placement(1, nodeA)
+			h := newHarness(t, []shard.Placement{p})
+			h.view(t, nodeA, nodeB, nodeC)
+			h.start(t, moveOf(p, nodeA, nodeB, nodeC))
+			h.flush(t)
+			h.answerOne(t)
+			h.flush(t)
+			h.view(t, nodeA, restarted(nodeB), nodeC)
+			assert.Equal(t, h.refusals, []refusalOf{{at: endpoint(nodeB), sid: p.Shard}},
+				"the Engine must report the add on the ended incarnation")
 		})
 
 		t.Run("cancels the retry of a callback whose node has ended the incarnation", func(t *testing.T) {
