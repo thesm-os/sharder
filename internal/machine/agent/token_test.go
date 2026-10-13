@@ -106,7 +106,7 @@ func TestToken(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Acquire); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Acquire); return ok }
 			h.place(t, shardA, firstEpoch)
 			h.do(t, h.request(protocol.Add, shardA, 1, firstEpoch))
 			_, err := h.machine.Token(shardA)
@@ -117,7 +117,7 @@ func TestToken(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
 			h.place(t, shardA, secondEpoch)
 			h.do(t, h.request(protocol.Add, shardA, 1, secondEpoch))
 			got, err := h.machine.Token(shardA)

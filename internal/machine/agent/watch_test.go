@@ -17,6 +17,9 @@ import (
 	"go.thesmos.sh/sharder/store"
 )
 
+// thirdNode is a node of the cell other than the node of the tests and otherNode.
+const thirdNode shard.NodeID = "node-c"
+
 // TestWatch checks the state of the scope of its cell that an agent keeps.
 func TestWatch(t *testing.T) {
 	t.Parallel()
@@ -66,13 +69,13 @@ func TestWatch(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
-			h.held = func(e machine.Effect) bool { r, ok := e.(machine.Read); return ok && r.Scope == cellScope }
+			h.pause = func(e machine.Effect) bool { r, ok := e.(machine.Read); return ok && r.Scope == cellScope }
 			h.compact(t)
 			i := slices.IndexFunc(h.pending, func(e machine.Effect) bool { _, ok := e.(machine.Read); return ok })
 			assert.True(t, i >= 0, "the agent must read a snapshot after the compaction")
 			read := h.perform(t, h.pending[i])
 			h.pending = slices.Delete(h.pending, i, i+1)
-			h.held = nil
+			h.pause = nil
 			op := shard.OperationID{Incarnation: incA, Shard: shardA, Sequence: 1}
 			h.commitCell(t, &store.Mutation{
 				Put:         []shard.Placement{placement(shardA, secondEpoch, node.ID)},

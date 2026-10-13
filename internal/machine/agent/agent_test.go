@@ -5,13 +5,11 @@ package agent_test
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"maps"
 	"slices"
-	"sync"
 	"testing"
 	"time"
 
@@ -23,113 +21,21 @@ import (
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/fsm"
-	"go.thesmos.sh/core/id"
-	"go.thesmos.sh/core/id/ulid"
-	"go.thesmos.sh/core/page"
-	"go.thesmos.sh/core/rand"
-	"go.thesmos.sh/core/telemetry"
+	"go.thesmos.sh/core/rand/constant"
 	"go.thesmos.sh/core/telemetry/noop"
 
-	"go.thesmos.sh/sharder/budget"
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
 	"go.thesmos.sh/sharder/fence"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/machine/agent"
-	"go.thesmos.sh/sharder/partition/fixedslots"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
-	"go.thesmos.sh/sharder/store/memory"
 )
 
-// The names of the records and the callers of the tests.
-const (
-	// namespace is the namespace of the tests.
-	namespace shard.Namespace = "orders"
-	// controllerAddress is the address of the controller of the cell of the tests.
-	controllerAddress = "controller-1:7000"
-	// controllerIdentity is the identity of the controller of the cell of the tests.
-	controllerIdentity shard.Identity = "controller-1"
-	// otherIdentity is the identity of a caller other than the controller.
-	otherIdentity shard.Identity = "intruder"
-	// slotsConfig is the configuration of fixed-slots in the spec of the tests.
-	slotsConfig = `{"slots":4}`
-)
-
-// The epochs of the tests.
-const (
-	// rootTerm is the term of the root that writes the root scope.
-	rootTerm epoch.Epoch = 1
-	// cellTerm is the term of the controller of the cell of the tests.
-	cellTerm epoch.Epoch = 3
-	// firstVersion is the version of the spec of the tests.
-	firstVersion epoch.Epoch = 1
-)
-
-// The epochs of the tenures of the tests.
-const (
-	// firstEpoch is the epoch of the first writer of a shard.
-	firstEpoch epoch.Epoch = 1
-	// secondEpoch is the epoch of the second writer of a shard.
-	secondEpoch epoch.Epoch = 2
-	// thirdEpoch is the epoch of the third writer of a shard.
-	thirdEpoch epoch.Epoch = 3
-)
-
-// maxDeliveries bounds the effects that run performs, so a machine that never settles
-// fails its test instead of the timeout of go test.
-const maxDeliveries = 10000
-
-// pageLimit is the number of placements on each page that the harness reads.
-const pageLimit = 2
-
-// marker is the effect that the harness passes in out with each event: an Unwatch without a
-// watch, which the machine never returns itself.
-var marker machine.Effect = machine.Unwatch{}
-
-// The node, the cell, the scopes, the incarnation and the clock of the tests.
-var (
-	// node is the node of the agent of the tests.
-	node = shard.Node{ID: "node-a", Address: "node-a:7000", Identity: "agent-a"}
-	// cellKey is the 16 bytes of the ULID of the cell, which is the shard of the cell in the
-	// root scope.
-	cellKey = id.ID128{0: 0x01, 15: 0xce}
-	// cellID is the cell of the tests: the text of the ULID of cellKey.
-	cellID = shard.CellID(ulid.Format(cellKey.ID()))
-	// cellScope is the scope of the cell of the tests.
-	cellScope = shard.Scope{Namespace: namespace, Cell: cellID}
-	// rootScope is the root scope of the namespace of the tests.
-	rootScope = shard.Scope{Namespace: namespace}
-	// incA is the namespace incarnation of the tests.
-	incA = shard.NamespaceIncarnation{ID: id.New128([16]byte{0: 0x1a, 15: 0x0a})}
-	// origin is the start of the clock of each test.
-	origin = time.Date(2026, time.October, 12, 0, 0, 0, 0, time.UTC)
-	// provided lists the capabilities of the store and the membership of the tests.
-	provided = map[config.Axis][]config.Capability{
-		config.Store:      {config.Durable},
-		config.Membership: {config.Leases},
-	}
-)
-
-// The shards of the tests.
-var (
-	shardA = shard.ID{ID128: id.ID128{0: 0x02, 15: 0x0a}}
-	shardB = shard.ID{ID128: id.ID128{0: 0x02, 15: 0x0b}}
-	shardC = shard.ID{ID128: id.ID128{0: 0x02, 15: 0x0c}}
-)
-
-// The nodes and the cells other than the node and the cell of the tests.
-const (
-	// otherNode is a node of the cell other than the node of the tests.
-	otherNode shard.NodeID = "node-b"
-	// thirdNode is a node of the cell other than the node of the tests and otherNode.
-	thirdNode shard.NodeID = "node-c"
-	// otherCell is a cell other than the cell of the tests, and not the text of a shard ID.
-	otherCell shard.CellID = "other"
-	// noNode is the writer of a placement without replicas.
-	noNode shard.NodeID = ""
-)
+// noNode is the writer of a placement without replicas.
+const noNode shard.NodeID = ""
 
 // The weights of the actions of the property of an agent that a case takes more often than
 // the others.
@@ -140,13 +46,13 @@ const (
 	deliveries = 4
 	// callbacks is the weight of a callback.
 	callbacks = 4
-	// answers is the weight of the answer to a fence acquisition or a handler call.
+	// answers is the weight of the result of a fence acquisition or a handler call.
 	answers = 4
 )
 
 // The labels of the cases of the property of an agent, which its coverage requirements count.
 const (
-	// labelFenced counts a case that answers a fence acquisition with epoch.ErrFenced.
+	// labelFenced counts a case in which a fence acquisition fails with epoch.ErrFenced.
 	labelFenced = "a fence acquisition fails with ErrFenced"
 	// labelCleanup counts a case in which the agent cleans up a tenure.
 	labelCleanup = "the agent cleans up a tenure"
@@ -166,338 +72,20 @@ const (
 // The shares of the cases of the property of an agent that its labels must count, about half
 // of the shares that 100 cases of one seed measured.
 const (
-	// common is the share of labelResend, labelSession and labelCompaction, whose steps
-	// need no state. The measured shares were 22%, 26% and 28%.
+	// common is the share of labelResend, labelSession and labelCompaction, whose steps do
+	// not need a state. The measured shares were 22%, 26% and 28%.
 	common = 0.1
 	// occasional is the share of labelCleanup and labelServe, which need a tenure. The
 	// measured shares were 15% and 18%.
 	occasional = 0.05
-	// rare is the share of labelFenced and labelDrop, which need a tenure and one result in
-	// four of an answer. The measured shares were 6% and 5%.
+	// rare is the share of labelFenced and labelDrop, which need a tenure and one of the four
+	// results of a pending effect. The measured shares were 6% and 5%.
 	rare = 0.02
 )
 
-// allShards lists the shards of the property of an agent.
-var allShards = []shard.ID{shardA, shardB, shardC}
-
-// outcomes lists the results with which a step of the property of an agent answers a fence
-// acquisition or a handler call: success, a transient error, an error that a retry does not
-// fix, and a fence that refuses the epoch.
-var outcomes = []error{nil, errBusy, errBroken, epoch.ErrFenced}
-
-// halves is a source of randomness whose every draw of rand.Float64 is one half, so each
-// backoff is half of its ceiling. Its values differ in their low bits, so the IDs that the
-// agent generates differ.
-type halves struct {
-	// n counts the draws.
-	n uint64
-}
-
-var _ rand.Rand = (*halves)(nil)
-
-// Uint64 returns the next value: the top bit and the count of the draws.
-func (h *halves) Uint64() uint64 {
-	h.n++
-	return 1<<63 | h.n
-}
-
-// Read fills p with the bytes of successive values of Uint64.
-func (h *halves) Read(p []byte) (int, error) {
-	for i := 0; i < len(p); i += 8 {
-		var b [8]byte
-		binary.BigEndian.PutUint64(b[:], h.Uint64())
-		copy(p[i:], b[:])
-	}
-	return len(p), nil
-}
-
-// journal is a slog.Handler that keeps the message of every record.
-type journal struct {
-	// messages lists the messages of the records in order.
-	messages []string
-	// mu guards messages.
-	mu sync.Mutex
-}
-
-var _ slog.Handler = (*journal)(nil)
-
-// Enabled reports true for every level.
-func (*journal) Enabled(context.Context, slog.Level) bool { return true }
-
-// Handle keeps the message of r.
-func (j *journal) Handle(_ context.Context, r slog.Record) error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	j.messages = append(j.messages, r.Message)
-	return nil
-}
-
-// WithAttrs returns j. The tests read the messages alone.
-func (j *journal) WithAttrs([]slog.Attr) slog.Handler { return j }
-
-// WithGroup returns j. The agent does not group its attributes.
-func (j *journal) WithGroup(string) slog.Handler { return j }
-
-// logged returns the messages of the records in order.
-func (j *journal) logged() []string {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	return slices.Clone(j.messages)
-}
-
-// recorder is a telemetry.Reporter that keeps the value of each counter and gauge by the
-// name of its instrument, and the names of the instruments that were released. It ignores
-// the attributes, because an agent binds every instrument to its namespace and its node.
-type recorder struct {
-	// values maps the name of each counter and gauge to its value.
-	values map[telemetry.InstrumentName]float64
-	// released contains the name of each instrument that was released.
-	released map[telemetry.InstrumentName]bool
-}
-
-var _ telemetry.Reporter = (*recorder)(nil)
-
-// Counter returns a counter of the instrument of spec.
-func (r *recorder) Counter(spec telemetry.InstrumentSpec) telemetry.Counter {
-	return &counter{r: r, name: spec.Name}
-}
-
-// Gauge returns a gauge of the instrument of spec.
-func (r *recorder) Gauge(spec telemetry.InstrumentSpec) telemetry.Gauge {
-	return &gauge{r: r, name: spec.Name}
-}
-
-// Histogram returns a histogram that discards its records. An agent has no histogram.
-func (*recorder) Histogram(spec telemetry.InstrumentSpec) telemetry.Histogram {
-	return noop.New().Histogram(spec)
-}
-
-// Tracer returns a tracer that discards every span.
-func (*recorder) Tracer(name telemetry.InstrumentName) telemetry.Tracer {
-	return noop.New().Tracer(name)
-}
-
-// counter is a counter of a recorder.
-type counter struct {
-	// r is the recorder.
-	r *recorder
-	// name is the name of the instrument.
-	name telemetry.InstrumentName
-}
-
-var _ telemetry.Counter = (*counter)(nil)
-
-// Add adds value to the counter.
-func (c *counter) Add(_ context.Context, value int64) { c.r.values[c.name] += float64(value) }
-
-// With returns c, because the recorder ignores attributes.
-func (c *counter) With([]telemetry.Attr) telemetry.Counter { return c }
-
-// Release records the release of the counter.
-func (c *counter) Release() { c.r.released[c.name] = true }
-
-// gauge is a gauge of a recorder.
-type gauge struct {
-	// r is the recorder.
-	r *recorder
-	// name is the name of the instrument.
-	name telemetry.InstrumentName
-}
-
-var _ telemetry.Gauge = (*gauge)(nil)
-
-// Set sets the gauge to value.
-func (g *gauge) Set(_ context.Context, value float64) { g.r.values[g.name] = value }
-
-// Add adds delta to the gauge.
-func (g *gauge) Add(_ context.Context, delta float64) { g.r.values[g.name] += delta }
-
-// With returns g, because the recorder ignores attributes.
-func (g *gauge) With([]telemetry.Attr) telemetry.Gauge { return g }
-
-// Release records the release of the gauge.
-func (g *gauge) Release() { g.r.released[g.name] = true }
-
-// testCase is the test, or the case of a property, that a harness runs in.
-type testCase interface {
-	assert.TB
-	// Cleanup registers f to run when the test or the case ends.
-	Cleanup(f func())
-}
-
-// setup is the configuration of a harness before New.
-type setup struct {
-	// spec is the spec that the root records.
-	spec config.Spec
-	// cfg is the Config of the agent, which newHarness completes.
-	cfg agent.Config
-	// root is the mutation that creates the root scope, which newHarness completes with the
-	// spec and the mapping.
-	root store.Mutation
-	// extend registers more strategies in the registry of the agent, or is nil.
-	extend func(r *config.Registry) error
-	// support is the support matrix of the registry of the agent.
-	support config.Support
-	// create is true when the root has created the namespace before the agent starts.
-	create bool
-	// acquire is true when the controller of the cell has acquired its scope before the
-	// agent starts.
-	acquire bool
-}
-
-// option changes the setup of a harness.
-type option func(*setup)
-
-// harness is the runtime of the tests. It performs the effects of one agent against a
-// memory store, replies to its joins, its fence acquisitions, its handler calls and its
-// calls to the controller, and keeps what the agent sent. The tests commit to the scope of the
-// cell as its controller does, and pass the generations to the agent with follow.
-type harness struct {
-	// handler returns the result of the handler of the application for the request r, and
-	// nil for success. With a nil handler, every call succeeds.
-	handler func(r *protocol.Request) error
-	// fence returns the result of the fence acquisition of the token t, and nil for success.
-	// With a nil fence, every acquisition succeeds.
-	fence func(t *fence.Token) error
-	// joining returns the error of the next join, and nil for a session. With a nil joining,
-	// every join starts a session.
-	joining func() error
-	// ack returns the reply of the controller to the report r. With a nil ack, the
-	// controller accepts every report.
-	ack func(r *protocol.Report) (protocol.Ack, error)
-	// decide returns the reply of the controller to the disruption d. With a nil decide,
-	// the controller admits every disruption.
-	decide func(d *budget.Disruption) (budget.Decision, error)
-	// ending returns the reply of the controller to the end of a reservation, and nil for
-	// success. With a nil ending, every end succeeds.
-	ending func(a *protocol.DoneArgs) error
-	// held reports whether run leaves the effect e pending. With a nil held, run performs
-	// every effect.
-	held func(e machine.Effect) bool
-	// observe receives each effect that the agent appends, before route keeps it, or is nil.
-	observe func(e machine.Effect)
-	// wrap runs each step of the agent, such as to record it in a history, or is nil.
-	wrap func(step func())
-	// root is the mutation that creates the root scope of the setup.
-	root store.Mutation
-	// st is the store of the agent.
-	st *memory.Store
-	// clock is the clock of the agent.
-	clock *fake.Clock
-	// machine is the agent under test.
-	machine *agent.Machine
-	// logs are the logs of the agent.
-	logs *journal
-	// metrics are the instruments of the agent.
-	metrics *recorder
-	// pending lists the effects that run performs, the oldest first.
-	pending []machine.Effect
-	// watches lists the watches that run.
-	watches []machine.Watch
-	// timers lists the Timers that the agent armed, the oldest first.
-	timers []machine.Timer
-	// replies lists every reply of the agent, in order.
-	replies []machine.Effect
-	// joins lists every Join of the agent, in order.
-	joins []machine.Join
-	// leaves lists the token of every Leave of the agent, in order.
-	leaves []machine.Token
-	// acquires lists every Acquire of the agent, in order.
-	acquires []machine.Acquire
-	// handles lists every Handle of the agent, in order.
-	handles []machine.Handle
-	// reports lists every report of the agent, in order.
-	reports []*protocol.Report
-	// disrupts lists every disruption that the agent asked for, in order.
-	disrupts []machine.SendDisrupt
-	// dones lists every end of a reservation that the agent asked for, in order.
-	dones []machine.SendDone
-	// unwatched lists the tokens of every Unwatch of the agent, in order.
-	unwatched []machine.Token
-	// issued lists the token of every effect of the agent that waits for a result, in order.
-	issued []machine.Token
-	// join is the token of the last Join that started a session, and zero without one.
-	join machine.Token
-	// incarnation is the incarnation of the last session that the harness started.
-	incarnation epoch.Epoch
-	// calls is the token of the last inbound call of the harness.
-	calls machine.ReplyToken
-	// rootSeq and cellSeq are the Seq of the last commit to the root scope and to the scope
-	// of the cell.
-	rootSeq, cellSeq uint64
-}
-
-// newHarness returns a harness of the agent of the node of the tests. The root scope places
-// the cell and records the spec of the setup, and the controller of the cell has acquired
-// its scope. Each option changes the setup before New. When the test ends, the harness
-// checks that each effect that waits for a result has a token of its own.
-func newHarness(tb testCase, opts ...option) *harness {
-	tb.Helper()
-	s := setup{
-		spec: config.Spec{
-			Namespace:    namespace,
-			Preset:       builtin.ExclusiveWorker,
-			Partitioning: config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)},
-			Version:      firstVersion,
-		},
-		cfg:     agent.Config{Rand: &halves{}, Provided: provided, Namespace: namespace, Node: node},
-		root:    store.Mutation{Put: []shard.Placement{{Shard: shard.ID{ID128: cellKey}}}},
-		support: builtin.Support(),
-		create:  true,
-		acquire: true,
-	}
-	for _, opt := range opts {
-		opt(&s)
-	}
-	h := &harness{
-		st:    memory.New(fake.New(origin)),
-		clock: fake.New(origin),
-		logs:  &journal{},
-		metrics: &recorder{
-			values:   make(map[telemetry.InstrumentName]float64),
-			released: make(map[telemetry.InstrumentName]bool),
-		},
-	}
-	tb.Cleanup(func() { assert.NoError(tb, h.st.Close(), "the store must close") })
-	tb.Cleanup(func() {
-		expect.NotContains(tb, h.issued, machine.Token(0), "each effect that waits for a result must have a token")
-		expect.NoDuplicates(tb, func() ([]machine.Token, error) { return h.issued, nil },
-			"each effect that waits for a result must have a token of its own")
-	})
-	r := config.NewRegistry(s.support)
-	assert.NoError(tb, builtin.Register(r), "the built-ins must register")
-	if s.extend != nil {
-		assert.NoError(tb, s.extend(r), "the strategies of the test must register")
-	}
-	res, err := config.Resolve(r, &s.spec, provided)
-	assert.NoError(tb, err, "the spec of the tests must resolve")
-	raw, err := json.Marshal(&res.Spec)
-	assert.NoError(tb, err, "the resolved spec must encode")
-	if s.root.Spec == nil {
-		s.root.Spec = raw
-	}
-	if s.root.Mapping == nil {
-		s.root.Mapping = &res.Mapping
-	}
-	h.root = s.root
-	if s.create {
-		h.commitRoot(tb, &s.root)
-	}
-	if s.acquire {
-		h.commitCell(tb, &store.Mutation{Cell: record(cellTerm)})
-	}
-	s.cfg.Clock = h.clock
-	s.cfg.Reporter = h.metrics
-	s.cfg.Registry = r
-	s.cfg.Logger = slog.New(h.logs)
-	h.machine, err = agent.New(&s.cfg)
-	assert.NoError(tb, err, "New must return an agent of a complete config")
-	return h
-}
-
 // model is the expected state of an agent that the property of an agent drives, and the
-// record of what the agent did. Its harness holds every fence acquisition and handler call
-// until a step answers it, and passes each effect of the agent to observe.
+// record of what the agent did. Its harness keeps every fence acquisition and handler call
+// pending until a step passes its result, and passes each effect of the agent to observe.
 type model struct {
 	// c is the case of the property.
 	c *prop.Case
@@ -591,7 +179,7 @@ func newModel(c *prop.Case, stops bool) *model {
 	m.h.observe = m.observe
 	m.h.ack = m.ack
 	m.h.start(c)
-	m.h.held = func(e machine.Effect) bool {
+	m.h.pause = func(e machine.Effect) bool {
 		switch e.(type) {
 		case machine.Acquire, machine.Handle:
 			return true
@@ -665,8 +253,8 @@ func (m *model) handle(r *protocol.Request) {
 	}
 }
 
-// ack returns the reply of the controller to the report r: an acceptance at the term of the
-// last record, or protocol.ErrUnreachable while the controller refuses reports.
+// ack returns the reply of the controller to the report r. The controller accepts r at the
+// term of the last record, and returns protocol.ErrUnreachable while it refuses reports.
 func (m *model) ack(r *protocol.Report) (protocol.Ack, error) {
 	if m.failing {
 		return protocol.Ack{}, protocol.ErrUnreachable
@@ -674,7 +262,7 @@ func (m *model) ack(r *protocol.Report) (protocol.Ack, error) {
 	return protocol.Ack{Sequence: r.Sequence, ControllerEpoch: m.term}, nil
 }
 
-// place commits the placement of a shard that c draws at the next epoch of the shard, with
+// place commits the placement of a shard that c chooses at the next epoch of the shard, with
 // the node, another node or no node as its writer.
 func (m *model) place(c *prop.Case) {
 	sid := c.Draw(prop.SampledFrom(allShards...), "shard")
@@ -687,7 +275,7 @@ func (m *model) place(c *prop.Case) {
 	m.commit(c, &store.Mutation{Put: []shard.Placement{p}})
 }
 
-// assign commits the placement of a shard that c draws on the node at the next epoch of the
+// assign commits the placement of a shard that c chooses on the node at the next epoch of the
 // shard, and sends the add of the next operation of the shard at that epoch, as the
 // controller of the cell moves a shard to the node.
 func (m *model) assign(c *prop.Case) {
@@ -700,7 +288,7 @@ func (m *model) assign(c *prop.Case) {
 	m.send(c, r)
 }
 
-// release sends the drop of the next operation of a shard that c draws at the epoch of its
+// release sends the drop of the next operation of a shard that c chooses at the epoch of its
 // last placement, as the controller of the cell starts to move a shard away from the node.
 func (m *model) release(c *prop.Case) {
 	sid := c.Draw(prop.SampledFrom(allShards...), "shard")
@@ -710,8 +298,9 @@ func (m *model) release(c *prop.Case) {
 	m.send(c, r)
 }
 
-// transition commits a transition of the newest operation of a shard that c draws, or of the
-// operation after it, in a phase that c draws, with the node as its target or its source.
+// transition commits a transition of the newest operation of a shard that c chooses, or of
+// the operation after it. c also chooses the phase, and whether the node is the target or the
+// source.
 func (m *model) transition(c *prop.Case) {
 	sid := c.Draw(prop.SampledFrom(allShards...), "shard")
 	m.operations[sid] += c.Draw(prop.Integer[uint64](0, 1), "next operation")
@@ -723,7 +312,7 @@ func (m *model) transition(c *prop.Case) {
 	m.commit(c, &store.Mutation{Transitions: []store.Transition{t}})
 }
 
-// done commits the end of the transition of a shard that c draws.
+// done commits the end of the transition of a shard that c chooses.
 func (m *model) done(c *prop.Case) {
 	sid := c.Draw(prop.SampledFrom(allShards...), "shard")
 	m.commit(c, &store.Mutation{Done: []shard.ID{sid}})
@@ -775,9 +364,9 @@ func (m *model) advance(gen epoch.Epoch) {
 	}
 }
 
-// callback sends a callback for a shard that c draws: an add or a drop of the newest operation
-// of the shard or of the operation after it, at the epoch of the last placement of the shard
-// or at the epoch before it, on a path and at a step that c draws.
+// callback sends an add or a drop for a shard that c chooses. The callback is of the newest
+// operation of the shard or of the operation after it, at the epoch of the last placement of
+// the shard or at the epoch before it. c chooses each of these, and the path and the step.
 func (m *model) callback(c *prop.Case) {
 	sid := c.Draw(prop.SampledFrom(allShards...), "shard")
 	call := c.Draw(prop.SampledFrom(protocol.Add, protocol.Drop), "call")
@@ -790,7 +379,7 @@ func (m *model) callback(c *prop.Case) {
 	m.send(c, r)
 }
 
-// resend sends a callback that a step sent before, which c draws, again.
+// resend sends a callback again that a step sent before. c chooses the callback.
 func (m *model) resend(c *prop.Case) {
 	c.Classify(labelResend)
 	m.send(c, m.sent[c.Draw(prop.Integer(0, len(m.sent)-1), "callback")])
@@ -810,22 +399,24 @@ func (m *model) send(c *prop.Case, r *protocol.Request) {
 	m.sync()
 }
 
-// answer answers a fence acquisition or a handler call that the harness holds, which c
-// draws, with a result that c draws.
+// answer passes a result to a pending fence acquisition or handler call. c chooses the effect
+// and the result.
 func (m *model) answer(c *prop.Case) {
 	i := c.Draw(prop.Integer(0, len(m.h.pending)-1), "effect")
 	m.finish(c, i, c.Draw(prop.SampledFrom(outcomes...), "outcome"))
 }
 
-// finish passes the result err of the held effect i to the agent, and takes what the result
-// changes in the expected state. A successful acquisition grants its token, unless the agent
-// has stopped, or the session of the node has ended since its start under ownership.Stop. An
-// add whose handler fails loses its token.
+// finish passes the result err of the pending effect i to the agent, and takes what the result
+// changes in the expected state. An acquisition replaces the token of its shard. A successful
+// acquisition grants its token, unless the agent has stopped, or the session of the node has
+// ended since its start under ownership.Stop. An add whose acquisition or handler fails
+// loses its token.
 func (m *model) finish(c *prop.Case, i int, err error) {
 	e := m.h.pending[i]
 	m.h.pending = slices.Delete(m.h.pending, i, i+1)
 	switch e := e.(type) {
 	case machine.Acquire:
+		delete(m.granted, e.Fence.Shard)
 		if err == nil && !m.stopped && (!m.stops || m.started[e.Token] == m.ends) {
 			m.granted[e.Fence.Shard] = e.Fence
 		}
@@ -873,8 +464,8 @@ func (m *model) end(c *prop.Case) {
 	m.sync()
 }
 
-// cancel ends the wait of the caller of a call without a reply, which c draws. An agent whose
-// Close loses its caller stops.
+// cancel ends the wait of the caller of a call without a reply. c chooses the call. An agent
+// whose Close loses its caller stops.
 func (m *model) cancel(c *prop.Case) {
 	calls := m.waiting()
 	to := calls[c.Draw(prop.Integer(0, len(calls)-1), "call")]
@@ -911,7 +502,7 @@ func (m *model) compact(c *prop.Case) {
 	m.sync()
 }
 
-// fault reports a fault in the replica of a shard that c draws, or the recovery of the
+// fault reports a fault in the replica of a shard that c chooses, or the recovery of the
 // replica.
 func (m *model) fault(c *prop.Case) {
 	sid := c.Draw(prop.SampledFrom(allShards...), "shard")
@@ -941,9 +532,9 @@ func (m *model) halt(c *prop.Case) {
 	clear(m.granted)
 }
 
-// complete answers each fence acquisition and handler call that the harness holds with
-// success, passes each generation of the scope that the agent has not read, and ends each
-// Timer of a backoff. The controller accepts reports from then on.
+// complete passes success to each pending fence acquisition and handler call. It then passes
+// each generation of the scope that the agent has not read, and ends each Timer of a backoff.
+// The controller accepts reports from then on.
 func (m *model) complete(c *prop.Case) {
 	m.failing = false
 	for range len(m.h.pending) {
@@ -960,8 +551,8 @@ func (m *model) complete(c *prop.Case) {
 	}
 }
 
-// sync takes the end of a step: an agent that has replied to its Close, or whose Close has
-// lost its caller, has stopped.
+// sync takes the end of a step. The agent has stopped once it has replied to its Close, and
+// once its Close has lost its caller.
 func (m *model) sync() {
 	if m.stopping {
 		m.stopping, m.stopped = false, true
@@ -969,7 +560,7 @@ func (m *model) sync() {
 	}
 }
 
-// invariant checks what holds after every step: no step stops the agent with an error, the
+// invariant checks the agent after every step. No step stops the agent with an error, the
 // agent runs one callback of a shard at a time, and Token returns the token that the model
 // expects for each shard.
 func (m *model) invariant(c *prop.Case) {
@@ -995,7 +586,7 @@ func (m *model) invariant(c *prop.Case) {
 	}
 }
 
-// settle checks the agent once the drain has answered every call with success and passed
+// settle checks the agent once the drain has completed every call with success and passed
 // every generation. Every callback has its reply, unless it is an add whose placement on the
 // node the agent has not read at the epoch of the add. Token returns a token only for the
 // placement on the node that the agent has read, at the epoch of that placement.
@@ -1062,6 +653,10 @@ func TestMachine(t *testing.T) {
 			{
 				name: "returns ErrConfig for a config without a namespace",
 				give: func(c *agent.Config) { c.Namespace = "" },
+			},
+			{
+				name: "returns ErrConfig for an agent of the root whose node has a cell",
+				give: func(c *agent.Config) { c.Root, c.Node.Cell = true, cellID },
 			},
 		}
 		for _, tt := range tests {
@@ -1251,8 +846,9 @@ func TestMachine(t *testing.T) {
 			h := newHarness(t)
 			h.start(t)
 			h.step(t, machine.Stopped{})
-			expect.True(t, h.metrics.released[refusalsInstrument], "the agent must release the counter of refusals")
-			expect.True(t, h.metrics.released[lagInstrument], "the agent must release the gauge of the lag")
+			expect.Equal(t, h.metrics.Bound(refusalsInstrument, series...), 0,
+				"the agent must release the counter of refusals")
+			expect.Equal(t, h.metrics.Bound(lagInstrument, series...), 0, "the agent must release the gauge of the lag")
 		})
 
 		t.Run("keeps its contract under every sequence of events", func(t *testing.T) {
@@ -1281,12 +877,6 @@ func TestMachine(t *testing.T) {
 	})
 }
 
-// The names of the instruments of an agent.
-const (
-	refusalsInstrument telemetry.InstrumentName = "sharder.fence.refusals"
-	lagInstrument      telemetry.InstrumentName = "sharder.generation.lag"
-)
-
 // registry returns a registry with every built-in strategy of the support matrix.
 func registry(tb assert.TB) *config.Registry {
 	tb.Helper()
@@ -1300,378 +890,31 @@ func completeConfig(tb assert.TB) agent.Config {
 	tb.Helper()
 	return agent.Config{
 		Clock:     fake.New(origin),
-		Rand:      &halves{},
+		Rand:      constant.NewCounter(half),
 		Reporter:  noop.New(),
-		Logger:    slog.New(&journal{}),
+		Logger:    slog.New(slog.DiscardHandler),
 		Registry:  registry(tb),
 		Namespace: namespace,
 		Node:      node,
 	}
 }
 
-// record returns the record of the controller of the cell of the tests at the epoch e.
-func record(e epoch.Epoch) *shard.Cell {
-	return &shard.Cell{
-		ID:                 cellID,
-		Controller:         controllerAddress,
-		ControllerIdentity: controllerIdentity,
-		Epoch:              e,
-		SpecVersion:        firstVersion,
-	}
-}
-
-// commitRoot commits m to the root scope as the root of the tests.
-func (h *harness) commitRoot(tb assert.TB, m *store.Mutation) {
-	tb.Helper()
-	ctx := assert.Context(tb)
-	head, err := h.st.Head(ctx, rootScope)
-	assert.NoError(tb, err, "the store must return the header of the root scope")
-	h.rootSeq++
-	m.ID = store.CommitID{Incarnation: incA, Term: rootTerm, Seq: h.rootSeq}
-	_, err = h.st.Writer(rootScope, incA, rootTerm).Commit(ctx, head.Generation, m)
-	assert.NoError(tb, err, "the root must commit")
-}
-
-// commitCell commits m to the scope of the cell as the controller of the cell at its term,
-// and returns the generation of the commit.
-func (h *harness) commitCell(tb assert.TB, m *store.Mutation) epoch.Epoch {
-	tb.Helper()
-	ctx := assert.Context(tb)
-	head, err := h.st.Head(ctx, cellScope)
-	assert.NoError(tb, err, "the store must return the header of the scope of the cell")
-	h.cellSeq++
-	m.ID = store.CommitID{Incarnation: incA, Term: cellTerm, Seq: h.cellSeq}
-	gen, err := h.st.Writer(cellScope, incA, cellTerm).Commit(ctx, head.Generation, m)
-	assert.NoError(tb, err, "the controller of the cell must commit")
-	return gen
-}
-
-// call returns the token of the next inbound call.
-func (h *harness) call() machine.ReplyToken {
-	h.calls++
-	return h.calls
-}
-
-// start passes Started to the agent and runs it until it serves.
-func (h *harness) start(tb assert.TB) {
-	tb.Helper()
-	h.step(tb, machine.Started{Reply: h.call()})
-	h.run(tb)
-	h.follow(tb)
-}
-
-// step passes ev to the agent with the marker in out through wrap, checks that the agent
-// keeps out, and keeps the effects that the agent appends.
-func (h *harness) step(tb assert.TB, ev machine.Event) {
-	tb.Helper()
-	var got []machine.Effect
-	run := func() { got = h.machine.Step(ev, []machine.Effect{marker}) }
-	if h.wrap != nil {
-		h.wrap(run)
-	} else {
-		run()
-	}
-	assert.NotEmpty(tb, got, "the agent must keep the effects that out has")
-	assert.Equal(tb, got[0], marker, "the agent must keep the effects that out has")
-	h.route(got[1:])
-}
-
-// route passes each effect of effects to observe, and keeps it in the list of its kind with
-// the token of each effect that waits for a result.
-func (h *harness) route(effects []machine.Effect) {
-	for _, e := range effects {
-		if h.observe != nil {
-			h.observe(e)
-		}
-		switch e := e.(type) {
-		case machine.Watch:
-			h.issued = append(h.issued, e.Token)
-			h.watches = append(h.watches, e)
-		case machine.Unwatch:
-			h.unwatched = append(h.unwatched, e.Token)
-			h.watches = slices.DeleteFunc(h.watches, func(w machine.Watch) bool { return w.Token == e.Token })
-		case machine.Timer:
-			h.issued = append(h.issued, e.Token)
-			h.timers = append(h.timers, e)
-		case machine.Reply[struct{}]:
-			h.replies = append(h.replies, e)
-		case machine.Leave:
-			h.leaves = append(h.leaves, e.Token)
-		default:
-			h.issued = append(h.issued, tokenOf(e))
-			h.pending = append(h.pending, e)
-		}
-	}
-}
-
-// run performs the pending effects, the oldest first, and passes their results to the agent
-// until no effect is pending. It leaves an effect that held reports pending.
-func (h *harness) run(tb assert.TB) {
-	tb.Helper()
-	for range maxDeliveries {
-		i := slices.IndexFunc(h.pending, func(e machine.Effect) bool { return h.held == nil || !h.held(e) })
-		if i < 0 {
-			return
-		}
-		e := h.pending[i]
-		h.pending = slices.Delete(h.pending, i, i+1)
-		h.step(tb, h.perform(tb, e))
-	}
-	tb.Fatalf("the agent still runs after %d deliveries", maxDeliveries)
-}
-
-// release performs the pending effects that held left pending, and every later effect.
-func (h *harness) release(tb assert.TB) {
-	tb.Helper()
-	h.held = nil
-	h.run(tb)
-}
-
-// perform performs e and returns the event of its result.
-func (h *harness) perform(tb assert.TB, e machine.Effect) machine.Event {
-	tb.Helper()
-	switch e := e.(type) {
-	case machine.Read:
-		return h.read(tb, &e)
-	case machine.Join:
-		h.joins = append(h.joins, e)
-		if h.joining != nil {
-			if err := h.joining(); err != nil {
-				return machine.Joined{Err: err, Token: e.Token}
-			}
-		}
-		h.incarnation++
-		h.join = e.Token
-		return machine.Joined{Token: e.Token, Incarnation: h.incarnation}
-	case machine.Acquire:
-		h.acquires = append(h.acquires, e)
-		var err error
-		if h.fence != nil {
-			err = h.fence(&e.Fence)
-		}
-		return machine.Acquired{Err: err, Token: e.Token}
-	case machine.Handle:
-		h.handles = append(h.handles, e)
-		var err error
-		if h.handler != nil {
-			err = h.handler(e.Request)
-		}
-		return machine.Handled{Err: err, Token: e.Token}
-	case machine.SendReport:
-		h.reports = append(h.reports, e.Report)
-		ack := protocol.Ack{Sequence: e.Report.Sequence, ControllerEpoch: cellTerm}
-		var err error
-		if h.ack != nil {
-			ack, err = h.ack(e.Report)
-		}
-		return machine.Reported{Err: err, Token: e.Token, Ack: ack}
-	case machine.SendDisrupt:
-		h.disrupts = append(h.disrupts, e)
-		decision := budget.Decision{Allowed: true}
-		var err error
-		if h.decide != nil {
-			decision, err = h.decide(e.Disruption)
-		}
-		return machine.Decided{Err: err, Decision: decision, Token: e.Token}
-	case machine.SendDone:
-		h.dones = append(h.dones, e)
-		var err error
-		if h.ending != nil {
-			err = h.ending(e.Args)
-		}
-		return machine.Ended{Err: err, Token: e.Token}
-	default:
-		tb.Fatalf("the agent returned a %T, which the harness does not perform", e)
-		return nil
-	}
-}
-
-// read reads the page of e from the store and returns the event of its result.
-func (h *harness) read(tb assert.TB, e *machine.Read) machine.Event {
-	tb.Helper()
-	ctx := assert.Context(tb)
-	p := e.Page
-	p.Limit = pageLimit
-	state, cursor, err := h.st.Read(ctx, e.Scope, e.Incarnation, e.Query, p)
-	if err != nil {
-		return machine.PageRead{Err: err, Token: e.Token}
-	}
-	var ps []shard.Placement
-	for p, err := range cursor.Seq(ctx) {
-		assert.NoError(tb, err, "the cursor of the memory store must yield its placements")
-		ps = append(ps, p)
-	}
-	next := cursor.NextPage()
-	assert.NoError(tb, cursor.Close(), "the cursor must close")
-	return machine.PageRead{Placements: ps, Next: next, State: state, Token: e.Token}
-}
-
-// follow passes the generations of the scopes that the watches of the agent have not
-// passed, one at a time, and runs the agent after each.
-func (h *harness) follow(tb assert.TB) {
-	tb.Helper()
-	for range maxDeliveries {
-		passed := false
-		for _, w := range slices.Clone(h.watches) {
-			ctx, cancel := context.WithCancel(assert.Context(tb))
-			cancel()
-			for ev, err := range h.st.Watch(ctx, w.Scope, w.Incarnation, w.From, w.Node) {
-				i := slices.IndexFunc(h.watches, func(x machine.Watch) bool { return x.Token == w.Token })
-				if err != nil {
-					h.watches = slices.Delete(h.watches, i, i+1)
-					h.step(tb, machine.Watched{Err: err, Token: w.Token})
-				} else {
-					h.watches[i].From = ev.Generation
-					h.step(tb, machine.Watched{Event: ev, Token: w.Token})
-				}
-				passed = true
-				break
-			}
-			h.run(tb)
-		}
-		if !passed {
-			return
-		}
-	}
-	tb.Fatalf("the watches still pass generations after %d deliveries", maxDeliveries)
-}
-
-// elapse passes the end of the newest Timer whose Duration is d, and runs the agent
-// afterwards. A newer Timer of one wait replaces the older ones, which the agent ignores.
-func (h *harness) elapse(tb assert.TB, d time.Duration) {
-	tb.Helper()
-	i := len(h.timers) - 1
-	for i >= 0 && h.timers[i].Duration != d {
-		i--
-	}
-	assert.True(tb, i >= 0, "a Timer of the duration must be armed")
-	tm := h.timers[i]
-	h.timers = slices.Delete(h.timers, i, i+1)
-	h.step(tb, machine.Elapsed{Token: tm.Token})
-	h.run(tb)
-}
-
-// state returns the state of the scope of the cell.
-func (h *harness) state(tb assert.TB) store.State {
-	tb.Helper()
-	state, cursor, err := h.st.Read(assert.Context(tb), cellScope, incA, store.Query{}, page.Page{})
-	assert.NoError(tb, err, "the store must read the scope of the cell")
-	assert.NoError(tb, cursor.Close(), "the cursor must close")
-	return state
-}
-
-// request returns the request of the callback call of the operation n of the shard sid, on
-// the forward path at step 0. It names the node in its last session, the epoch e and the
-// term of the controller of the tests.
-func (h *harness) request(call protocol.Call, sid shard.ID, n uint64, e epoch.Epoch) *protocol.Request {
-	return &protocol.Request{
-		Scope:           cellScope,
-		Node:            node.ID,
-		Operation:       shard.OperationID{Incarnation: incA, Shard: sid, Sequence: n},
-		NodeIncarnation: h.incarnation,
-		Epoch:           e,
-		ControllerEpoch: cellTerm,
-		Shard:           sid,
-		Call:            call,
-		Path:            protocol.Forward,
-		Role:            shard.RolePrimary,
-	}
-}
-
-// do passes the callback r of the controller of the cell to the agent and runs the agent. It
-// returns the token of the call.
-func (h *harness) do(tb assert.TB, r *protocol.Request) machine.ReplyToken {
-	tb.Helper()
-	to := h.call()
-	md := protocol.Metadata{Caller: controllerIdentity, Version: protocol.Current}
-	h.step(tb, machine.Do{Request: r, Metadata: md, Reply: to})
-	h.run(tb)
-	return to
-}
-
-// placement returns the placement of the shard sid with the writer on the node n at the
-// epoch e. Its range starts at the bytes of sid, so the placements of two shards of the
-// tests never start at one position.
-func placement(sid shard.ID, e epoch.Epoch, n shard.NodeID) shard.Placement {
-	return shard.Placement{
-		Shard:    sid,
-		Range:    shard.Range{Start: slices.Clone(sid.ID128[:])},
-		Epoch:    e,
-		Reserved: e,
-		Replicas: []shard.Replica{{Node: n, Role: shard.RolePrimary}},
-	}
-}
-
-// place commits the placement of the shard sid that names the node at the epoch e, and
-// passes the generation to the agent.
-func (h *harness) place(tb assert.TB, sid shard.ID, e epoch.Epoch) {
-	tb.Helper()
-	h.commitCell(tb, &store.Mutation{Put: []shard.Placement{placement(sid, e, node.ID)}})
-	h.follow(tb)
-}
-
-// unplace commits the placement of the shard sid with its writer on another node at the
-// epoch e, and passes the generation to the agent.
-func (h *harness) unplace(tb assert.TB, sid shard.ID, e epoch.Epoch) {
-	tb.Helper()
-	h.commitCell(tb, &store.Mutation{Put: []shard.Placement{placement(sid, e, otherNode)}})
-	h.follow(tb)
-}
-
-// serve places the shard sid on the node at the epoch e, and passes the add of the operation
-// n of the shard to the agent. The add succeeds.
-func (h *harness) serve(tb assert.TB, sid shard.ID, n uint64, e epoch.Epoch) {
-	tb.Helper()
-	h.place(tb, sid, e)
-	to := h.do(tb, h.request(protocol.Add, sid, n, e))
-	assert.NoError(tb, replyTo[struct{}](tb, h, to).Err, "the add of the shard must succeed")
-}
-
-// tokenOf returns the token of e, an effect that the harness performs, and zero for an
-// effect of another kind.
-func tokenOf(e machine.Effect) machine.Token {
-	switch e := e.(type) {
-	case machine.Read:
-		return e.Token
-	case machine.Join:
-		return e.Token
-	case machine.Acquire:
-		return e.Token
-	case machine.Handle:
-		return e.Token
-	case machine.SendReport:
-		return e.Token
-	case machine.SendDisrupt:
-		return e.Token
-	case machine.SendDone:
-		return e.Token
-	}
-	return 0
-}
-
-// replyTo returns the reply of the agent to the call to, which must have the type
-// machine.Reply[T].
-func replyTo[T machine.Result](tb assert.TB, h *harness, to machine.ReplyToken) machine.Reply[T] {
-	tb.Helper()
-	for _, e := range h.replies {
-		if r, ok := e.(machine.Reply[T]); ok && r.To == to {
-			return r
-		}
-	}
-	tb.Fatalf("the agent has not replied to the call %d", to)
-	return machine.Reply[T]{}
-}
-
 // exercise runs the steps of the case c over an agent that serves, as the controller of its
-// cell, the membership and the application drive it. The steps commit placements,
-// transitions, their ends and records of the controller, pass the generations to the agent
-// one at a time, send callbacks and send them again, answer the held fence acquisitions and
-// handler calls, end Timers, cancel calls, end the session of the node, compact the watch,
-// report faults, and close or stop the agent. The model checks the contract of the agent
-// after every step:
-//   - No step stops the agent with an error, and a stopped agent appends no effect.
-//   - The agent replies to each call once, and never to a call that the runtime cancelled.
-//   - It runs one callback of a shard at a time, and calls the handler for a key again only
+// cell, the membership and the application drive it. Each step does one of these things:
+//   - It commits a placement, a transition, the end of a transition or a record of the
+//     controller.
+//   - It passes the next generation to the agent.
+//   - It sends a callback, or sends a callback again.
+//   - It passes the result of a pending fence acquisition or handler call.
+//   - It ends a Timer, or cancels a call.
+//   - It ends the session of the node, or compacts the watch.
+//   - It reports a fault, or closes or stops the agent.
+//
+// The model checks the contract of the agent after every step:
+//   - No step stops the agent with an error. A stopped agent appends no effect.
+//   - The agent replies to each call once. It never replies to a call that the runtime
+//     cancelled.
+//   - It runs one callback of a shard at a time. It calls the handler for a key again only
 //     after a transient error.
 //   - It starts a tenure only while the node has a session, at the epoch of the placement on
 //     the node that it has read.
@@ -1680,7 +923,7 @@ func replyTo[T machine.Result](tb assert.TB, h *harness, to machine.ReplyToken) 
 //     agent stops.
 //   - It numbers the reports of each incarnation from one.
 //
-// The drain answers every call with success and passes every generation. Every callback then
+// The drain completes every call with success and passes every generation. Every callback then
 // has its reply, unless it is an add whose placement the agent has not read at its epoch, and
 // Token returns a token only for the placement on the node that the agent has read.
 func exercise(c *prop.Case) {

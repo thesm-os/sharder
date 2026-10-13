@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"go.thesmos.sh/core/epoch"
+	"go.thesmos.sh/core/idmap"
 
 	"go.thesmos.sh/sharder/internal/follow"
 	"go.thesmos.sh/sharder/internal/machine"
@@ -20,11 +21,12 @@ import (
 // the cell. The state of each shard marks the operation whose transition the watch shows in
 // flight.
 type watched struct {
-	// placements maps each shard whose placement names the node to the placement.
-	placements map[shard.ID]shard.Placement
+	// placements maps each shard whose placement names the node to the placement. It is
+	// empty before the first snapshot.
+	placements *idmap.Map[shard.ID, shard.Placement]
 	// next maps each shard of the snapshot that the follower reads to its placement. It is
 	// placements once the agent has installed the snapshot.
-	next map[shard.ID]shard.Placement
+	next *idmap.Map[shard.ID, shard.Placement]
 	// record is the record of the controller of the cell, and the zero Cell before the
 	// controller has acquired the scope.
 	record shard.Cell
@@ -49,10 +51,10 @@ func (m *Machine) watch(res *follow.Result, out []machine.Effect) ([]machine.Eff
 	}
 	if p := res.Page; p != nil {
 		if p.First {
-			m.watched.next = make(map[shard.ID]shard.Placement, len(p.Placements))
+			m.watched.next = idmap.NewTyped128[shard.ID, shard.Placement](len(p.Placements))
 		}
 		for i := range p.Placements {
-			m.watched.next[p.Placements[i].Shard] = p.Placements[i]
+			m.watched.next.Set(p.Placements[i].Shard, p.Placements[i])
 		}
 		if !p.Last {
 			return out, nil
@@ -121,10 +123,10 @@ func (m *Machine) apply(ev *store.Event, out []machine.Effect) []machine.Effect 
 		m.track(&mu.Transitions[i])
 	}
 	for i := range mu.Put {
-		m.watched.placements[mu.Put[i].Shard] = mu.Put[i]
+		m.watched.placements.Set(mu.Put[i].Shard, mu.Put[i])
 	}
 	for _, sid := range ev.Removed {
-		delete(m.watched.placements, sid)
+		m.watched.placements.Delete(sid)
 	}
 	if mu.Cell != nil {
 		out = m.record(mu.Cell, out)
@@ -174,7 +176,8 @@ func (m *Machine) record(c *shard.Cell, out []machine.Effect) []machine.Effect {
 // seen.
 func (m *Machine) settle(out []machine.Effect) []machine.Effect {
 	for sid, st := range m.shards.All() {
-		listed := m.watched.placements[sid].Epoch
+		p, _ := m.watched.placements.Get(sid)
+		listed := p.Epoch
 		if t := st.tenure; t != nil && !t.cleaned && t.request.Epoch != listed {
 			st.cleanup(t)
 		}

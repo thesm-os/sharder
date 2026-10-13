@@ -77,6 +77,20 @@
 // One report is in flight at a time, and a report that fails runs again after a backoff.
 // The runtime fills the loads of the replicas from the application.
 //
+// # The agent of the root
+//
+// With Config.Root, the machine is the agent of a controller process in the root scope. The
+// root places the cells of the namespace on controller processes, as the controller of a cell
+// places its shards on nodes. The agent of the root checks each callback of the root as the
+// agent of a cell checks a callback of its controller. It differs from the agent of a cell in
+// three steps:
+//
+//   - It joins the root scope once the namespace exists, without a cell.
+//   - It does not report, because the root refuses reports.
+//   - It calls the handler of an add without a fence acquisition. The handler starts the
+//     controller of the cell, and the acquisition of the scope of the cell fences every older
+//     controller of the cell.
+//
 // # Close
 //
 // During a Close, the machine sends the controller a disruption of the node that ends at the
@@ -102,7 +116,7 @@
 // # Dependency position
 //
 // agent imports the standard library, the packages btree, clock, crypto, epoch, errs, fsm,
-// id/ulid, rand, resilience and telemetry of go.thesmos.sh/core, and the packages budget,
+// id/ulid, idmap, rand, resilience and telemetry of go.thesmos.sh/core, and the packages budget,
 // config, fence, handoff/breakbeforemake, internal/follow, internal/machine, ownership,
 // protocol, replication, shard and store of go.thesmos.sh/sharder.
 package agent

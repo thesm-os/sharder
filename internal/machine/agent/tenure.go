@@ -95,9 +95,9 @@ type operation struct {
 	watched bool
 }
 
-// shardState is what the agent knows about one shard: its newest operation with the kept
-// results of its callbacks, the highest epoch of a callback, the work of the shard, and the
-// tenure of the node.
+// shardState is the state of one shard in the agent. It has the newest operation of the
+// shard with the kept results of its callbacks, and the highest epoch of a callback. It also
+// has the work of the shard and the tenure of the node.
 type shardState struct {
 	// inflight maps the key of each callback and cleanup that waits or runs to its work.
 	inflight map[protocol.Key]*work
@@ -112,7 +112,7 @@ type shardState struct {
 	listing []*work
 	// op is the newest operation of the shard that the agent has seen.
 	op operation
-	// epoch is the highest epoch of the shard that a callback has named.
+	// epoch is the highest epoch of a callback of the shard.
 	epoch epoch.Epoch
 }
 
@@ -201,6 +201,9 @@ func (m *Machine) run(st *shardState, out []machine.Effect) []machine.Effect {
 //   - An add fails with an error that wraps ErrStale when the session of its incarnation has
 //     ended, or when the watched placements no longer list its tenure.
 //   - Any other add acquires the fence of the tenure and then calls the handler.
+//   - The agent of the root calls the handler of an add without a fence acquisition. The
+//     handler starts the controller of a cell, and the acquisition of the scope of the cell
+//     fences every older controller of the cell.
 func (m *Machine) begin(st *shardState, w *work, out []machine.Effect) []machine.Effect {
 	r := &w.request
 	if r.Call == protocol.Drop {
@@ -221,8 +224,8 @@ func (m *Machine) begin(st *shardState, w *work, out []machine.Effect) []machine
 		)
 		return st.finish(w, err, out)
 	}
-	if m.watched.placements[r.Shard].Epoch != r.Epoch {
-		err := fmt.Errorf("%w: the placement of shard %v no longer names node %s at epoch %d",
+	if p, _ := m.watched.placements.Get(r.Shard); p.Epoch != r.Epoch {
+		err := fmt.Errorf("%w: the placement of shard %v no longer lists node %s at epoch %d",
 			ErrStale, r.Shard, r.Node, r.Epoch)
 		return st.finish(w, err, out)
 	}
@@ -234,6 +237,9 @@ func (m *Machine) begin(st *shardState, w *work, out []machine.Effect) []machine
 		Epoch:       r.Epoch,
 	}}
 	st.tenure = t
+	if m.inRoot {
+		return m.handle(st, w, m.settings.add, out)
+	}
 	w.running, st.running = true, w
 	w.effect = m.next()
 	m.effects[w.effect] = w
@@ -252,9 +258,10 @@ func (m *Machine) handle(st *shardState, w *work, timeout time.Duration, out []m
 
 // acquired takes the result of the fence acquisition of an add. After the acquisition,
 // Machine.Token returns the token of the tenure, and the agent calls the handler. An
-// acquisition that fails ends the add with its error, and the tenure does not start. Under
-// ownership.Stop, an acquisition that completes after the session of the incarnation of the
-// add has ended fails with an error that wraps ErrStale.
+// acquisition that fails ends the add with its error, and the tenure does not start.
+// Machine.Token then returns ErrNotWriter for the shard, also when the add replaced an
+// earlier tenure of the shard. Under ownership.Stop, an acquisition that completes after the
+// session of the incarnation of the add has ended fails with an error that wraps ErrStale.
 func (m *Machine) acquired(ev machine.Acquired, out []machine.Effect) []machine.Effect {
 	w, ok := m.effects[ev.Token]
 	if !ok {
@@ -273,6 +280,7 @@ func (m *Machine) acquired(ev machine.Acquired, out []machine.Effect) []machine.
 			m.metrics.refusals.Add(context.Background(), 1)
 		}
 		st.tenure = nil
+		m.unissue(w.request.Shard)
 		err := fmt.Errorf("agent: the fence of shard %v at epoch %d: %w", w.request.Shard, w.request.Epoch, ev.Err)
 		return m.report(m.run(st, st.finish(w, err, out)))
 	}
@@ -284,7 +292,8 @@ func (m *Machine) acquired(ev machine.Acquired, out []machine.Effect) []machine.
 //   - An add that succeeds serves its tenure. After an add that fails, the tenure is failed,
 //     and Machine.Token returns ErrNotWriter for the shard.
 //   - A drop and a cleanup that succeed remove the tenure. A drop that fails leaves the
-//     tenure failed, and its fencing token revoked.
+//     tenure failed, and its fencing token revoked. A cleanup that has failed with an error
+//     that is not transient does not run again after a drop fails.
 //   - A cleanup that fails with a transient error runs again with the same request after a
 //     backoff. Any other error leaves the tenure failed, and the agent logs it.
 //
@@ -312,7 +321,7 @@ func (m *Machine) handled(ev machine.Handled, out []machine.Effect) []machine.Ef
 		t.status = shard.StatusFailed
 		m.unissue(w.request.Shard)
 	} else {
-		t.status, t.cleaned = shard.StatusFailed, w.cleanup
+		t.status, t.cleaned = shard.StatusFailed, t.cleaned || w.cleanup
 	}
 	if err != nil && w.cleanup {
 		m.logger.LogAttrs(context.Background(), slog.LevelError, "agent: the cleanup of a tenure failed",

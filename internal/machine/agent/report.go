@@ -36,8 +36,12 @@ type reports struct {
 // report sends a full report of the replicas of the node to the controller of the cell. The
 // agent sends it later while a report is in flight or waits for its backoff, while the node
 // has no session, while the cell has no controller, and before the agent serves. The
-// runtime fills the loads of the replicas from the application.
+// runtime fills the loads of the replicas from the application. The agent of the root does
+// not report, because the root refuses reports.
 func (m *Machine) report(out []machine.Effect) []machine.Effect {
+	if m.inRoot {
+		return out
+	}
 	m.reports.dirty = true
 	if m.reports.flight != 0 || m.reports.retry != 0 || !m.session.live || m.watched.record.Controller == "" ||
 		m.lc.State() == stateJoining {

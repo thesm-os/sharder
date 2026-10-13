@@ -4,16 +4,13 @@
 package agent_test
 
 import (
-	"errors"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/epoch"
-	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
 
-	"go.thesmos.sh/sharder/handoff/breakbeforemake"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/machine/agent"
 	"go.thesmos.sh/sharder/protocol"
@@ -21,13 +18,8 @@ import (
 	"go.thesmos.sh/sharder/store"
 )
 
-// The errors of the handlers of the tests.
-var (
-	// errBusy is a transient error of a handler.
-	errBusy = errs.WithClass(errors.New("test: the handler is busy"), errs.Transient)
-	// errBroken is an error of a handler that a retry does not fix.
-	errBroken = errs.WithClass(errors.New("test: the handler is broken"), errs.Invalid)
-)
+// otherIdentity is the identity of a caller other than the controller.
+const otherIdentity shard.Identity = "intruder"
 
 // incB is a namespace incarnation other than the incarnation of the tests.
 var incB = shard.NamespaceIncarnation{ID: id.New128([16]byte{0: 0x1a, 15: 0x0b})}
@@ -323,7 +315,7 @@ func TestCallback(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
 			h.place(t, shardA, firstEpoch)
 			h.do(t, h.request(protocol.Add, shardA, 1, firstEpoch))
 			r := h.request(protocol.Add, shardA, 1, firstEpoch)
@@ -336,7 +328,7 @@ func TestCallback(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
 			h.place(t, shardA, firstEpoch)
 			first := h.do(t, h.request(protocol.Add, shardA, 1, firstEpoch))
 			second := h.do(t, h.request(protocol.Add, shardA, 1, firstEpoch))
@@ -366,19 +358,4 @@ func TestCallback(t *testing.T) {
 			assert.Empty(t, h.acquires, "the add must wait for the placement at its epoch")
 		})
 	})
-}
-
-// transition returns the transition of the operation op in the phase phase, from another
-// node to the node of the tests.
-func transition(op shard.OperationID, phase shard.Phase) store.Transition {
-	return store.Transition{
-		Operation:  op,
-		Protocol:   breakbeforemake.Name,
-		From:       store.Endpoint{Node: otherNode, Incarnation: 1, Role: shard.RolePrimary},
-		To:         store.Endpoint{Node: node.ID, Incarnation: 1, Role: shard.RolePrimary},
-		OldEpoch:   firstEpoch,
-		NewEpoch:   secondEpoch,
-		AbortEpoch: thirdEpoch,
-		Phase:      phase,
-	}
 }

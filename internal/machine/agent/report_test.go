@@ -6,7 +6,6 @@ package agent_test
 import (
 	"slices"
 	"testing"
-	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
@@ -17,10 +16,6 @@ import (
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 )
-
-// loadWindow is the default load window of a spec, the time between two reports of a node
-// whose replicas do not change.
-const loadWindow = time.Minute
 
 // logReport is the log message of a report that fails.
 const logReport = "agent: a report failed"
@@ -41,6 +36,15 @@ func TestReport(t *testing.T) {
 				Scope: cellScope, Node: node.ID, NodeIncarnation: h.incarnation, Sequence: 1, Incarnation: incA,
 			}
 			assert.Equal(t, h.reports[0], want, "the first report must describe the node without replicas")
+		})
+
+		t.Run("sends no report as the agent of the root", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, rooted)
+			h.start(t)
+			to := h.host(t, firstEpoch)
+			assert.NoError(t, replyTo[struct{}](t, h, to).Err, "the agent of the root must serve the add of a cell")
+			assert.Empty(t, h.reports, "the agent of the root must not report to the root")
 		})
 
 		t.Run("reports a replica that serves", func(t *testing.T) {
@@ -72,7 +76,7 @@ func TestReport(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.SendReport); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.SendReport); return ok }
 			h.serve(t, shardA, 1, firstEpoch)
 			expect.Length(t, h.pending, 1, "the agent must have one report in flight")
 			h.release(t)
@@ -93,7 +97,7 @@ func TestReport(t *testing.T) {
 			}
 			h.start(t)
 			expect.Length(t, h.reports, 1, "the agent must wait for the backoff")
-			expect.Contains(t, h.logs.logged(), logReport, "the agent must log the failed report")
+			expect.Contains(t, h.logged(), logReport, "the agent must log the failed report")
 			h.elapse(t, firstBackoff)
 			expect.Length(t, h.reports, 2, "the agent must report again after the backoff")
 		})
@@ -143,7 +147,7 @@ func TestReport(t *testing.T) {
 				return protocol.Ack{Sequence: r.Sequence, Generation: gen + 5, ControllerEpoch: cellTerm}, nil
 			}
 			h.elapse(t, loadWindow)
-			assert.Equal(t, h.metrics.values[lagInstrument], 5.0, "the lag must count the generations behind the ack")
+			assert.Equal(t, h.lag(t), 5.0, "the lag must count the generations behind the ack")
 		})
 
 		t.Run("sets the lag behind the last generation that the agent has applied", func(t *testing.T) {
@@ -160,16 +164,17 @@ func TestReport(t *testing.T) {
 				return protocol.Ack{Sequence: r.Sequence, Generation: gen + 5, ControllerEpoch: cellTerm}, nil
 			}
 			h.elapse(t, loadWindow)
-			assert.Equal(t, h.metrics.values[lagInstrument], 5.0, "an older generation must not change the lag")
+			assert.Equal(t, h.lag(t), 5.0, "an older generation must not change the lag")
 		})
 
 		t.Run("sets the lag to zero for an ack at a generation that the agent has applied", func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
-			h.metrics.values[lagInstrument] = 9
+			before := h.metrics.Values(lagInstrument, series...)
 			h.elapse(t, loadWindow)
-			assert.Equal(t, h.metrics.values[lagInstrument], 0.0, "the lag must be zero")
+			assert.Equal(t, h.metrics.Values(lagInstrument, series...), append(before, 0),
+				"the agent must set the lag to zero after the report")
 		})
 
 		t.Run("reports again after the load window", func(t *testing.T) {

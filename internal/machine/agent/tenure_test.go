@@ -17,7 +17,6 @@ import (
 
 	"go.thesmos.sh/sharder/config"
 	"go.thesmos.sh/sharder/fence"
-	"go.thesmos.sh/sharder/internal/follow"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/machine/agent"
 	"go.thesmos.sh/sharder/protocol"
@@ -30,10 +29,6 @@ const (
 	addTimeout  = 30 * time.Second
 	dropTimeout = 10 * time.Second
 )
-
-// firstBackoff is the first backoff of a retry, with the source of randomness of the tests:
-// half of agent.RetryBase.
-const firstBackoff = agent.RetryBase / 2
 
 // logCleanup is the log message of a cleanup that fails.
 const logCleanup = "agent: the cleanup of a tenure failed"
@@ -73,6 +68,16 @@ func TestTenure(t *testing.T) {
 			expect.Equal(t, h.handles[0].Timeout, addTimeout, "the handler must have the timeout of an add")
 		})
 
+		t.Run("calls the handler of an add without a fence acquisition as the agent of the root", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, rooted)
+			h.start(t)
+			to := h.host(t, firstEpoch)
+			assert.NoError(t, replyTo[struct{}](t, h, to).Err, "the agent of the root must serve the add of a cell")
+			expect.Empty(t, h.acquires, "the agent of the root must not acquire a fence")
+			expect.Length(t, h.handles, 1, "the agent of the root must call the handler of the add once")
+		})
+
 		t.Run("serves the tenure of an add that succeeds", func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
@@ -97,6 +102,20 @@ func TestTenure(t *testing.T) {
 			)
 		})
 
+		t.Run("removes the token of the shard when the fence acquisition of a later add fails", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.serve(t, shardA, 1, firstEpoch)
+			h.fence = func(*fence.Token) error { return epoch.ErrFenced }
+			later := h.request(protocol.Add, shardA, 1, firstEpoch)
+			later.Step = 1
+			got := replyTo[struct{}](t, h, h.do(t, later))
+			assert.ErrorIs(t, got.Err, epoch.ErrFenced, "the later add must fail with the error of the fence")
+			_, err := h.machine.Token(shardA)
+			assert.ErrorIs(t, err, agent.ErrNotWriter, "a failed add must not leave the token of the tenure before it")
+		})
+
 		t.Run("leaves the tenure failed when the handler of an add fails", func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
@@ -114,7 +133,7 @@ func TestTenure(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Acquire); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Acquire); return ok }
 			h.place(t, shardA, firstEpoch)
 			h.do(t, h.request(protocol.Add, shardA, 1, firstEpoch))
 			queued := h.request(protocol.Add, shardA, 1, firstEpoch)
@@ -123,7 +142,7 @@ func TestTenure(t *testing.T) {
 			h.unplace(t, shardA, firstEpoch)
 			h.release(t)
 			assert.ErrorIs(t, replyTo[struct{}](t, h, to).Err, agent.ErrStale,
-				"an add whose placement no longer names the node must fail")
+				"an add whose placement no longer lists the node must fail")
 		})
 
 		t.Run("returns ErrStale for an add whose session ends before its turn", func(t *testing.T) {
@@ -157,7 +176,7 @@ func TestTenure(t *testing.T) {
 				s.spec.Ownership = config.Selection{Config: json.RawMessage(stopOnLoss)}
 			})
 			h.start(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Acquire); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Acquire); return ok }
 			h.place(t, shardA, firstEpoch)
 			to := h.do(t, h.request(protocol.Add, shardA, 1, firstEpoch))
 			h.step(t, machine.SessionEnded{Token: h.join})
@@ -175,7 +194,7 @@ func TestTenure(t *testing.T) {
 				s.spec.Ownership = config.Selection{Config: json.RawMessage(stopOnLoss)}
 			})
 			h.start(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Acquire); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Acquire); return ok }
 			h.fence = func(*fence.Token) error { return epoch.ErrFenced }
 			h.place(t, shardA, firstEpoch)
 			to := h.do(t, h.request(protocol.Add, shardA, 1, firstEpoch))
@@ -189,7 +208,7 @@ func TestTenure(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Acquire); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Acquire); return ok }
 			h.place(t, shardA, firstEpoch)
 			to := h.do(t, h.request(protocol.Add, shardA, 1, firstEpoch))
 			h.step(t, machine.SessionEnded{Token: h.join})
@@ -240,7 +259,7 @@ func TestTenure(t *testing.T) {
 			h := newHarness(t)
 			h.start(t)
 			h.serve(t, shardA, 1, firstEpoch)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
 			h.do(t, h.request(protocol.Drop, shardA, 2, firstEpoch))
 			_, err := h.machine.Token(shardA)
 			expect.ErrorIs(t, err, epoch.ErrFenced, "the drop must revoke the token of the tenure")
@@ -257,7 +276,7 @@ func TestTenure(t *testing.T) {
 			expect.ErrorIs(t, got.Err, errBroken, "the drop must fail with the error of the handler")
 			expect.Equal(t, h.observed(t, shardA).Status, shard.StatusFailed, "the replica must be failed")
 			_, err := h.machine.Token(shardA)
-			expect.ErrorIs(t, err, epoch.ErrFenced, "the token must stay revoked")
+			expect.ErrorIs(t, err, epoch.ErrFenced, "the token must remain revoked")
 		})
 
 		t.Run("cleans up a tenure that the placements no longer list", func(t *testing.T) {
@@ -284,7 +303,7 @@ func TestTenure(t *testing.T) {
 			h := newHarness(t)
 			h.start(t)
 			h.serve(t, shardA, 1, firstEpoch)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
 			h.unplace(t, shardA, secondEpoch)
 			h.commitCell(t, &store.Mutation{})
 			h.follow(t)
@@ -325,9 +344,9 @@ func TestTenure(t *testing.T) {
 			h.follow(t)
 			expect.Length(t, h.handles, 2, "the agent must not run a failed cleanup again")
 			expect.Equal(t, h.observed(t, shardA).Status, shard.StatusFailed, "the replica must be failed")
-			expect.Contains(t, h.logs.logged(), logCleanup, "the agent must log the failed cleanup")
+			expect.Contains(t, h.logged(), logCleanup, "the agent must log the failed cleanup")
 			_, err := h.machine.Token(shardA)
-			expect.ErrorIs(t, err, epoch.ErrFenced, "the token of the tenure must stay revoked")
+			expect.ErrorIs(t, err, epoch.ErrFenced, "the token of the tenure must remain revoked")
 		})
 
 		t.Run("calls the handler for a drop of a tenure whose cleanup failed", func(t *testing.T) {
@@ -343,12 +362,42 @@ func TestTenure(t *testing.T) {
 			expect.Length(t, h.handles, 3, "the drop must call the handler")
 		})
 
+		t.Run("cleans up a tenure whose drop failed once the placements no longer list it", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.serve(t, shardA, 1, firstEpoch)
+			h.handler = func(*protocol.Request) error { return errBroken }
+			got := replyTo[struct{}](t, h, h.do(t, h.request(protocol.Drop, shardA, 2, firstEpoch)))
+			assert.ErrorIs(t, got.Err, errBroken, "the drop must fail with the error of the handler")
+			h.handler = nil
+			h.unplace(t, shardA, secondEpoch)
+			assert.Length(t, h.handles, 3, "the agent must clean up the tenure that its drop left")
+			expect.Equal(t, h.handles[2].Request.Path, protocol.Cleanup, "the last call must be the cleanup")
+		})
+
+		t.Run("does not run a failed cleanup again after a drop of the tenure fails", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.serve(t, shardA, 1, firstEpoch)
+			h.handler = func(*protocol.Request) error { return errBroken }
+			h.unplace(t, shardA, secondEpoch)
+			h.handler = func(*protocol.Request) error { return errBusy }
+			got := replyTo[struct{}](t, h, h.do(t, h.request(protocol.Drop, shardA, 2, firstEpoch)))
+			assert.ErrorIs(t, got.Err, errBusy, "the drop must fail with the error of the handler")
+			h.commitCell(t, &store.Mutation{})
+			h.follow(t)
+			assert.Length(t, h.handles, 3,
+				"the agent must not run a cleanup again after an error that is not transient")
+		})
+
 		t.Run("ends the cleanup of a tenure that a drop removed without an effect", func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
 			h.serve(t, shardA, 1, firstEpoch)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
 			h.do(t, h.request(protocol.Drop, shardA, 2, firstEpoch))
 			h.unplace(t, shardA, secondEpoch)
 			h.release(t)
@@ -381,7 +430,7 @@ func TestTenure(t *testing.T) {
 			h := newHarness(t)
 			h.start(t)
 			h.serve(t, shardA, 1, firstEpoch)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
 			h.do(t, h.request(protocol.Drop, shardA, 2, firstEpoch))
 			queued := h.request(protocol.Add, shardA, 2, firstEpoch)
 			queued.Path, queued.Step = protocol.Abort, 1
@@ -396,7 +445,7 @@ func TestTenure(t *testing.T) {
 			h := newHarness(t)
 			h.start(t)
 			h.serve(t, shardA, 1, firstEpoch)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
 			h.do(t, h.request(protocol.Drop, shardA, 2, firstEpoch))
 			add := h.request(protocol.Add, shardA, 2, firstEpoch)
 			add.Path, add.Step = protocol.Abort, 1
@@ -438,7 +487,7 @@ func TestTenure(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
 			h.place(t, shardA, firstEpoch)
 			to := h.do(t, h.request(protocol.Add, shardA, 1, firstEpoch))
 			h.step(t, machine.Cancelled{Reply: to})
@@ -456,7 +505,7 @@ func TestTenure(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
 			h.place(t, shardA, firstEpoch)
 			to := h.do(t, h.request(protocol.Add, shardA, 1, firstEpoch))
 			h.step(t, machine.Cancelled{Reply: to})
@@ -470,7 +519,7 @@ func TestTenure(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
 			h.place(t, shardA, firstEpoch)
 			to := h.do(t, h.request(protocol.Add, shardA, 1, firstEpoch))
 			h.step(t, machine.Stopped{})
@@ -558,29 +607,4 @@ func TestTenure(t *testing.T) {
 			runtime.KeepAlive(h)
 		})
 	})
-}
-
-// observed returns what the last report of the agent says about the replica of the shard
-// sid.
-func (h *harness) observed(tb assert.TB, sid shard.ID) shard.Observed {
-	tb.Helper()
-	assert.NotEmpty(tb, h.reports, "the agent must have reported")
-	last := h.reports[len(h.reports)-1]
-	i := slices.IndexFunc(last.Replicas, func(o shard.Observed) bool { return o.Shard == sid })
-	assert.True(tb, i >= 0, "the last report must have the replica")
-	return last.Replicas[i]
-}
-
-// compact ends the watch of the scope of the cell with store.ErrCompacted, as a store does
-// after a compaction. It then ends the backoff of the follower, and runs the agent until it
-// has read and installed a new snapshot.
-func (h *harness) compact(tb assert.TB) {
-	tb.Helper()
-	i := slices.IndexFunc(h.watches, func(w machine.Watch) bool { return w.Scope == cellScope })
-	assert.True(tb, i >= 0, "the agent must watch the scope of its cell")
-	w := h.watches[i]
-	h.watches = slices.Delete(h.watches, i, i+1)
-	h.step(tb, machine.Watched{Err: store.ErrCompacted, Token: w.Token})
-	h.elapse(tb, follow.RetryBase/2)
-	h.follow(tb)
 }

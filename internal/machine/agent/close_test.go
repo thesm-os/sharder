@@ -18,13 +18,8 @@ import (
 	"go.thesmos.sh/sharder/shard"
 )
 
-// The times of the Close of the tests.
-const (
-	// grace is the time between a Close and its deadline.
-	grace = 30 * time.Second
-	// retryAfter is the RetryAfter of a deferral of a disruption.
-	retryAfter = 2 * time.Second
-)
+// retryAfter is the RetryAfter of a deferral of a disruption.
+const retryAfter = 2 * time.Second
 
 // logDisruption is the log message of a disruption that fails.
 const logDisruption = "agent: a disruption of the node failed"
@@ -147,7 +142,7 @@ func TestClose(t *testing.T) {
 				return budget.Decision{}, protocol.ErrUnreachable
 			}
 			h.close(t, origin.Add(grace))
-			expect.Contains(t, h.logs.logged(), logDisruption, "the agent must log the failed disruption")
+			expect.Contains(t, h.logged(), logDisruption, "the agent must log the failed disruption")
 			h.elapse(t, firstBackoff)
 			expect.Length(t, h.disrupts, 2, "the agent must ask again after the backoff")
 		})

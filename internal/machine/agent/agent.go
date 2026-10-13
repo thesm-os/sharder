@@ -18,6 +18,7 @@ import (
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/fsm"
 	"go.thesmos.sh/core/id/ulid"
+	"go.thesmos.sh/core/idmap"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/telemetry"
 
@@ -66,6 +67,10 @@ type Config struct {
 	// Unauthenticated makes the agent skip the identity of each caller, for a transport
 	// that authenticates no caller. The checks of epochs and incarnations still apply.
 	Unauthenticated bool
+	// Root makes the machine the agent of a controller process in the root scope. That agent
+	// takes the callbacks of the root that place cells on the process. Node.Cell is empty for
+	// the agent of the root.
+	Root bool
 }
 
 // validate returns an error that wraps ErrConfig for the first field of c that New refuses.
@@ -88,6 +93,9 @@ func (c *Config) validate() error {
 	}
 	if c.Node.Address == "" {
 		return fmt.Errorf("%w: no address of the node", ErrConfig)
+	}
+	if c.Root && c.Node.Cell != "" {
+		return fmt.Errorf("%w: node %s of the root has the cell %s", ErrConfig, c.Node.ID, c.Node.Cell)
 	}
 	return nil
 }
@@ -200,8 +208,8 @@ type Machine struct {
 	// effects maps the token of each Acquire, Handle and Timer of a callback or a cleanup to
 	// the work that waits for it.
 	effects map[machine.Token]*work
-	// cellScope is the scope of the cell of the node, and empty before the agent knows its
-	// cell.
+	// cellScope is the scope that the node joins: the scope of its cell, or the root scope
+	// for the agent of the root. It is empty before the agent knows it.
 	cellScope shard.Scope
 	// rootScope is the root scope of the namespace.
 	rootScope shard.Scope
@@ -231,11 +239,13 @@ type Machine struct {
 	tokens machine.Token
 	// incarnation is the namespace incarnation, and zero before the agent knows it.
 	incarnation shard.NamespaceIncarnation
-	// want is the shard of the cell that Config.Node names in the root scope, and the zero
-	// ID for a node without a cell.
+	// want is the shard of the cell of Config.Node in the root scope, and the zero ID for a
+	// node without a cell.
 	want shard.ID
 	// unauthenticated makes the agent skip the identity of callers.
 	unauthenticated bool
+	// inRoot is true for the agent of a controller process in the root scope.
+	inRoot bool
 }
 
 var _ machine.Machine = (*Machine)(nil)
@@ -245,6 +255,7 @@ var _ machine.Machine = (*Machine)(nil)
 // Error modes:
 //   - an error that wraps ErrConfig for a nil cfg, and for a cfg without Clock, Reporter,
 //     Logger, Registry, or the ID or the address of Node.
+//   - an error that wraps ErrConfig for a cfg of the agent of the root whose node has a cell.
 //   - an error that wraps ErrConfig and the error of shard.ID.UnmarshalText for a Node
 //     whose cell is not the text of a shard ID.
 //   - an error that wraps ErrConfig and the error of follow.New for a cfg without Rand or
@@ -273,11 +284,13 @@ func New(cfg *Config) (*Machine, error) {
 		grants:          btree.NewMapFunc[shard.ID, grant](shard.ID.Compare),
 		shards:          btree.NewMapFunc[shard.ID, *shardState](shard.ID.Compare),
 		effects:         make(map[machine.Token]*work),
+		watched:         watched{placements: idmap.NewTyped128[shard.ID, shard.Placement](0)},
 		node:            cfg.Node,
 		rootScope:       shard.Scope{Namespace: cfg.Namespace},
 		want:            want,
 		lc:              lifecycle.Start(struct{}{}),
 		unauthenticated: cfg.Unauthenticated,
+		inRoot:          cfg.Root,
 	}
 	m.published.Store(m.grants.Clone())
 	root, err := follow.New(&follow.Config{Rand: cfg.Rand, Tokens: &m.tokens, Scope: m.rootScope})

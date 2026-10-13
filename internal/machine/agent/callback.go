@@ -46,7 +46,7 @@ func (m *Machine) do(ev *machine.Do, out []machine.Effect) []machine.Effect {
 	}
 	w = &work{state: st, request: *r, digest: digest, waiters: []machine.ReplyToken{ev.Reply}}
 	st.inflight[key] = w
-	if r.Call == protocol.Add && m.watched.placements[r.Shard].Epoch != r.Epoch {
+	if p, _ := m.watched.placements.Get(r.Shard); r.Call == protocol.Add && p.Epoch != r.Epoch {
 		st.listing = append(st.listing, w)
 		return out
 	}

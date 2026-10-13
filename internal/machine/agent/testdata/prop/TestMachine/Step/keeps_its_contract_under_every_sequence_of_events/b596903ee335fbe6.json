@@ -1,0 +1,180 @@
+{
+  "store": 1,
+  "definition": "8.0.0",
+  "property": "an agent keeps its contract under every sequence of events",
+  "identity": {
+    "assertion": "equal",
+    "file": "agent_test.go",
+    "line": 609
+  },
+  "choices": "prop1:AAAAAQAAAAEAAAABAAEAAAABAAEAAQAAAAEAAAABAAAAAAAAAAAAAAABAAEAAAABAAAAAAAAAAEABwABAAQAAAAAAAAAAAAAAAAAAQAGAAAAAAABAAYAAAAAAAEABAAAAAAAAAAAAAAAAQABAAYAAAABAAEAAAAAAAAAAAAA",
+  "counterexample": [
+    {
+      "label": "stop at the end of the lease",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "shard",
+      "value": {
+        "type": "string",
+        "value": "0200000000000000000000000A"
+      }
+    },
+    {
+      "label": "shard",
+      "value": {
+        "type": "string",
+        "value": "0200000000000000000000000A"
+      }
+    },
+    {
+      "label": "writer",
+      "value": {
+        "type": "string",
+        "value": "node-a"
+      }
+    },
+    {
+      "label": "shard",
+      "value": {
+        "type": "string",
+        "value": "0200000000000000000000000A"
+      }
+    },
+    {
+      "label": "call",
+      "value": {
+        "type": "int",
+        "value": 1
+      }
+    },
+    {
+      "label": "next operation",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "earlier epoch",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "path",
+      "value": {
+        "type": "int",
+        "value": 1
+      }
+    },
+    {
+      "label": "step",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "effect",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "outcome",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "effect",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "outcome",
+      "value": {
+        "type": "null"
+      }
+    },
+    {
+      "label": "shard",
+      "value": {
+        "type": "string",
+        "value": "0200000000000000000000000A"
+      }
+    },
+    {
+      "label": "call",
+      "value": {
+        "type": "int",
+        "value": 1
+      }
+    },
+    {
+      "label": "next operation",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "earlier epoch",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "path",
+      "value": {
+        "type": "int",
+        "value": 1
+      }
+    },
+    {
+      "label": "step",
+      "value": {
+        "type": "int",
+        "value": 1
+      }
+    },
+    {
+      "label": "effect",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "outcome",
+      "value": {
+        "type": "map",
+        "entries": []
+      }
+    },
+    {
+      "label": "shard",
+      "value": {
+        "type": "string",
+        "value": "0200000000000000000000000A"
+      }
+    },
+    {
+      "label": "writer",
+      "value": {
+        "type": "string",
+        "value": "node-a"
+      }
+    }
+  ],
+  "found": "2026-10-13"
+}

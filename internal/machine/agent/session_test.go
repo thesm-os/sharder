@@ -19,10 +19,6 @@ import (
 	"go.thesmos.sh/sharder/protocol"
 )
 
-// stopOnLoss is the configuration of exclusive ownership whose writers stop at the deadline
-// of their lease.
-const stopOnLoss = `{"fenced":true,"lease":{"onLoss":"stop"}}`
-
 // The errors of the joins of the tests.
 var (
 	// errOutage is a transient error of a join.
@@ -158,7 +154,7 @@ func TestSession(t *testing.T) {
 		t.Run("serves when its first session starts after the first snapshot", func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
-			h.held = func(e machine.Effect) bool { _, ok := e.(machine.Join); return ok }
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Join); return ok }
 			started := h.call()
 			h.step(t, machine.Started{Reply: started})
 			h.run(t)
@@ -170,7 +166,7 @@ func TestSession(t *testing.T) {
 		t.Run("serves when its first snapshot arrives after the first session", func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
-			h.held = func(e machine.Effect) bool { r, ok := e.(machine.Read); return ok && r.Scope == cellScope }
+			h.pause = func(e machine.Effect) bool { r, ok := e.(machine.Read); return ok && r.Scope == cellScope }
 			started := h.call()
 			h.step(t, machine.Started{Reply: started})
 			h.run(t)
@@ -182,7 +178,7 @@ func TestSession(t *testing.T) {
 		t.Run("joins again when its first session ends before it serves", func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
-			h.held = func(e machine.Effect) bool { r, ok := e.(machine.Read); return ok && r.Scope == cellScope }
+			h.pause = func(e machine.Effect) bool { r, ok := e.(machine.Read); return ok && r.Scope == cellScope }
 			started := h.call()
 			h.step(t, machine.Started{Reply: started})
 			h.run(t)

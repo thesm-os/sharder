@@ -20,9 +20,6 @@ import (
 // maxCause is the most bytes of the message of the cause of a fault that a report carries.
 const maxCause = 1024
 
-// errDisk is the cause of the faults of the tests.
-var errDisk = errors.New("test: the disk fails")
-
 // TestFault checks the faults that the application reports in the replicas of the node.
 func TestFault(t *testing.T) {
 	t.Parallel()

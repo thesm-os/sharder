@@ -116,6 +116,30 @@ func TestNamespace(t *testing.T) {
 			assert.ErrorIs(t, h.machine.Err(), agent.ErrConfig, "a node without a cell must have one cell to join")
 		})
 
+		t.Run("joins the root scope as the agent of the root", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, rooted)
+			h.start(t)
+			assert.Length(t, h.joins, 1, "the agent of the root must join once")
+			assert.Equal(t, h.joins[0].Scope, rootScope, "the agent of the root must join the root scope")
+		})
+
+		t.Run("watches the root scope for its node as the agent of the root", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, rooted)
+			h.start(t)
+			assert.Length(t, h.watches, 1, "the agent of the root must watch one scope")
+			expect.Equal(t, h.watches[0].Scope, rootScope, "the agent of the root must watch the root scope")
+			expect.Equal(t, h.watches[0].Node, node.ID, "the watch must select the changes of the node")
+		})
+
+		t.Run("joins the root scope of a namespace without a cell as the agent of the root", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, rooted, func(s *setup) { s.root.Put = nil })
+			h.start(t)
+			assert.Length(t, h.joins, 1, "the agent of the root must not wait for a cell")
+		})
+
 		t.Run("stops when a read of the root scope fails", func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)

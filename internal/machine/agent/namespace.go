@@ -67,32 +67,25 @@ func (m *Machine) rooted(res *follow.Result, out []machine.Effect) ([]machine.Ef
 	return m.discover(out)
 }
 
-// discover joins the cell of the node once the root scope has the spec of the namespace and
-// a cell. A node without a cell takes the only cell of the namespace. The agent then stops
-// reading the root scope, joins the cell, and reads the scope of the cell.
+// discover joins the scope of the node once the root scope has the spec of the namespace. The
+// agent of a cell also waits until the root scope has a cell. The agent then stops the
+// follower of the root scope and joins the scope of the node. A new follower reads that scope
+// for the node.
 //
 // Error modes:
-//   - an error that wraps ErrConfig for a cell of the node that the namespace does not
-//     have, and for a node without a cell in a namespace of more than one cell.
+//   - the error of scope.
 //   - the error of resolve for a spec that the agent cannot apply.
 func (m *Machine) discover(out []machine.Effect) ([]machine.Effect, error) {
-	if m.ns.spec == nil || len(m.ns.cells) == 0 {
+	if m.ns.spec == nil || !m.inRoot && len(m.ns.cells) == 0 {
 		return out, nil
 	}
-	cell := m.want
-	if cell.IsZero() && len(m.ns.cells) > 1 {
-		return out, fmt.Errorf("%w: node %s has no cell, and namespace %s has %d cells",
-			ErrConfig, m.node.ID, m.rootScope.Namespace, len(m.ns.cells))
-	}
-	if cell.IsZero() {
-		cell = m.ns.cells[0]
-	}
-	if !slices.Contains(m.ns.cells, cell) {
-		return out, fmt.Errorf("%w: namespace %s has no cell %s", ErrConfig, m.rootScope.Namespace, m.node.Cell)
-	}
-	s, err := resolve(m.registry, m.provided, m.ns.spec)
+	scope, err := m.scope()
+	var s settings
 	if err == nil {
-		m.cellScope = shard.Scope{Namespace: m.rootScope.Namespace, Cell: shard.CellID(ulid.Format(cell.ID()))}
+		s, err = resolve(m.registry, m.provided, m.ns.spec)
+	}
+	if err == nil {
+		m.cellScope = scope
 		m.cell, err = follow.New(&follow.Config{
 			Rand:        m.rand,
 			Tokens:      &m.tokens,
@@ -110,4 +103,30 @@ func (m *Machine) discover(out []machine.Effect) ([]machine.Effect, error) {
 	m.settings, m.incarnation = s, m.ns.incarnation
 	out = m.join(m.root.Stop(out))
 	return m.cell.Start(out), nil
+}
+
+// scope returns the scope that the node joins: the root scope for the agent of the root, and
+// the scope of the cell of the node otherwise. A node without a cell takes the only cell of
+// the namespace.
+//
+// Error modes:
+//   - an error that wraps ErrConfig for a cell of the node that the namespace does not
+//     have, and for a node without a cell in a namespace of more than one cell.
+func (m *Machine) scope() (shard.Scope, error) {
+	if m.inRoot {
+		return m.rootScope, nil
+	}
+	cell := m.want
+	if cell.IsZero() && len(m.ns.cells) > 1 {
+		return shard.Scope{}, fmt.Errorf("%w: node %s has no cell, and namespace %s has %d cells",
+			ErrConfig, m.node.ID, m.rootScope.Namespace, len(m.ns.cells))
+	}
+	if cell.IsZero() {
+		cell = m.ns.cells[0]
+	}
+	if !slices.Contains(m.ns.cells, cell) {
+		return shard.Scope{}, fmt.Errorf("%w: namespace %s has no cell %s", ErrConfig, m.rootScope.Namespace,
+			m.node.Cell)
+	}
+	return shard.Scope{Namespace: m.rootScope.Namespace, Cell: shard.CellID(ulid.Format(cell.ID()))}, nil
 }
