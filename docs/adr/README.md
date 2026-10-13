@@ -48,3 +48,4 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0037](0037-replica-separates-new-and-start.md) | Package replica constructs an agent with New and starts it with Agent.Start | Accepted |
 | [0038](0038-example-programs-are-one-file.md) | An example keeps its program in main.go and its application in a package under internal | Superseded by [0039](0039-example-applications-are-in-main.md) |
 | [0039](0039-example-applications-are-in-main.md) | An example keeps its application in main.go, and examples/internal keeps the storage that the examples share | Accepted |
+| [0040](0040-failed-add-is-a-fault-of-the-node-incarnation.md) | A definite failure of an add is a fault of the shard on the node incarnation | Accepted |
