@@ -36,7 +36,8 @@
 // one event per item of a Watch or a WatchViews, until an error or an Unwatch ends the
 // watch. For a Campaign and a Join, it passes a second event when the term or the session
 // ends. Unwatch, Resign and Leave have the token of the effect that started the watch, the
-// term or the session, and they have no result of their own.
+// term or the session. Unwatch and Resign have no result of their own. The runtime passes
+// the result of a Leave as a [Left] before the end of the session.
 //
 // A server or the application calls a machine through an event with a [ReplyToken], such
 // as a [Do] or a [Close]. The machine replies with a Reply that has the same token. It

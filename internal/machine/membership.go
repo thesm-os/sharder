@@ -62,10 +62,10 @@ var _ Event = SessionEnded{}
 func (SessionEnded) event() {}
 
 // Leave is the end of the session of a [Join]. The runtime ends the session through
-// membership.Session.Leave. It then cancels the context of the join, so a session whose
-// Leave failed still ends at its deadline. The runtime passes a [SessionEnded] for the
-// session. For a join that stops without a session, it passes a [Joined] with an error.
-// Leave has no result of its own.
+// membership.Session.Leave, and passes the result as a [Left]. It then cancels the context
+// of the join, so a session whose Leave failed still ends at its deadline. The runtime passes
+// a [SessionEnded] for the session. For a join that stops without a session, it passes a
+// [Joined] with an error and no Left.
 type Leave struct {
 	// Token is the token of the Join.
 	Token Token
@@ -75,6 +75,19 @@ var _ Effect = Leave{}
 
 // effect marks Leave as an Effect.
 func (Leave) effect() {}
+
+// Left is the result of a [Leave]. The [SessionEnded] of the session follows it.
+type Left struct {
+	// Err is the error of membership.Session.Leave, or nil.
+	Err error
+	// Token is the token of the Join.
+	Token Token
+}
+
+var _ Event = Left{}
+
+// event marks Left as an Event.
+func (Left) event() {}
 
 // WatchViews is a watch of the views of a scope through membership.Membership.Watch. The
 // runtime passes each item of the watch as a [Viewed], until an error or an [Unwatch] ends

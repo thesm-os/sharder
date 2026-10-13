@@ -66,6 +66,10 @@ func (Submit) event() {}
 // Disrupt is a planned disruption that a controller receives through
 // protocol.ControllerServer.Disrupt. The machine replies with a Reply[budget.Decision].
 type Disrupt struct {
+	// Deadline is the deadline of the context of the call, and the zero time for a context
+	// without a deadline. A deferral waits for the admission until WaitMargin before
+	// Deadline.
+	Deadline time.Time
 	// Disruption is a copy of the disruption.
 	Disruption *budget.Disruption
 	// Metadata is the metadata of the call.
@@ -78,6 +82,10 @@ var _ Event = Disrupt{}
 
 // event marks Disrupt as an Event.
 func (Disrupt) event() {}
+
+// WaitMargin is the time before the deadline of a waiting Disrupt at which the controller
+// replies with the deferral, so the caller receives the reply before its deadline.
+const WaitMargin = time.Second
 
 // Done is the end of a reservation that a controller receives through
 // protocol.ControllerServer.Done. The machine replies with a Reply[struct{}].
@@ -128,11 +136,14 @@ var _ Event = Recovered{}
 // event marks Recovered as an Event.
 func (Recovered) event() {}
 
-// Close is the call with which the application closes an agent before its process stops.
-// The machine replies with a Reply[struct{}].
+// Close is the call with which the application closes an agent before its process stops,
+// and with which a controller process closes the agent of its root. The machine replies
+// with a Reply[struct{}].
 type Close struct {
 	// Deadline is the deadline of the context of the call, and the zero time for a context
-	// without a deadline. The disruption that an agent sends for its node ends at Deadline.
+	// without a deadline. The agent of a cell sends a disruption of its node that ends at
+	// Deadline. The agent of the root ends its session without a disruption and ignores the
+	// field.
 	Deadline time.Time
 	// Reply is the token of the call.
 	Reply ReplyToken

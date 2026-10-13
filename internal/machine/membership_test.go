@@ -21,6 +21,7 @@ func TestMembership(t *testing.T) {
 	})
 	events(t, []member{
 		{name: "Joined", give: machine.Joined{}},
+		{name: "Left", give: machine.Left{}},
 		{name: "SessionEnded", give: machine.SessionEnded{}},
 		{name: "Viewed", give: machine.Viewed{}},
 	})
