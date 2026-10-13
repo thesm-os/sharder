@@ -17,6 +17,10 @@ type Handle struct {
 	// Request is the request of a callback, or the request of a cleanup that the agent
 	// builds itself.
 	Request *protocol.Request
+	// Fence is the fencing token of the tenure of the request: the tenure that an add starts,
+	// or the tenure that a drop ends. The agent of the root starts a tenure without a fence
+	// acquisition.
+	Fence fence.Token
 	// Token is the token of the effect.
 	Token Token
 	// Timeout is the timeout of the step of the request. The runtime cancels the context
