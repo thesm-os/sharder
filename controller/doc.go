@@ -61,7 +61,8 @@
 // # Dependency position
 //
 // controller imports the standard library, the packages clock, epoch, id/ulid, rand, task
-// and telemetry of go.thesmos.sh/core, and the packages budget, config, internal/driver,
-// internal/machine, internal/machine/agent, internal/machine/cell, internal/machine/root,
-// membership, proposal, protocol, shard and store of go.thesmos.sh/sharder.
+// and telemetry of go.thesmos.sh/core, and the packages budget, config, fence,
+// internal/driver, internal/machine, internal/machine/agent, internal/machine/cell,
+// internal/machine/root, membership, proposal, protocol, shard and store of
+// go.thesmos.sh/sharder.
 package controller

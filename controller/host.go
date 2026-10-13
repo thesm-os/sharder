@@ -13,6 +13,7 @@ import (
 	"go.thesmos.sh/core/id/ulid"
 	"go.thesmos.sh/core/task"
 
+	"go.thesmos.sh/sharder/fence"
 	"go.thesmos.sh/sharder/internal/driver"
 	"go.thesmos.sh/sharder/internal/machine/cell"
 	"go.thesmos.sh/sharder/protocol"
@@ -46,14 +47,15 @@ var _ driver.Handler = (*host)(nil)
 // AddShard starts the controller of the cell r.Shard at the term r.Epoch, and returns once
 // the acquisition of the scope of the cell has applied. A controller of the cell at that
 // term that still runs serves the add, so a repeated add does not start a second
-// controller.
+// controller. The acquisition of the scope fences the older controllers of the cell, so
+// AddShard does not read the fencing token of the add.
 //
 // Error modes:
 //   - an error that wraps the error with which the controller of the cell replies to
 //     Started, such as the error of an acquisition that a newer controller has fenced.
 //   - an error that wraps the cause of ctx when ctx ends before the acquisition has applied.
 //   - an error that wraps driver.ErrStopped when the run of the process ends first.
-func (h *host) AddShard(ctx context.Context, r *protocol.Request) error {
+func (h *host) AddShard(ctx context.Context, r *protocol.Request, _ *fence.Token) error {
 	id := shard.CellID(ulid.Format(r.Shard.ID()))
 	d, err := h.start(id, r) //nolint:contextcheck // the context of the run bounds a controller of a cell.
 	//dokimi:mutate-skip ror-true: start fails only once the run of the process has ended. ctx derives from the context of that run, so Ready returns the cause of ctx then
