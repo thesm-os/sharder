@@ -11,12 +11,14 @@
 // replica.Runner opens each tenure of the node through the bank of the process. The bank loads
 // the deposits of the accounts of the shard into memory, and keeps this activation of the
 // accounts until the drop of the tenure. The server of the process serves the deposits of the
-// active accounts. The client deposits into every account three times:
+// active accounts. Each deposit contains the shard and the epoch of the route that the client
+// took. The client deposits into every account three times:
 //
 //   - node-a serves the first deposit of every account, because it has every shard.
 //   - The second deposit of every account takes its route before node-b starts. The controller
 //     then moves half of the shards to node-b. node-a refuses the deposit of each moved account
-//     with a NotOwnerError, and router.Do routes the deposit again to node-b.
+//     with a NotOwnerError, which has the generation of the cell that the agent of node-a has
+//     observed. router.Do then routes the deposit again to node-b.
 //   - The third deposit of every account takes its route after the move.
 //
 // The program then writes one line per account with its deposits, and a last line with the
@@ -276,10 +278,13 @@ func (b *bank) accountsOf(r shard.Range) []string {
 	return found
 }
 
-// depositRequest is the request of server.Deposit.
+// depositRequest is the request of server.Deposit. It contains the shard and the epoch of the
+// route that the client took for the account.
 type depositRequest struct {
 	// account is the name of the account, which is its key.
 	account string
+	// shard is the shard of the route that the client took for the account.
+	shard shard.ID
 	// epoch is the epoch of the route that the client took for the account.
 	epoch epoch.Epoch
 }
@@ -291,9 +296,10 @@ type depositResult struct {
 }
 
 // server serves the deposits of the accounts that the bank of its node has activated. It
-// serves a deposit only while the bank has the activation of the shard of the account at the
-// epoch of the route of the client. It refuses every other deposit with a *router.NotOwnerError
-// before it starts the deposit, so router.Do routes the account again.
+// serves a deposit only while the bank has the activation of the shard of the request at the
+// epoch of the request, and the activation has the account. It refuses every other deposit
+// with a *router.NotOwnerError before it starts the deposit, so router.Do routes the account
+// again.
 //
 // # Concurrency
 //
@@ -301,52 +307,47 @@ type depositResult struct {
 type server struct {
 	// bank is the bank of the node.
 	bank *bank
-	// router is the router of the process. It returns the shard of each account.
-	router router.Router
+	// agent is the agent of the node. It returns the observation that a refusal contains.
+	agent *replica.Agent
 }
 
-// Deposit appends one deposit to the deposits of req.account in the activation of its shard,
+// Deposit appends one deposit to the deposits of req.account in the activation of req.shard,
 // and writes the deposits of the account in a transaction that checks the fence with the
 // token of the tenure. It returns the number of the deposit.
 //
 // Error modes:
-//   - an error that wraps the error of Router.Route, such as router.ErrNoRoute.
-//   - a *router.NotOwnerError when the bank does not have the activation of the shard of the
-//     account at req.epoch. The error has the cell, the generation and the namespace
-//     incarnation that the router of the server has observed, and the writer of its route as
-//     the hint.
+//   - a *router.NotOwnerError when the bank does not have the activation of req.shard at
+//     req.epoch with the account. The error has the shard and the epoch of req, and the cell,
+//     the generation and the namespace incarnation that the agent of the node has observed.
+//   - an error that wraps the error of Agent.Observed for a refusal, such as
+//     replica.ErrNotServing once the run of the agent has ended.
 //   - an error that wraps the error of the transaction, such as epoch.ErrFenced once a later
 //     tenure has acquired the fence, and the cause of ctx. The activation then keeps the
 //     deposits that it had.
 func (s *server) Deposit(ctx context.Context, req *depositRequest) (depositResult, error) {
-	res, err := s.router.Route(ctx, &router.RouteRequest{Key: []byte(req.account)})
-	if err != nil {
-		return depositResult{}, fmt.Errorf(errorPrefix+"the route of %s: %w", req.account, err)
-	}
-	r := res.Route
 	b := s.bank
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	act := b.active[r.Shard]
+	act := b.active[req.shard]
 	deposits, ok := act.deposits[req.account]
 	if !ok || act.token.Epoch != req.epoch {
-		e := &router.NotOwnerError{
-			Cell:        r.Cell,
-			Shard:       r.Shard,
+		o, err := s.agent.Observed(ctx, &replica.ObservedRequest{})
+		if err != nil {
+			return depositResult{}, fmt.Errorf(errorPrefix+"the refusal of a deposit of %s: %w", req.account, err)
+		}
+		return depositResult{}, &router.NotOwnerError{
+			Cell:        o.Cell,
+			Shard:       req.shard,
 			Epoch:       req.epoch,
-			Generation:  r.Generation,
-			Incarnation: r.Incarnation,
+			Generation:  o.Generation,
+			Incarnation: o.Incarnation,
 		}
-		if len(r.Replicas) > 0 {
-			e.Hint = r.Replicas[0].Node
-		}
-		return depositResult{}, e
 	}
 	n := len(deposits) + 1
 	deposits = append(deposits, fmt.Sprintf(depositFormat, n, b.cfg.node))
 	key := string(depositsPrefix) + req.account
 	writer := b.cfg.storage.Writer(act.token)
-	err = b.cfg.storage.Update(ctx, func(tx *fencedstore.Tx) error {
+	err := b.cfg.storage.Update(ctx, func(tx *fencedstore.Tx) error {
 		if cerr := writer.Check(ctx, tx); cerr != nil {
 			//nolint:wrapcheck // Deposit wraps the error of the transaction.
 			return cerr
@@ -412,7 +413,7 @@ func (c *client) deposit(ctx context.Context, name string, before func()) error 
 			before()
 		}
 		srv := c.servers[r.Replicas[0].Node]
-		_, err := srv.Deposit(ctx, &depositRequest{account: name, epoch: r.Epoch})
+		_, err := srv.Deposit(ctx, &depositRequest{account: name, shard: r.Shard, epoch: r.Epoch})
 		if _, ok := errors.AsType[*router.NotOwnerError](err); ok {
 			c.redirects.Add(1)
 		}
@@ -493,7 +494,8 @@ func (s *system) start(ctx context.Context, name shard.NodeID) (*node, error) {
 		return nil, fmt.Errorf(errorPrefix+"the start of %s: %w", name, err)
 	}
 	w, _ := p.Router(namespace)
-	return &node{Process: p, router: w, server: &server{bank: b, router: w}}, nil
+	a, _ := p.Agent(namespace)
+	return &node{Process: p, router: w, server: &server{bank: b, agent: a}}, nil
 }
 
 // moved runs the second round of deposits of c. Each deposit takes its route and waits. moved

@@ -55,8 +55,8 @@ const (
 )
 
 // The runs of the specs of the scheduler. The task takes 60 intervals for its runs, which is
-// longer than the drain of a process. A drain takes about 10 intervals, because the controller
-// defers the first disruption of the drain and the agent sends it again a second later.
+// longer than the drain of a process. A drain ends at the commit that ends the last move off
+// the process, because the controller admits the disruption of the drain at that commit.
 const (
 	// fixtureRuns is the number of the runs of the task.
 	fixtureRuns = 60
@@ -105,11 +105,14 @@ func (r *recorder) Do(ctx context.Context, md protocol.Metadata, req *protocol.R
 	return r.AgentServer.Do(ctx, md, req)
 }
 
-// callbacks returns the callbacks of the call c that r has passed, in order.
+// callbacks returns the callbacks of the call c for the shards of a cell that r has passed, in
+// order. It leaves out the callbacks of the root, which place cells on the process.
 func (r *recorder) callbacks(c protocol.Call) []*protocol.Request {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return slices.DeleteFunc(slices.Clone(r.calls), func(req *protocol.Request) bool { return req.Call != c })
+	return slices.DeleteFunc(slices.Clone(r.calls), func(req *protocol.Request) bool {
+		return req.Call != c || req.Scope.Cell == ""
+	})
 }
 
 // proc is a process of a spec of the scheduler, with its scheduler and the runner that runs
@@ -429,6 +432,20 @@ func TestCommand(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				assert.ErrorIs(t, run(t.Context(), newEnvironment(t, refusing{})), errWrite,
 					"run must return the error of the writer")
+			})
+		})
+	})
+
+	t.Run("await", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the cause of its context when the context ends first", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithTimeoutCause(t.Context(), interval, errStop)
+				defer cancel()
+				assert.ErrorIs(t, await(ctx, hlc.New(1), func() bool { return false }), errStop,
+					"await must return the cause of its context")
 			})
 		})
 	})

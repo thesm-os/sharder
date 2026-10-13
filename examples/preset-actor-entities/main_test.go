@@ -167,20 +167,18 @@ func (c *cursor) Close() error {
 	return c.page.close
 }
 
-// fixedRouter is a router of the tests. Route returns route and err for every key, and
-// Refresh returns refresh.
+// fixedRouter is a router of the tests. Route returns err for every key, and Refresh returns
+// refresh.
 type fixedRouter struct {
-	// route is the route of every key.
-	route router.Route
 	// err is the error of Route.
 	err error
 	// refresh is the error of Refresh.
 	refresh error
 }
 
-// Route returns the route and the error of f.
+// Route returns the error of f.
 func (f *fixedRouter) Route(context.Context, *router.RouteRequest) (router.RouteResult, error) {
-	return router.RouteResult{Route: f.route}, f.err
+	return router.RouteResult{}, f.err
 }
 
 // Refresh returns the error of the refresh of f.
@@ -299,8 +297,8 @@ func TestCommand(t *testing.T) {
 					})
 					assert.NoError(t, err, "the bank opens the tenure")
 					expect.Equal(t, b.replica.Reads(), 0, "the bank must not read a replica that lacks the acquisition")
-					srv := &server{bank: b, router: &fixedRouter{route: router.Route{Shard: sid, Epoch: 2}}}
-					res, err := srv.Deposit(t.Context(), &depositRequest{account: names[0], epoch: 2})
+					srv := &server{bank: b}
+					res, err := srv.Deposit(t.Context(), &depositRequest{account: names[0], shard: sid, epoch: 2})
 					assert.NoError(t, err, "the server serves the deposit")
 					expect.Equal(t, res.deposit, 2, "the deposit must follow the deposit of the earlier tenure")
 					expect.Equal(t, depositsOf(sys.storage, names[0]), []string{"1:node-b", "2:node-a"},
@@ -324,17 +322,11 @@ func TestCommand(t *testing.T) {
 			t.Run("returns a work that ends the activation once its context ends", func(t *testing.T) {
 				t.Parallel()
 				b, res := activate(t, newSystem(t))
-				srv := &server{bank: b, router: &fixedRouter{route: router.Route{Shard: sid, Epoch: 1}}}
 				ctx, cancel := context.WithCancel(t.Context())
 				cancel()
 				assert.NoError(t, res.Run(ctx), "the work returns once its context ends")
-				_, err := srv.Deposit(t.Context(), &depositRequest{account: names[0], epoch: 1})
-				e := assert.ErrorAs[*router.NotOwnerError](
-					t,
-					err,
-					"the server must refuse a deposit after the activation ends",
-				)
-				expect.Equal(t, e.Shard, sid, "the error must name the shard of the ended activation")
+				_, active := b.active[sid]
+				assert.False(t, active, "the work must end the activation of the shard")
 			})
 		})
 	})
@@ -349,24 +341,20 @@ func TestCommand(t *testing.T) {
 				t.Parallel()
 				sys := newSystem(t)
 				b, _ := activate(t, sys)
-				srv := &server{bank: b, router: &fixedRouter{route: router.Route{Shard: sid, Epoch: 1}}}
-				res, err := srv.Deposit(t.Context(), &depositRequest{account: names[0], epoch: 1})
+				srv := &server{bank: b}
+				res, err := srv.Deposit(t.Context(), &depositRequest{account: names[0], shard: sid, epoch: 1})
 				assert.NoError(t, err, "the server must serve the deposit")
 				expect.Equal(t, res.deposit, 1, "the deposit must be the first of the account")
 				expect.Equal(t, depositsOf(sys.storage, names[0]), []string{"1:node-a"},
 					"the deposits must list the deposit")
 			})
 
-			t.Run("returns a NotOwnerError with the writer of the route as the hint for an account on another node",
+			t.Run("returns a NotOwnerError with the observation of the node for an account on another node",
 				func(t *testing.T) {
 					t.Parallel()
 					synctest.Test(t, func(t *testing.T) {
 						sys := newSystem(t)
-						a, err := sys.start(t.Context(), nodeA)
-						assert.NoError(t, err, "node-a starts")
-						t.Cleanup(func() { <-a.Done() })
-						assert.NoError(t, settle(t.Context(), sys.env.clock, sys.st, a.router, nodeA, slots),
-							"every shard settles on node-a")
+						a := startA(t, sys)
 						b, err := sys.start(t.Context(), nodeB)
 						assert.NoError(t, err, "node-b starts")
 						t.Cleanup(func() { <-b.Done() })
@@ -382,20 +370,22 @@ func TestCommand(t *testing.T) {
 								continue
 							}
 							moved++
-							_, err = a.server.Deposit(t.Context(), &depositRequest{account: name, epoch: r.Epoch})
+							req := &depositRequest{account: name, shard: r.Shard, epoch: r.Epoch}
+							_, err = a.server.Deposit(t.Context(), req)
 							e := assert.ErrorAs[*router.NotOwnerError](
 								t,
 								err,
 								"node-a must refuse the deposit of "+name,
 							)
-							expect.Equal(t, e.Hint, nodeB, "the hint must be the writer of the route")
-							expect.Equal(t, e.Shard, r.Shard, "the error must name the shard of the account")
-							expect.Equal(
-								t,
-								e.Generation,
-								r.Generation,
-								"the error must have the generation of the route",
-							)
+							o, err := a.server.agent.Observed(t.Context(), &replica.ObservedRequest{})
+							assert.NoError(t, err, "the agent of node-a has an observation")
+							expect.Equal(t, e.Shard, r.Shard, "the error must have the shard of the request")
+							expect.Equal(t, e.Epoch, r.Epoch, "the error must have the epoch of the request")
+							expect.Equal(t, e.Cell, o.Cell, "the error must have the cell of the node")
+							expect.Equal(t, e.Generation, o.Generation,
+								"the error must have the generation that the node has observed")
+							expect.Equal(t, e.Incarnation, o.Incarnation,
+								"the error must have the namespace incarnation of the node")
 						}
 						assert.NotEqual(t, moved, 0, "node-b must be the writer of an account")
 					})
@@ -403,36 +393,33 @@ func TestCommand(t *testing.T) {
 
 			t.Run("returns a NotOwnerError for the epoch of another tenure", func(t *testing.T) {
 				t.Parallel()
-				b, _ := activate(t, newSystem(t))
-				srv := &server{bank: b, router: &fixedRouter{route: router.Route{Shard: sid, Epoch: 1}}}
-				_, err := srv.Deposit(t.Context(), &depositRequest{account: names[0], epoch: 2})
-				e := assert.ErrorAs[*router.NotOwnerError](t, err, "the server must refuse another epoch")
-				expect.Equal(t, e.Epoch, epoch.Epoch(2), "the error must have the epoch of the request")
+				synctest.Test(t, func(t *testing.T) {
+					a := startA(t, newSystem(t))
+					res, err := a.router.Route(t.Context(), &router.RouteRequest{Key: []byte(names[0])})
+					assert.NoError(t, err, "the router of node-a routes the account")
+					r := res.Route
+					req := &depositRequest{account: names[0], shard: r.Shard, epoch: r.Epoch + 1}
+					_, err = a.server.Deposit(t.Context(), req)
+					e := assert.ErrorAs[*router.NotOwnerError](t, err, "the server must refuse another epoch")
+					expect.Equal(t, e.Epoch, r.Epoch+1, "the error must have the epoch of the request")
+				})
 			})
 
-			t.Run("returns a NotOwnerError without a hint for a route without a writer", func(t *testing.T) {
-				t.Parallel()
-				sys := newSystem(t)
-				srv := &server{
-					bank:   newBank(&bankConfig{storage: sys.storage, partitioner: sys.part, node: nodeA}),
-					router: &fixedRouter{route: router.Route{Shard: sid, Epoch: 1}},
-				}
-				_, err := srv.Deposit(t.Context(), &depositRequest{account: names[0], epoch: 1})
-				e := assert.ErrorAs[*router.NotOwnerError](
-					t,
-					err,
-					"a bank without an activation must refuse the deposit",
-				)
-				expect.Equal(t, e.Hint, shard.NodeID(""), "a route without a writer must give no hint")
-			})
-
-			t.Run("returns an error that wraps router.ErrNoRoute for an account without a route", func(t *testing.T) {
-				t.Parallel()
-				b, _ := activate(t, newSystem(t))
-				srv := &server{bank: b, router: &fixedRouter{err: router.ErrNoRoute}}
-				_, err := srv.Deposit(t.Context(), &depositRequest{account: names[0], epoch: 1})
-				assert.ErrorIs(t, err, router.ErrNoRoute, "the server must return the error of the router")
-			})
+			t.Run("returns an error that wraps replica.ErrNotServing for a refusal after the run of the agent",
+				func(t *testing.T) {
+					t.Parallel()
+					synctest.Test(t, func(t *testing.T) {
+						sys := newSystem(t)
+						ctx, cancel := context.WithCancel(t.Context())
+						a, err := sys.start(ctx, nodeA)
+						assert.NoError(t, err, "node-a starts")
+						cancel()
+						<-a.Done()
+						req := &depositRequest{account: names[0], shard: sid, epoch: 1}
+						_, err = a.server.Deposit(t.Context(), req)
+						assert.ErrorIs(t, err, replica.ErrNotServing, "the server must return the error of the agent")
+					})
+				})
 
 			t.Run("returns an error that wraps epoch.ErrFenced once a later tenure has acquired the fence",
 				func(t *testing.T) {
@@ -441,20 +428,20 @@ func TestCommand(t *testing.T) {
 					b, _ := activate(t, sys)
 					assert.NoError(t, sys.storage.Acquire(t.Context(), fence.Token{Shard: sid, Epoch: 2}),
 						"the later tenure acquires the fence")
-					srv := &server{bank: b, router: &fixedRouter{route: router.Route{Shard: sid, Epoch: 1}}}
-					_, err := srv.Deposit(t.Context(), &depositRequest{account: names[0], epoch: 1})
+					srv := &server{bank: b}
+					_, err := srv.Deposit(t.Context(), &depositRequest{account: names[0], shard: sid, epoch: 1})
 					assert.ErrorIs(t, err, epoch.ErrFenced, "the fence must refuse the deposit")
 				})
 
 			t.Run("keeps the deposits of the activation when the write of a deposit fails", func(t *testing.T) {
 				t.Parallel()
 				b, _ := activate(t, newSystem(t))
-				srv := &server{bank: b, router: &fixedRouter{route: router.Route{Shard: sid, Epoch: 1}}}
+				srv := &server{bank: b}
 				ctx, cancel := context.WithCancelCause(t.Context())
 				cancel(errStop)
-				_, err := srv.Deposit(ctx, &depositRequest{account: names[0], epoch: 1})
+				_, err := srv.Deposit(ctx, &depositRequest{account: names[0], shard: sid, epoch: 1})
 				assert.ErrorIs(t, err, errStop, "the write must fail with the cause of its context")
-				res, err := srv.Deposit(t.Context(), &depositRequest{account: names[0], epoch: 1})
+				res, err := srv.Deposit(t.Context(), &depositRequest{account: names[0], shard: sid, epoch: 1})
 				assert.NoError(t, err, "the server serves the next deposit")
 				assert.Equal(t, res.deposit, 1, "a deposit whose write failed must not count")
 			})
@@ -723,6 +710,21 @@ func newSystem(t *testing.T) *system {
 	part, err := partitioner(env.registry, st)
 	assert.NoError(t, err, "the partitioner of the spec builds")
 	return &system{env: env, st: st, storage: fencedstore.New(), net: local.NewNetwork(), part: part}
+}
+
+// startA starts node-a under the context of t, and waits until node-a is the writer of every
+// shard and its router has applied the placements. The process stops when t ends.
+func startA(t *testing.T, sys *system) *node {
+	t.Helper()
+	a, err := sys.start(t.Context(), nodeA)
+	assert.NoError(t, err, "node-a starts")
+	t.Cleanup(func() { <-a.Done() })
+	assert.NoError(
+		t,
+		settle(t.Context(), sys.env.clock, sys.st, a.router, nodeA, slots),
+		"every shard settles on node-a",
+	)
+	return a
 }
 
 // activate opens the tenure of the shard sid at epoch 1 on a bank of node-a over the storage of
