@@ -247,13 +247,13 @@ func (m *Machine) begin(st *shardState, w *work, out []machine.Effect) []machine
 	return m.report(out)
 }
 
-// handle appends the Handle of the work w of the shard st to out. The runtime cancels the
-// context of the handler once timeout has passed.
+// handle appends the Handle of the work w of the shard st to out, with the fencing token of
+// the tenure of st. The runtime cancels the context of the handler once timeout has passed.
 func (m *Machine) handle(st *shardState, w *work, timeout time.Duration, out []machine.Effect) []machine.Effect {
 	w.running, st.running = true, w
 	w.effect = m.next()
 	m.effects[w.effect] = w
-	return append(out, machine.Handle{Request: &w.request, Token: w.effect, Timeout: timeout})
+	return append(out, machine.Handle{Request: &w.request, Fence: st.tenure.token, Token: w.effect, Timeout: timeout})
 }
 
 // acquired takes the result of the fence acquisition of an add. After the acquisition,

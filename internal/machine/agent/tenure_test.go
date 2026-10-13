@@ -68,6 +68,16 @@ func TestTenure(t *testing.T) {
 			expect.Equal(t, h.handles[0].Timeout, addTimeout, "the handler must have the timeout of an add")
 		})
 
+		t.Run("calls the handler with the fencing token of the tenure of the add", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.serve(t, shardA, 1, secondEpoch)
+			assert.Length(t, h.handles, 1, "the add must call the handler once")
+			expect.Equal(t, h.handles[0].Fence, h.acquires[0].Fence,
+				"the handler must get the token that the add acquired")
+		})
+
 		t.Run("calls the handler of an add without a fence acquisition as the agent of the root", func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, rooted)
@@ -252,6 +262,17 @@ func TestTenure(t *testing.T) {
 			h.serve(t, shardA, 1, firstEpoch)
 			h.do(t, h.request(protocol.Drop, shardA, 2, secondEpoch))
 			assert.Length(t, h.handles, 1, "a drop of another tenure must not call the handler")
+		})
+
+		t.Run("calls the handler of a drop with the fencing token of its tenure", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.serve(t, shardA, 1, firstEpoch)
+			h.do(t, h.request(protocol.Drop, shardA, 2, firstEpoch))
+			assert.Length(t, h.handles, 2, "the drop must call the handler")
+			expect.Equal(t, h.handles[1].Fence, h.acquires[0].Fence,
+				"the handler must get the token of the tenure that the drop ends")
 		})
 
 		t.Run("revokes the token of a tenure while its drop runs", func(t *testing.T) {
