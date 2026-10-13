@@ -94,6 +94,7 @@ func (m *Machine) install(s *store.State, out []machine.Effect) ([]machine.Effec
 		}
 	}
 	m.watched.generation = s.Head.Generation
+	m.applied.Store(uint64(s.Head.Generation))
 	m.watched.installed = true
 	out = m.settle(m.record(&s.Cell, out))
 	if m.lc.State() == stateJoining {
@@ -113,6 +114,7 @@ func (m *Machine) install(s *store.State, out []machine.Effect) ([]machine.Effec
 // The agent then compares its tenures with the placements.
 func (m *Machine) apply(ev *store.Event, out []machine.Effect) []machine.Effect {
 	m.watched.generation = ev.Generation
+	m.applied.Store(uint64(ev.Generation))
 	mu := &ev.Mutation
 	for _, sid := range mu.Done {
 		if st := m.state(sid); st.op.watched {
@@ -193,8 +195,8 @@ func (m *Machine) settle(out []machine.Effect) []machine.Effect {
 }
 
 // serve starts to serve once the first session of the node has started and the first
-// snapshot of the scope of its cell is installed. The agent then replies to Started and
-// reports its replicas.
+// snapshot of the scope of its cell is installed. The agent then publishes the observation of
+// the node, replies to Started and reports its replicas.
 //
 // Error modes:
 //   - the error of fsm.Machine.Fire.
@@ -203,5 +205,6 @@ func (m *Machine) serve(out []machine.Effect) ([]machine.Effect, error) {
 		return out, nil
 	}
 	err := m.fire(eventServed)
+	m.served.Store(&observedCell{cell: m.cellScope.Cell, incarnation: m.incarnation})
 	return m.report(m.answer(nil, out)), err
 }

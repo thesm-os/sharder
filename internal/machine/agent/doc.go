@@ -48,6 +48,10 @@
 // callback that passes the checks has that epoch. The machine takes the abort path and the
 // end of an operation from the callbacks and from the watch.
 //
+// From the first snapshot on, [Machine.Observed] returns the cell of the node, the last
+// generation of the scope of the cell that the machine has applied, and the namespace
+// incarnation. A server fills the refusal of a request with them.
+//
 // The machine keeps the result of each callback of the newest operation of a shard that did
 // not end with a transient error. It refuses a key that it has seen with another payload
 // with [ErrReused]. When a callback repeats the key of a callback that waits or runs, it
@@ -99,6 +103,11 @@
 // stops. A Close whose caller stops waiting ends the session without the end of the
 // reservation.
 //
+// The agent of the root ends its session without a disruption, because the root places the
+// cells of the process on other processes once the view no longer lists the process. Its
+// Close ends with the result of the Leave, which the runtime passes as a machine.Left, or
+// with the end of the session when the session ends first.
+//
 // # Errors
 //
 // [ErrConfig], [ErrReused] and [ErrRequest] classify as errs.Invalid. [ErrNotWriter],
@@ -111,7 +120,7 @@
 // # Concurrency
 //
 // A Machine is not safe for concurrent use. The runtime calls Step from one goroutine at a
-// time. [Machine.Err] and [Machine.Token] are safe for concurrent use.
+// time. [Machine.Err], [Machine.Token] and [Machine.Observed] are safe for concurrent use.
 //
 // # Dependency position
 //

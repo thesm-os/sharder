@@ -43,9 +43,13 @@ type closing struct {
 // away. The agent then ends the session of the node, ends the reservation of the disruption,
 // and stops. A node without a session has no replicas to move, so its Close ends at once.
 //
-// A Close before the agent serves gets ErrNotServing, and a Close without a deadline after
-// now gets an error that wraps ErrConfig, because the budget needs the end of the
-// disruption. Neither changes the state of the agent.
+// The agent of the root ends the session of the node without a disruption, because the root
+// places the cells of the process on other processes once the view no longer lists the
+// process. Its Close ends with the result of the Leave.
+//
+// A Close before the agent serves gets ErrNotServing. A Close of the agent of a cell without
+// a deadline after now gets an error that wraps ErrConfig, because the budget needs the end
+// of the disruption. Neither changes the state of the agent.
 //
 // Error modes:
 //   - the error of fsm.Machine.Fire.
@@ -54,7 +58,7 @@ func (m *Machine) close(ev machine.Close, out []machine.Effect) ([]machine.Effec
 		return append(out, machine.Reply[struct{}]{Err: ErrNotServing, To: ev.Reply}), nil
 	}
 	now := m.clock.Time()
-	if !ev.Deadline.After(now) {
+	if !m.inRoot && !ev.Deadline.After(now) {
 		err := fmt.Errorf("%w: Close needs a deadline after %v", ErrConfig, now)
 		return append(out, machine.Reply[struct{}]{Err: err, To: ev.Reply}), nil
 	}
@@ -64,6 +68,10 @@ func (m *Machine) close(ev machine.Close, out []machine.Effect) ([]machine.Effec
 		var cerr error
 		out, cerr = m.closed(nil, out)
 		return out, errors.Join(err, cerr)
+	}
+	if m.inRoot {
+		m.closing.leaving = true
+		return append(out, machine.Leave{Token: m.session.join}), err
 	}
 	m.closing.disruption = budget.Disruption{
 		Start:           now,
@@ -126,7 +134,8 @@ func (m *Machine) again(out []machine.Effect) []machine.Effect {
 
 // left takes the end of the session of the node during a Close. After the controller has
 // admitted the disruption, the agent ends the reservation of the disruption. A session that
-// ends before the admission ends the Close with an error that wraps ErrNotServing.
+// ends before the admission ends the Close with an error that wraps ErrNotServing. The end
+// of the session of the agent of the root ends its Close.
 //
 // Error modes:
 //   - the error of closed.
@@ -135,7 +144,27 @@ func (m *Machine) left(out []machine.Effect) ([]machine.Effect, error) {
 		err := fmt.Errorf("%w: the session of node %s ended before its disruption", ErrNotServing, m.node.ID)
 		return m.closed(err, out)
 	}
+	if m.inRoot {
+		return m.closed(nil, out)
+	}
 	return m.done(out), nil
+}
+
+// departed takes the result of the Leave of a Close of the agent of the root. The Close
+// then ends with an error that wraps the error of the Leave, or with success. The agent of a
+// cell ends its reservation after the end of the session instead, so it ignores the result.
+//
+// Error modes:
+//   - the error of closed.
+func (m *Machine) departed(ev machine.Left, out []machine.Effect) ([]machine.Effect, error) {
+	if !m.inRoot || !m.closing.leaving || ev.Token != m.session.join {
+		return out, nil
+	}
+	var err error
+	if ev.Err != nil {
+		err = fmt.Errorf("agent: the leave of node %s from %v: %w", m.node.ID, m.cellScope, ev.Err)
+	}
+	return m.closed(err, out)
 }
 
 // done asks the controller of the cell to end the reservation of the disruption of the

@@ -294,6 +294,106 @@ func TestClose(t *testing.T) {
 			got := h.machine.Step(machine.Ended{Token: 999}, out)
 			assert.Equal(t, got, out, "the agent must ignore the end of another reservation")
 		})
+
+		t.Run(
+			"waits for the end of the session after the result of the Leave of an admitted disruption",
+			func(t *testing.T) {
+				t.Parallel()
+				h := newHarness(t)
+				h.start(t)
+				before := len(h.replies)
+				h.close(t, origin.Add(grace))
+				h.step(t, machine.Left{Token: h.join})
+				h.run(t)
+				expect.Empty(t, h.dones, "the agent must end the reservation once the session has ended")
+				expect.Length(t, h.replies, before, "the Close must wait for the end of the session")
+			},
+		)
+
+		t.Run("ends the session of the agent of the root without a disruption", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, rooted)
+			h.start(t)
+			h.close(t, origin.Add(grace))
+			expect.Equal(t, h.leaves, []machine.Token{h.join}, "the agent of the root must end its session")
+			expect.Empty(t, h.disrupts, "the agent of the root must not ask for a disruption")
+		})
+
+		t.Run("ends the session of the agent of the root for a Close without a deadline", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, rooted)
+			h.start(t)
+			h.close(t, time.Time{})
+			assert.Equal(t, h.leaves, []machine.Token{h.join}, "the agent of the root must not need a deadline")
+		})
+
+		t.Run("ends the Close of the agent of the root with the result of its Leave", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, rooted)
+			h.start(t)
+			before := len(h.replies)
+			to := h.close(t, origin.Add(grace))
+			expect.Length(t, h.replies, before, "the Close must wait for the result of the Leave")
+			h.step(t, machine.Left{Token: h.join})
+			expect.NoError(t, replyTo[struct{}](t, h, to).Err, "the Close must succeed")
+			expect.Nil(t, h.machine.Err(), "a Close must not stop the agent with an error")
+			expect.Empty(t, h.watches, "a Close must end the watch of the root scope")
+			expect.Empty(t, h.dones, "the agent of the root has no reservation to end")
+		})
+
+		t.Run("ends the Close of the agent of the root with the error of its Leave", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, rooted)
+			h.start(t)
+			to := h.close(t, origin.Add(grace))
+			h.step(t, machine.Left{Err: errBroken, Token: h.join})
+			expect.ErrorIs(
+				t,
+				replyTo[struct{}](t, h, to).Err,
+				errBroken,
+				"the Close must fail with the error of the Leave",
+			)
+			expect.Nil(t, h.machine.Err(), "a Leave that fails must not stop the agent with an error")
+		})
+
+		t.Run("ends the Close of the agent of the root when its session ends first", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, rooted)
+			h.start(t)
+			to := h.close(t, origin.Add(grace))
+			h.step(t, machine.SessionEnded{Token: h.join})
+			expect.NoError(t, replyTo[struct{}](t, h, to).Err, "the end of the session must end the Close")
+			expect.Empty(t, h.dones, "the agent of the root has no reservation to end")
+		})
+
+		t.Run("ends a Close of the agent of the root at once when the node has no session", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, rooted)
+			h.start(t)
+			h.step(t, machine.SessionEnded{Token: h.join})
+			to := h.close(t, origin.Add(grace))
+			expect.NoError(t, replyTo[struct{}](t, h, to).Err, "a Close without a session must succeed")
+			expect.Empty(t, h.leaves, "a node without a session has no session to end")
+		})
+
+		t.Run("ignores the result of a Leave of the agent of the root that it does not wait for", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, rooted)
+			h.start(t)
+			out := []machine.Effect{marker}
+			got := h.machine.Step(machine.Left{Token: h.join}, out)
+			assert.Equal(t, got, out, "the agent must ignore the result of a Leave that no Close waits for")
+		})
+
+		t.Run("ignores the result of the Leave of another session", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, rooted)
+			h.start(t)
+			h.close(t, origin.Add(grace))
+			out := []machine.Effect{marker}
+			got := h.machine.Step(machine.Left{Token: h.join + 100}, out)
+			assert.Equal(t, got, out, "the agent must ignore the result of the Leave of another session")
+		})
 	})
 }
 

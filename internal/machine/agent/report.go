@@ -53,7 +53,7 @@ func (m *Machine) report(out []machine.Effect) []machine.Effect {
 	r := &protocol.Report{
 		Scope:           m.cellScope,
 		Node:            m.node.ID,
-		Replicas:        m.observed(),
+		Replicas:        m.replicas(),
 		NodeIncarnation: m.session.incarnation,
 		Sequence:        m.reports.sequence,
 		Incarnation:     m.incarnation,
@@ -63,9 +63,9 @@ func (m *Machine) report(out []machine.Effect) []machine.Effect {
 	return append(out, machine.SendReport{Cell: &cell, Report: r, Token: m.reports.flight, Timeout: CallTimeout})
 }
 
-// observed returns what the node reports about each of its tenures, in the order of the
+// replicas returns what the node reports about each of its tenures, in the order of the
 // shards.
-func (m *Machine) observed() []shard.Observed {
+func (m *Machine) replicas() []shard.Observed {
 	now := m.clock.Time()
 	var replicas []shard.Observed
 	for sid, st := range m.shards.All() {

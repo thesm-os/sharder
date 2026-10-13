@@ -119,6 +119,8 @@ type model struct {
 	applied int
 	// ends counts the ends of the sessions of the node.
 	ends int
+	// departures counts the Leaves of the agent whose result a step has passed.
+	departures int
 	// sequence is the Sequence of the last report.
 	sequence uint64
 	// incarnation is the NodeIncarnation of the last report.
@@ -551,9 +553,16 @@ func (m *model) complete(c *prop.Case) {
 	}
 }
 
-// sync takes the end of a step. The agent has stopped once it has replied to its Close, and
-// once its Close has lost its caller.
+// sync takes the end of a step. It passes a failed result of each new Leave of the agent, as
+// the runtime does once the membership returns. The agent of a cell waits for the end of its
+// session, so it appends no effect for the result. The agent has stopped once it has replied
+// to its Close, and once its Close has lost its caller.
 func (m *model) sync() {
+	for ; m.departures < len(m.h.leaves); m.departures++ {
+		out := []machine.Effect{marker}
+		assert.Equal(m.c, m.h.machine.Step(machine.Left{Err: errBroken, Token: m.h.leaves[m.departures]}, out), out,
+			"the agent of a cell must append no effect for the result of a Leave")
+	}
 	if m.stopping {
 		m.stopping, m.stopped = false, true
 		clear(m.granted)
@@ -922,6 +931,7 @@ func completeConfig(tb assert.TB) agent.Config {
 //     of the tenure starts, its add fails, the session ends under ownership.Stop, or the
 //     agent stops.
 //   - It numbers the reports of each incarnation from one.
+//   - It appends no effect for the result of a Leave.
 //
 // The drain completes every call with success and passes every generation. Every callback then
 // has its reply, unless it is an add whose placement the agent has not read at its epoch, and

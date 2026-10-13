@@ -174,7 +174,7 @@ var lifecycle = fsm.Must(fsm.NewBuilder[state, event, struct{}](stateIdle).
 // # Concurrency
 //
 // A Machine is not safe for concurrent use. The runtime calls Step from one goroutine at a
-// time. [Machine.Err] and [Machine.Token] are safe for concurrent use.
+// time. [Machine.Err], [Machine.Token] and [Machine.Observed] are safe for concurrent use.
 type Machine struct {
 	// clock reads the time of each report and of the disruption of a Close.
 	clock clock.Clock
@@ -184,6 +184,9 @@ type Machine struct {
 	registry *config.Registry
 	// published is the table of the fencing tokens that Token reads, a copy of grants.
 	published atomic.Pointer[btree.MapFunc[shard.ID, grant]]
+	// served is the cell and the namespace incarnation of the observation of the node. It is
+	// nil before the agent serves and after it stops.
+	served atomic.Pointer[observedCell]
 	// logger logs the errors that do not stop the agent.
 	logger *slog.Logger
 	// metrics are the instruments of the agent.
@@ -237,6 +240,9 @@ type Machine struct {
 	// tokens is the counter of the tokens of the effects of the machine, which its parts
 	// share.
 	tokens machine.Token
+	// applied is the last generation of the scope of the cell that the agent has applied, for
+	// the observation of the node.
+	applied atomic.Uint64
 	// incarnation is the namespace incarnation, and zero before the agent knows it.
 	incarnation shard.NamespaceIncarnation
 	// want is the shard of the cell of Config.Node in the root scope, and the zero ID for a
@@ -357,6 +363,8 @@ func (m *Machine) step(ev machine.Event, out []machine.Effect) ([]machine.Effect
 		return m.joined(&ev, out)
 	case machine.SessionEnded:
 		return m.ended(ev, out)
+	case machine.Left:
+		return m.departed(ev, out)
 	case machine.Acquired:
 		return m.acquired(ev, out), nil
 	case machine.Handled:
@@ -471,7 +479,9 @@ func (m *Machine) unwatch(out []machine.Effect) []machine.Effect {
 // halt ends the work of the agent:
 //   - It replies with ErrNotServing to every callback and to the Close that wait for their
 //     reply.
-//   - It revokes every fencing token, and releases the instruments of the agent.
+//   - It revokes every fencing token.
+//   - It withdraws the observation of the node.
+//   - It releases the instruments of the agent.
 func (m *Machine) halt(out []machine.Effect) []machine.Effect {
 	for _, st := range m.shards.All() {
 		for _, w := range st.waiting() {
@@ -482,6 +492,7 @@ func (m *Machine) halt(out []machine.Effect) []machine.Effect {
 		out = append(out, machine.Reply[struct{}]{Err: ErrNotServing, To: m.closing.reply})
 	}
 	m.revoke()
+	m.served.Store(nil)
 	m.metrics.release()
 	return out
 }
