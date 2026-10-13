@@ -4,339 +4,388 @@
 package cell_test
 
 import (
-	"context"
 	"encoding/binary"
-	"encoding/json"
 	"log/slog"
 	"slices"
-	"sync"
 	"testing"
 	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/assert/stateful"
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/fsm"
 	"go.thesmos.sh/core/id"
-	"go.thesmos.sh/core/id/ulid"
-	"go.thesmos.sh/core/page"
-	"go.thesmos.sh/core/rand"
+	"go.thesmos.sh/core/rand/constant"
 	"go.thesmos.sh/core/telemetry/noop"
 
 	"go.thesmos.sh/sharder/budget"
-	"go.thesmos.sh/sharder/builtin"
-	"go.thesmos.sh/sharder/config"
 	"go.thesmos.sh/sharder/internal/control"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/machine/cell"
-	"go.thesmos.sh/sharder/membership"
-	"go.thesmos.sh/sharder/partition/fixedslots"
-	"go.thesmos.sh/sharder/placement"
 	"go.thesmos.sh/sharder/proposal"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
-	"go.thesmos.sh/sharder/store/memory"
 )
 
-// The names of the records and the callers of the tests.
+// otherCell is a cell other than the cell of the tests.
+const otherCell shard.CellID = "other"
+
+// The labels of the cases of the property of a cell, which its coverage requirements count.
 const (
-	// namespace is the namespace of the tests.
-	namespace shard.Namespace = "orders"
-	// operator is the identity of the operator of the tests.
-	operator shard.Identity = "operator"
-	// controllerAddress is the address of the controller of the tests.
-	controllerAddress = "controller-1:7000"
-	// controllerIdentity is the identity of the controller of the tests.
-	controllerIdentity shard.Identity = "controller-1"
-	// otherCell is a cell other than the cell of the tests.
-	otherCell shard.CellID = "other"
+	// labelEarly counts a case in which a call arrives before the cell serves.
+	labelEarly = "a call arrives before the cell serves"
+	// labelSpec counts a case in which the root commits a newer spec.
+	labelSpec = "the root commits a newer spec"
+	// labelFenced counts a case in which a later term fences the scope of the cell.
+	labelFenced = "a later term fences the cell"
+	// labelStopped counts a case in which a step stops the cell.
+	labelStopped = "a step stops the cell"
+	// labelOutage counts a case in which the cell arms a Timer during an outage of the store.
+	labelOutage = "the cell arms a Timer during an outage"
 )
 
-// The epochs of the tests.
+// The shares of the cases of the property of a cell that its labels must count, about half of
+// the shares that 1,000 cases measured.
 const (
-	// rootTerm is the term of the root that writes the root scope.
-	rootTerm epoch.Epoch = 1
-	// cellTerm is the term of the machine of each test.
-	cellTerm epoch.Epoch = 3
-	// firstVersion is the version of the spec of the tests.
-	firstVersion epoch.Epoch = 1
+	// often is the share of labelEarly and labelStopped. The measured shares were 49% and
+	// 39%.
+	often = 0.2
+	// sometimes is the share of labelSpec and labelFenced. The measured shares were 27% and
+	// 32%.
+	sometimes = 0.13
+	// rare is the share of labelOutage. The measured share was 7.5%.
+	rare = 0.035
 )
 
-// The tests divide each cell into four slots, so each cell has four shards.
-const (
-	// slotsConfig is the configuration of fixed-slots in the spec of the tests.
-	slotsConfig = `{"slots":4}`
-	// shards is the number of shards of the cell.
-	shards = 4
-)
+// nodeSets lists the sets of nodes that the views of the property of a cell contain.
+var nodeSets = [][]shard.Node{{nodeA}, {nodeA, nodeB}, {nodeA, nodeB, nodeC}, {}}
 
-// maxDeliveries bounds the effects that run performs, so a machine that never settles
-// fails its test instead of the timeout of go test.
-const maxDeliveries = 10000
+// model is the expected state of a cell that the property of a cell drives, and the record
+// of what the cell did. Its harness passes each effect of the cell to observe.
+type model struct {
+	// c is the case of the property.
+	c *prop.Case
+	// h is the harness of the cell.
+	h *harness
+	// want maps the token of each call whose reply the model knows to the error of the reply.
+	want map[machine.ReplyToken]error
+	// replies counts the replies of the cell to each call.
+	replies map[machine.ReplyToken]int
+	// cancelled contains the token of each call that the runtime cancelled.
+	cancelled map[machine.ReplyToken]bool
+	// late contains the token of each call that the cell took after it had stopped.
+	late map[machine.ReplyToken]bool
+	// retries contains the token of each Timer that the cell armed during an outage. The drain
+	// ends each of them.
+	retries map[machine.Token]bool
+	// sent lists the token of each call, in order.
+	sent []machine.ReplyToken
+	// started is the token of Started, and zero before Started.
+	started machine.ReplyToken
+	// version is the version of the last spec that the root committed.
+	version epoch.Epoch
+	// sequence is the Sequence of the last report.
+	sequence uint64
+	// disruptions counts the disruptions, and gives each disruption its ID.
+	disruptions byte
+	// serving is true once the cell has started the watch of its views, which its controller
+	// starts once it serves.
+	serving bool
+	// behind is true while the root scope has a spec that the cell has not followed.
+	behind bool
+	// fenced is true once a later term has committed to the scope of the cell.
+	fenced bool
+	// outage is true while the store refuses every call.
+	outage bool
+	// stopping is true while Stopped is the step.
+	stopping bool
+	// stopped is true once the cell has stopped.
+	stopped bool
+}
 
-// marker is the effect that the harness passes in out with each event: an Unwatch without a
-// watch, which the machine never returns itself.
-var marker machine.Effect = machine.Unwatch{}
-
-// pageLimit is the number of placements on each page that the harness reads, so a snapshot
-// of the four shards of a cell takes two pages.
-const pageLimit = 2
-
-// The nodes of the tests, each at its first incarnation.
-var (
-	nodeA = shard.Node{ID: "node-a", Address: "node-a:7000", Identity: "agent-a", Incarnation: 1}
-	nodeB = shard.Node{ID: "node-b", Address: "node-b:7000", Identity: "agent-b", Incarnation: 1}
-	nodeC = shard.Node{ID: "node-c", Address: "node-c:7000", Identity: "agent-c", Incarnation: 1}
-)
-
-// The scopes, the incarnation, the clock and the capabilities of the tests.
-var (
-	// cellKey is the 16 bytes of the ULID of the cell, which is the root shard of the cell.
-	cellKey = id.ID128{0: 0x01, 15: 0xce}
-	// cellID is the cell of the tests: the text of the ULID of cellKey.
-	cellID = shard.CellID(ulid.Format(cellKey.ID()))
-	// cellScope is the scope of the cell of the tests.
-	cellScope = shard.Scope{Namespace: namespace, Cell: cellID}
-	// rootScope is the root scope of the namespace of the tests.
-	rootScope = shard.Scope{Namespace: namespace}
-	// incA is the namespace incarnation of the tests.
-	incA = shard.NamespaceIncarnation{ID: id.New128([16]byte{0: 0x1a, 15: 0x0a})}
-	// origin is the start of the clock of each test.
-	origin = time.Date(2026, time.October, 12, 0, 0, 0, 0, time.UTC)
-	// provided lists the capabilities of the store and the membership of the tests.
-	provided = map[config.Axis][]config.Capability{
-		config.Store:      {config.Durable},
-		config.Membership: {config.Leases},
+// newModel returns the model of a cell before Started.
+func newModel(c *prop.Case) *model {
+	m := &model{
+		c:         c,
+		h:         newHarness(c),
+		want:      make(map[machine.ReplyToken]error),
+		replies:   make(map[machine.ReplyToken]int),
+		cancelled: make(map[machine.ReplyToken]bool),
+		late:      make(map[machine.ReplyToken]bool),
+		retries:   make(map[machine.Token]bool),
+		version:   firstVersion,
 	}
-)
-
-// testCase is the test, or the case of a property, that a harness runs in.
-type testCase interface {
-	assert.TB
-	// Cleanup registers f to run when the test or the case ends.
-	Cleanup(f func())
+	m.h.observe = m.observe
+	return m
 }
 
-// halves is a source of randomness whose every draw of rand.Float64 is one half, so each
-// backoff is half of its ceiling. Its values differ in their low bits, so the IDs of the
-// shards that the controller generates differ.
-type halves struct {
-	// n counts the draws.
-	n uint64
-}
-
-var _ rand.Rand = (*halves)(nil)
-
-// Uint64 returns the next value: the top bit and the count of the draws.
-func (h *halves) Uint64() uint64 {
-	h.n++
-	return 1<<63 | h.n
-}
-
-// Read fills p with the bytes of successive values of Uint64.
-func (h *halves) Read(p []byte) (int, error) {
-	for i := 0; i < len(p); i += 8 {
-		var b [8]byte
-		binary.BigEndian.PutUint64(b[:], h.Uint64())
-		copy(p[i:], b[:])
+// observe checks the effect e that the cell appends, and takes what e changes in the expected
+// state.
+func (m *model) observe(e machine.Effect) {
+	c := m.c
+	c.Helper()
+	assert.False(c, m.stopped, "a stopped cell must not append an effect")
+	switch e.(type) {
+	case machine.Reply[struct{}], machine.Reply[protocol.Ack], machine.Reply[protocol.Receipt],
+		machine.Reply[budget.Decision]:
+	default:
+		expect.False(c, m.stopping, "the cell must append only replies at Stopped")
 	}
-	return len(p), nil
-}
-
-// journal is a slog.Handler that keeps the message and the attributes of every record. The
-// handlers that WithAttrs returns share the records of their journal.
-type journal struct {
-	// log contains the records.
-	log *entries
-	// attrs lists the attributes that WithAttrs bound, in their order.
-	attrs []slog.Attr
-}
-
-// entries is the list of the records of a journal.
-type entries struct {
-	// list lists the records in order.
-	list []entry
-	// mu guards list.
-	mu sync.Mutex
-}
-
-// entry is one record of a journal.
-type entry struct {
-	// attrs maps the key of each attribute to its value as text.
-	attrs map[string]string
-	// message is the message of the record.
-	message string
-}
-
-var _ slog.Handler = (*journal)(nil)
-
-// newJournal returns a journal without records.
-func newJournal() *journal {
-	return &journal{log: &entries{}}
-}
-
-// Enabled reports true for every level.
-func (*journal) Enabled(context.Context, slog.Level) bool { return true }
-
-// Handle keeps the record r with the attributes that WithAttrs bound.
-func (j *journal) Handle(_ context.Context, r slog.Record) error {
-	e := entry{attrs: make(map[string]string), message: r.Message}
-	for _, a := range j.attrs {
-		e.attrs[a.Key] = a.Value.String()
+	var to machine.ReplyToken
+	var err error
+	switch e := e.(type) {
+	case machine.Commit:
+		expect.Equal(c, e.Scope, cellScope, "the cell must commit only to its own scope")
+		expect.Equal(c, e.Term, cellTerm, "a commit must have the term that the root granted")
+		return
+	case machine.WatchViews:
+		m.serving = true
+		return
+	case machine.Timer:
+		if m.outage {
+			c.Classify(labelOutage)
+			m.retries[e.Token] = true
+		}
+		return
+	case machine.Reply[struct{}]:
+		to, err = e.To, e.Err
+	case machine.Reply[protocol.Ack]:
+		to, err = e.To, e.Err
+	case machine.Reply[protocol.Receipt]:
+		to, err = e.To, e.Err
+	case machine.Reply[budget.Decision]:
+		to, err = e.To, e.Err
+	default:
+		return
 	}
-	r.Attrs(func(a slog.Attr) bool {
-		e.attrs[a.Key] = a.Value.String()
-		return true
+	m.replies[to]++
+	expect.Equal(c, m.replies[to], 1, "the cell must reply to a call once")
+	expect.False(c, m.cancelled[to], "the cell must not reply to a call that the runtime cancelled")
+	want, known := m.want[to]
+	switch {
+	case to == m.started && err == nil:
+		expect.True(c, m.serving, "the cell must reply to Started without an error only once it serves")
+	case to == m.started && m.stopping:
+		expect.That(c, err).ErrorIs(control.ErrNotServing, "Stopped must reply to Started with ErrNotServing")
+	case to == m.started:
+		expect.Equal(c, err, m.h.machine.Err(), "the cell must reply to Started with the error that stopped it")
+	case known:
+		expect.That(c, err).ErrorIs(want, "the reply must have the error that the call expects")
+	}
+}
+
+// call returns the token of the next inbound call. The cell replies with ErrNotServing to a
+// call before it serves. The model expects a reply only to a call that the cell takes before
+// it stops.
+func (m *model) call(c *prop.Case) machine.ReplyToken {
+	to := m.h.call()
+	m.sent = append(m.sent, to)
+	m.late[to] = m.stopped
+	if !m.stopped && !m.serving {
+		c.Classify(labelEarly)
+		m.want[to] = control.ErrNotServing
+	}
+	return to
+}
+
+// step passes ev to the cell, and takes an error that stops the cell.
+func (m *model) step(c *prop.Case, ev machine.Event) {
+	m.h.step(c, ev)
+	m.sync()
+}
+
+// run performs the effects that wait, and passes their results to the cell.
+func (m *model) run(c *prop.Case) {
+	m.h.run(c)
+	m.sync()
+}
+
+// sync marks the cell as stopped once an error has stopped it.
+func (m *model) sync() {
+	if m.h.machine.Err() != nil {
+		m.stopped = true
+	}
+}
+
+// start passes the Started of the run.
+func (m *model) start(c *prop.Case) {
+	m.started = m.h.call()
+	m.sent = append(m.sent, m.started)
+	m.late[m.started] = false
+	m.step(c, machine.Started{Reply: m.started})
+}
+
+// follow passes the generations of the root scope that the cell has not passed, and runs the
+// cell. During an outage the watch of the root scope ends with the error of the outage, and
+// the cell remains behind.
+func (m *model) follow(c *prop.Case) {
+	m.h.follow(c)
+	m.behind = m.behind && m.outage
+	m.sync()
+}
+
+// respec commits the next version of the spec to the root scope, as the root applies a
+// proposal of an operator.
+func (m *model) respec(c *prop.Case) {
+	m.version++
+	m.h.commitRoot(c, specMutation(c, m.version, nil))
+	m.behind = true
+}
+
+// view passes a view of the nodes that c chooses, and runs the cell.
+func (m *model) view(c *prop.Case) {
+	m.h.view(c, c.Draw(prop.SampledFrom(nodeSets...), "nodes")...)
+	m.sync()
+}
+
+// report passes the next report of the agent of nodeA.
+func (m *model) report(c *prop.Case) {
+	to := m.call(c)
+	m.sequence++
+	m.step(c, machine.Report{
+		Report: &protocol.Report{
+			Scope:           cellScope,
+			Node:            nodeA.ID,
+			NodeIncarnation: nodeA.Incarnation,
+			Sequence:        m.sequence,
+			Incarnation:     incA,
+		},
+		Metadata: protocol.Metadata{Caller: nodeA.Identity, Version: protocol.Current},
+		Reply:    to,
 	})
-	j.log.mu.Lock()
-	defer j.log.mu.Unlock()
-	j.log.list = append(j.log.list, e)
+}
+
+// disrupt passes a negotiable disruption of nodeA with an ID of its own, which waits for its
+// commit once the cell serves.
+func (m *model) disrupt(c *prop.Case) {
+	to := m.call(c)
+	m.disruptions++
+	d := disruption(nodeA.ID)
+	d.ID = budget.ID{ID: id.New128([16]byte{0: 0xd1, 15: m.disruptions})}
+	m.step(c, machine.Disrupt{
+		Disruption: &d,
+		Metadata:   protocol.Metadata{Caller: operator, Version: protocol.Current},
+		Reply:      to,
+	})
+}
+
+// fence commits to the scope of the cell as a writer of the term after the term of the cell,
+// so the next commit of the cell fails with epoch.ErrFenced.
+func (m *model) fence(c *prop.Case) {
+	ctx := assert.Context(c)
+	head, err := m.h.st.Head(ctx, cellScope)
+	assert.NoError(c, err, "the store must return the header of the scope of the cell")
+	later := cellTerm + 1
+	mu := &store.Mutation{ID: store.CommitID{Incarnation: incA, Term: later, Seq: 1}}
+	_, err = m.h.st.Writer(cellScope, incA, later).Commit(ctx, head.Generation, mu)
+	assert.NoError(c, err, "a writer of a later term must commit")
+	m.fenced = true
+}
+
+// cancel ends the wait of the caller of a call without a reply. c chooses the call.
+func (m *model) cancel(c *prop.Case) {
+	calls := m.waiting()
+	to := calls[c.Draw(prop.Integer(0, len(calls)-1), "call")]
+	m.cancelled[to] = true
+	m.step(c, machine.Cancelled{Reply: to})
+}
+
+// waiting returns the tokens of the calls whose callers wait for their replies, in their
+// order.
+func (m *model) waiting() []machine.ReplyToken {
+	var calls []machine.ReplyToken
+	for _, to := range m.sent {
+		if m.replies[to] == 0 && !m.cancelled[to] && !m.late[to] {
+			calls = append(calls, to)
+		}
+	}
+	return calls
+}
+
+// elapse ends the Timer at the index i of the Timers that the cell has armed, and runs the
+// cell.
+func (m *model) elapse(c *prop.Case, i int) {
+	tm := m.h.timers[i]
+	m.h.timers = slices.Delete(m.h.timers, i, i+1)
+	delete(m.retries, tm.Token)
+	m.step(c, machine.Elapsed{Token: tm.Token})
+	m.run(c)
+}
+
+// halt passes the Stopped of the run.
+func (m *model) halt(c *prop.Case) {
+	m.stopping = true
+	m.step(c, machine.Stopped{})
+	m.stopping, m.stopped = false, true
+}
+
+// toggle starts an outage of the store or ends the outage that runs.
+func (m *model) toggle(*prop.Case) {
+	if m.outage {
+		m.h.st.EndOutage()
+	} else {
+		m.h.st.StartOutage()
+	}
+	m.outage = !m.outage
+}
+
+// drain returns the next step towards a cell that serves, and nil for a cell that serves or
+// has stopped. The step is one of these:
+//   - the end of an outage.
+//   - the Started of the run.
+//   - a run of the effects that wait.
+//   - the end of a Timer that retries contains.
+//   - the generations of the root scope that the cell has not passed.
+func (m *model) drain() func(c *prop.Case) {
+	switch {
+	case m.stopped:
+		return nil
+	case m.outage:
+		return m.toggle
+	case m.started == 0:
+		return m.start
+	case len(m.h.pending) > 0:
+		return m.run
+	}
+	if i := slices.IndexFunc(m.h.timers, func(tm machine.Timer) bool { return m.retries[tm.Token] }); i >= 0 {
+		return func(c *prop.Case) { m.elapse(c, i) }
+	}
+	if m.behind {
+		return m.follow
+	}
 	return nil
 }
 
-// WithAttrs returns a journal that shares the records of j and binds attrs after the
-// attributes of j.
-func (j *journal) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &journal{log: j.log, attrs: slices.Concat(j.attrs, attrs)}
+// invariant checks what is true after every step. Only a later term stops the cell with an
+// error, and a cell that an error has stopped has ended its watches.
+func (m *model) invariant(c *prop.Case) {
+	err := m.h.machine.Err()
+	if err == nil {
+		return
+	}
+	expect.True(c, m.fenced, "only a later term may stop the cell with an error")
+	expect.That(c, err).ErrorIs(epoch.ErrFenced, "the cell must stop with the error of the fence")
+	expect.Empty(c, m.h.watches, "the cell must end its watch of the root scope when an error stops it")
+	expect.Equal(c, m.h.views, machine.Token(0), "the cell must end the watch of its views when an error stops it")
 }
 
-// WithGroup returns j. The machine does not group its attributes.
-func (j *journal) WithGroup(string) slog.Handler { return j }
-
-// logged returns the entries with the message message.
-func (j *journal) logged(message string) []entry {
-	j.log.mu.Lock()
-	defer j.log.mu.Unlock()
-	var got []entry
-	for _, e := range j.log.list {
-		if e.message == message {
-			got = append(got, e)
+// settle checks the cell once the drain has ended. A cell that has not stopped serves.
+// settle then stops the cell, and checks that the cell has replied once to each call that it
+// took before it stopped, unless the runtime cancelled the call.
+func (m *model) settle(c *prop.Case) {
+	if !m.stopped {
+		assert.True(c, m.serving, "the cell must serve once it has read the root scope")
+		m.halt(c)
+	}
+	for _, to := range m.sent {
+		if !m.late[to] && !m.cancelled[to] {
+			expect.Equal(c, m.replies[to], 1, "the cell must reply once to each call that it took before it stopped")
 		}
 	}
-	return got
-}
-
-// setup is the configuration of a harness before New.
-type setup struct {
-	// spec is the spec that the root records.
-	spec config.Spec
-	// cfg is the Config of the machine, which newHarness completes.
-	cfg cell.Config
-	// root is the mutation that creates the root scope, which newHarness completes with
-	// the spec and the mapping.
-	root store.Mutation
-	// fits is the bound of a commit, and nil for the bound of the store.
-	fits func(m *store.Mutation) error
-	// extend registers more strategies in the registry of the machine, or is nil.
-	extend func(r *config.Registry) error
-	// remap changes the mapping that the root records after the spec resolves, or is nil.
-	remap func(m *shard.Mapping)
-	// support is the support matrix of the registry of the machine.
-	support config.Support
-}
-
-// option changes the setup of a harness.
-type option func(*setup)
-
-// harness is the runtime of the tests. It performs the effects of one cell machine against a
-// memory store, replies to the callbacks of the machine as the agents of the nodes do, runs
-// its passes and keeps its replies.
-type harness struct {
-	// st is the store of the machine.
-	st *memory.Store
-	// clock is the clock of the machine.
-	clock *fake.Clock
-	// machine is the machine under test.
-	machine *cell.Machine
-	// logs are the logs of the machine.
-	logs *journal
-	// pending lists the effects that run performs, the oldest first: the reads and the
-	// commits of the store, the callbacks and the passes.
-	pending []machine.Effect
-	// watches lists the watches of the root scope that run.
-	watches []machine.Watch
-	// opened lists the token of every watch of the root scope that the machine started, in
-	// order.
-	opened []machine.Token
-	// timers lists the Timers that the machine armed, the oldest first.
-	timers []machine.Timer
-	// replies lists every reply of the machine, in order.
-	replies []machine.Effect
-	// plans lists every Plan that the machine sent, in order.
-	plans []machine.Plan
-	// unwatched lists the tokens of every Unwatch of the machine, in order.
-	unwatched []machine.Token
-	// views is the token of the WatchViews that runs, and zero without one.
-	views machine.Token
-	// revision is the revision of the last view that the harness passed.
-	revision epoch.Epoch
-	// calls is the token of the last inbound call of the harness.
-	calls machine.ReplyToken
-	// rootSeq is the Seq of the last commit to the root scope.
-	rootSeq uint64
-}
-
-// newHarness returns a harness of a machine of the cell of the tests. The root scope places
-// the cell and records the spec of the setup. Each option changes the setup before New.
-func newHarness(tb testCase, opts ...option) *harness {
-	tb.Helper()
-	s := setup{
-		spec: config.Spec{
-			Namespace:    namespace,
-			Preset:       builtin.ExclusiveWorker,
-			Partitioning: config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)},
-			Version:      firstVersion,
-		},
-		cfg: cell.Config{
-			Rand:        &halves{},
-			Reporter:    noop.New(),
-			Provided:    provided,
-			Operators:   []shard.Identity{operator},
-			Scope:       cellScope,
-			Node:        shard.Node{ID: "controller-1", Address: controllerAddress, Identity: controllerIdentity},
-			Term:        cellTerm,
-			Parallelism: 1,
-			Incarnation: incA,
-		},
-		root:    store.Mutation{Put: []shard.Placement{{Shard: shard.ID{ID128: cellKey}}}},
-		support: builtin.Support(),
-	}
-	for _, opt := range opts {
-		opt(&s)
-	}
-	h := &harness{st: memory.New(fake.New(origin)), clock: fake.New(origin), logs: newJournal()}
-	tb.Cleanup(func() { assert.NoError(tb, h.st.Close(), "the store must close") })
-	r := config.NewRegistry(s.support)
-	assert.NoError(tb, builtin.Register(r), "the built-ins must register")
-	if s.extend != nil {
-		assert.NoError(tb, s.extend(r), "the strategies of the test must register")
-	}
-	res, err := config.Resolve(r, &s.spec, provided)
-	assert.NoError(tb, err, "the spec of the tests must resolve")
-	raw, err := json.Marshal(&res.Spec)
-	assert.NoError(tb, err, "the resolved spec must encode")
-	if s.root.Spec == nil {
-		s.root.Spec = raw
-	}
-	if s.root.Mapping == nil {
-		s.root.Mapping = &res.Mapping
-		if s.remap != nil {
-			s.remap(s.root.Mapping)
-		}
-	}
-	h.commitRoot(tb, &s.root)
-	s.cfg.Clock = h.clock
-	s.cfg.Registry = r
-	s.cfg.Logger = slog.New(h.logs)
-	s.cfg.Fits = s.fits
-	if s.fits == nil {
-		s.cfg.Fits = func(m *store.Mutation) error { return h.st.Fits(cellScope, m) }
-	}
-	h.machine, err = cell.New(&s.cfg)
-	assert.NoError(tb, err, "New must return a machine of a complete config")
-	return h
 }
 
 // TestMachine checks the construction, the lifecycle and the replies of a cell machine.
@@ -657,6 +706,17 @@ func TestMachine(t *testing.T) {
 			assert.ErrorIs(t, replyTo[protocol.Receipt](t, h, call.Reply).Err, control.ErrDenied,
 				"the controller of the cell must authenticate the callers of its config")
 		})
+
+		t.Run("keeps its contract under every sequence of events", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "a cell keeps its contract under every sequence of events", exercise,
+				prop.Require(labelEarly, often),
+				prop.Require(labelSpec, sometimes),
+				prop.Require(labelFenced, sometimes),
+				prop.Require(labelStopped, often),
+				prop.Require(labelOutage, rare),
+			)
+		})
 	})
 
 	t.Run("Err", func(t *testing.T) {
@@ -671,23 +731,15 @@ func TestMachine(t *testing.T) {
 	})
 }
 
-// registry returns a registry with every built-in strategy of the support matrix.
-func registry(tb assert.TB) *config.Registry {
-	tb.Helper()
-	r := config.NewRegistry(builtin.Support())
-	assert.NoError(tb, builtin.Register(r), "the built-ins must register")
-	return r
-}
-
 // completeConfig returns a Config that New accepts.
 func completeConfig(tb assert.TB) cell.Config {
 	tb.Helper()
 	return cell.Config{
 		Clock:       fake.New(origin),
-		Rand:        &halves{},
+		Rand:        constant.NewCounter(half),
 		Reporter:    noop.New(),
 		Registry:    registry(tb),
-		Logger:      slog.New(newJournal()),
+		Logger:      slog.New(slog.DiscardHandler),
 		Fits:        func(*store.Mutation) error { return nil },
 		Scope:       cellScope,
 		Node:        shard.Node{Address: controllerAddress},
@@ -712,195 +764,6 @@ func disruption(nodes ...shard.NodeID) budget.Disruption {
 	}
 }
 
-// commitRoot commits m to the root scope through the root of the tests.
-func (h *harness) commitRoot(tb assert.TB, m *store.Mutation) {
-	tb.Helper()
-	ctx := assert.Context(tb)
-	head, err := h.st.Head(ctx, rootScope)
-	assert.NoError(tb, err, "the store must return the header of the root scope")
-	h.rootSeq++
-	m.ID = store.CommitID{Incarnation: incA, Term: rootTerm, Seq: h.rootSeq}
-	_, err = h.st.Writer(rootScope, incA, rootTerm).Commit(ctx, head.Generation, m)
-	assert.NoError(tb, err, "the root must commit")
-}
-
-// call returns the token of the next inbound call.
-func (h *harness) call() machine.ReplyToken {
-	h.calls++
-	return h.calls
-}
-
-// start passes Started to the machine and runs it until it serves.
-func (h *harness) start(tb assert.TB) {
-	tb.Helper()
-	h.step(tb, machine.Started{Reply: h.call()})
-	h.run(tb)
-}
-
-// step passes ev to the machine with the marker in out, checks that the machine keeps out,
-// and keeps the effects that the machine appends.
-func (h *harness) step(tb assert.TB, ev machine.Event) {
-	tb.Helper()
-	got := h.machine.Step(ev, []machine.Effect{marker})
-	assert.NotEmpty(tb, got, "the machine must keep the effects that out has")
-	assert.Equal(tb, got[0], marker, "the machine must keep the effects that out has")
-	h.route(got[1:])
-}
-
-// route keeps each effect of effects in the list of its kind.
-func (h *harness) route(effects []machine.Effect) {
-	for _, e := range effects {
-		switch e := e.(type) {
-		case machine.Watch:
-			h.watches = append(h.watches, e)
-			h.opened = append(h.opened, e.Token)
-		case machine.Unwatch:
-			h.unwatched = append(h.unwatched, e.Token)
-			h.watches = slices.DeleteFunc(h.watches, func(w machine.Watch) bool { return w.Token == e.Token })
-			if h.views == e.Token {
-				h.views = 0
-			}
-		case machine.WatchViews:
-			h.views = e.Token
-		case machine.Timer:
-			h.timers = append(h.timers, e)
-		case machine.Reply[struct{}], machine.Reply[protocol.Ack], machine.Reply[protocol.Receipt],
-			machine.Reply[budget.Decision]:
-			h.replies = append(h.replies, e)
-		case machine.Plan:
-			h.plans = append(h.plans, e)
-			h.pending = append(h.pending, e)
-		default:
-			h.pending = append(h.pending, e)
-		}
-	}
-}
-
-// run performs the pending effects, the oldest first, and passes their results to the
-// machine until no effect is pending.
-func (h *harness) run(tb assert.TB) {
-	tb.Helper()
-	for range maxDeliveries {
-		if len(h.pending) == 0 {
-			return
-		}
-		e := h.pending[0]
-		h.pending = slices.Delete(h.pending, 0, 1)
-		h.step(tb, h.perform(tb, e))
-	}
-	tb.Fatalf("the machine still runs after %d deliveries", maxDeliveries)
-}
-
-// perform performs e and returns the event of its result. Every agent replies to its
-// callbacks with success.
-func (h *harness) perform(tb assert.TB, e machine.Effect) machine.Event {
-	tb.Helper()
-	ctx := assert.Context(tb)
-	switch e := e.(type) {
-	case machine.Head:
-		head, err := h.st.Head(ctx, e.Scope)
-		return machine.HeadRead{Err: err, Token: e.Token, Head: head}
-	case machine.Read:
-		return h.read(tb, &e)
-	case machine.Commit:
-		gen, err := h.st.Writer(e.Scope, e.Incarnation, e.Term).Commit(ctx, e.Expect, e.Mutation)
-		return machine.Committed{Err: err, Token: e.Token, Generation: gen}
-	case machine.Outcome:
-		receipt, found, err := h.st.Outcome(ctx, e.Scope, e.ID)
-		return machine.OutcomeRead{Err: err, Token: e.Token, Receipt: receipt, Found: found}
-	case machine.Callback:
-		return machine.Called{Token: e.Token}
-	case machine.Plan:
-		plan, err := e.Placer.Place(ctx, e.Input)
-		var violations []placement.Violation
-		if err == nil {
-			violations, err = placement.Validate(e.Input, plan, e.Constraints)
-		}
-		return machine.Planned{Err: err, Violations: violations, Plan: plan, Token: e.Token}
-	default:
-		tb.Fatalf("the machine returned a %T, which the harness does not perform", e)
-		return nil
-	}
-}
-
-// read reads the page of e from the store and returns the event of its result.
-func (h *harness) read(tb assert.TB, e *machine.Read) machine.Event {
-	tb.Helper()
-	ctx := assert.Context(tb)
-	p := e.Page
-	p.Limit = pageLimit
-	state, cursor, err := h.st.Read(ctx, e.Scope, e.Incarnation, e.Query, p)
-	if err != nil {
-		return machine.PageRead{Err: err, Token: e.Token}
-	}
-	var ps []shard.Placement
-	for p, err := range cursor.Seq(ctx) {
-		assert.NoError(tb, err, "the cursor of the memory store must yield its placements")
-		ps = append(ps, p)
-	}
-	next := cursor.NextPage()
-	assert.NoError(tb, cursor.Close(), "the cursor must close")
-	return machine.PageRead{Placements: ps, Next: next, State: state, Token: e.Token}
-}
-
-// follow passes the generations of the root scope that the watches of the machine have
-// not passed, and runs the machine afterwards.
-func (h *harness) follow(tb assert.TB) {
-	tb.Helper()
-	for len(h.watches) > 0 {
-		w := h.watches[0]
-		ctx, cancel := context.WithCancel(assert.Context(tb))
-		cancel()
-		passed := false
-		for ev, err := range h.st.Watch(ctx, w.Scope, w.Incarnation, w.From, w.Node) {
-			if err != nil {
-				h.watches = slices.Delete(h.watches, 0, 1)
-				h.step(tb, machine.Watched{Err: err, Token: w.Token})
-				passed = true
-				break
-			}
-			h.watches[0].From = ev.Generation
-			h.step(tb, machine.Watched{Event: ev, Token: w.Token})
-			passed = true
-			break
-		}
-		h.run(tb)
-		if !passed {
-			return
-		}
-	}
-}
-
-// view passes the view of nodes to the machine, and runs the machine afterwards.
-func (h *harness) view(tb assert.TB, nodes ...shard.Node) {
-	tb.Helper()
-	assert.NotEqual(tb, h.views, machine.Token(0), "the machine must watch the views")
-	h.revision++
-	v := membership.View{Scope: cellScope, Nodes: slices.Clone(nodes), Revision: h.revision, Incarnation: incA}
-	h.step(tb, machine.Viewed{View: v, Token: h.views})
-	h.run(tb)
-}
-
-// elapse performs the oldest Timer whose Duration is d, and runs the machine afterwards.
-func (h *harness) elapse(tb assert.TB, d time.Duration) {
-	tb.Helper()
-	i := slices.IndexFunc(h.timers, func(tm machine.Timer) bool { return tm.Duration == d })
-	assert.True(tb, i >= 0, "a Timer of the duration must be armed")
-	tm := h.timers[i]
-	h.timers = slices.Delete(h.timers, i, i+1)
-	h.step(tb, machine.Elapsed{Token: tm.Token})
-	h.run(tb)
-}
-
-// state returns the state of the scope of the cell.
-func (h *harness) state(tb assert.TB) store.State {
-	tb.Helper()
-	state, cursor, err := h.st.Read(assert.Context(tb), cellScope, incA, store.Query{}, page.Page{})
-	assert.NoError(tb, err, "the store must read the scope of the cell")
-	assert.NoError(tb, cursor.Close(), "the cursor must close")
-	return state
-}
-
 // replyTo returns the reply of the machine to the call to, which must have the type
 // machine.Reply[T].
 func replyTo[T machine.Result](tb assert.TB, h *harness, to machine.ReplyToken) machine.Reply[T] {
@@ -914,14 +777,93 @@ func replyTo[T machine.Result](tb assert.TB, h *harness, to machine.ReplyToken) 
 	return machine.Reply[T]{}
 }
 
-// otherCells returns the root placements of n other cells. Each starts at its own
-// position, after the start of the cell of the tests.
-func otherCells(n int) []shard.Placement {
-	ps := make([]shard.Placement, 0, n)
-	for i := range n {
-		k := cellKey
-		k[14] = byte(i) + 1
-		ps = append(ps, shard.Placement{Shard: shard.ID{ID128: k}, Range: shard.Range{Start: []byte{0xf0, byte(i)}}})
-	}
-	return ps
+// exercise runs the steps of the case c over a cell machine, as the runtime, the root, the
+// membership, the agents and the operators drive it. The steps of a case:
+//   - pass Started.
+//   - run the effects that wait.
+//   - end Timers.
+//   - commit newer specs to the root scope and pass its generations.
+//   - pass views, reports and disruptions.
+//   - cancel calls.
+//   - fence the scope of the cell with a later term.
+//   - start and end outages of the store.
+//   - stop the cell.
+//
+// During an outage the root and the later term do not commit. The model checks the contract
+// of the cell after every step:
+//   - Only a later term stops the cell with an error, and an outage does not stop it. A stop
+//     by an error ends the watches of the cell.
+//   - A stopped cell does not append an effect, and Stopped appends only replies.
+//   - The cell replies to each call once, and never to a call that the runtime cancelled.
+//   - It replies to a call before it serves with control.ErrNotServing.
+//   - It replies to Started without an error once it serves, with the error that stopped it,
+//     or with control.ErrNotServing at Stopped.
+//   - It commits only to its own scope, with the term that the root granted.
+//
+// The drain takes the steps that drain returns until the cell serves. Once Stopped, the cell
+// has replied once to each call that it took before it stopped, unless the runtime cancelled
+// the call.
+func exercise(c *prop.Case) {
+	m := newModel(c)
+	running := func(struct{}) bool { return !m.stopped }
+	stateful.Steps(c, stateful.Machine[struct{}]{
+		Actions: []stateful.Action[struct{}]{
+			{
+				Name: "start", Enabled: func(struct{}) bool { return !m.stopped && m.started == 0 },
+				Run: func(c *prop.Case, _ int, _ any) { m.start(c) },
+			},
+			{
+				Name: "run", Enabled: func(struct{}) bool { return !m.stopped && len(m.h.pending) > 0 },
+				Run: func(c *prop.Case, _ int, _ any) { m.run(c) },
+			},
+			{
+				Name: "commit a spec", Enabled: func(struct{}) bool { return !m.stopped && !m.outage },
+				Run: func(c *prop.Case, _ int, _ any) {
+					c.Classify(labelSpec)
+					m.respec(c)
+				},
+			},
+			{
+				Name: "follow", Enabled: func(struct{}) bool { return !m.stopped && len(m.h.watches) > 0 },
+				Run: func(c *prop.Case, _ int, _ any) { m.follow(c) },
+			},
+			{
+				Name: "view", Enabled: func(struct{}) bool { return !m.stopped && m.h.views != 0 },
+				Run: func(c *prop.Case, _ int, _ any) { m.view(c) },
+			},
+			{Name: "report", Run: func(c *prop.Case, _ int, _ any) { m.report(c) }},
+			{Name: "disrupt", Run: func(c *prop.Case, _ int, _ any) { m.disrupt(c) }},
+			{
+				Name: "cancel", Enabled: func(struct{}) bool { return !m.stopped && len(m.waiting()) > 0 },
+				Run: func(c *prop.Case, _ int, _ any) { m.cancel(c) },
+			},
+			{
+				Name: "elapse", Enabled: func(struct{}) bool { return !m.stopped && len(m.h.timers) > 0 },
+				Run: func(c *prop.Case, _ int, _ any) {
+					m.elapse(c, c.Draw(prop.Integer(0, len(m.h.timers)-1), "timer"))
+				},
+			},
+			{
+				Name: "fence", Enabled: func(struct{}) bool { return !m.stopped && !m.fenced && !m.outage },
+				Run: func(c *prop.Case, _ int, _ any) {
+					c.Classify(labelFenced)
+					m.fence(c)
+				},
+			},
+			{Name: "toggle an outage", Enabled: running, Run: func(c *prop.Case, _ int, _ any) { m.toggle(c) }},
+			{
+				Name: "stop", Enabled: running,
+				Run: func(c *prop.Case, _ int, _ any) {
+					c.Classify(labelStopped)
+					m.halt(c)
+				},
+			},
+			{
+				Name: "complete", Drain: true, Enabled: func(struct{}) bool { return m.drain() != nil },
+				Run: func(c *prop.Case, _ int, _ any) { m.drain()(c) },
+			},
+		},
+		Invariant: func(c *prop.Case, _ struct{}) { m.invariant(c) },
+		Settle:    func(c *prop.Case, _ struct{}) { m.settle(c) },
+	})
 }

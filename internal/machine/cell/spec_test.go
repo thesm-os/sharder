@@ -10,9 +10,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
-	"go.thesmos.sh/core/epoch"
 
-	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
 	"go.thesmos.sh/sharder/internal/control"
 	"go.thesmos.sh/sharder/internal/follow"
@@ -24,15 +22,8 @@ import (
 	"go.thesmos.sh/sharder/store"
 )
 
-// The configurations and the specs of the tests.
-const (
-	// otherSlots is the configuration of fixed-slots with other slots than the tests.
-	otherSlots = `{"slots":8}`
-	// malformed is text that is not JSON.
-	malformed = "{"
-	// unknownPreset is a spec with a preset that the registry does not have.
-	unknownPreset = `{"namespace":"orders","preset":"unknown","version":1}`
-)
+// unknownPreset is a spec with a preset that the registry does not have.
+const unknownPreset = `{"namespace":"orders","preset":"unknown","version":1}`
 
 // The names of the strategies of the tests.
 const (
@@ -45,17 +36,14 @@ const (
 // logSpec is the log message of a newer spec that does not apply.
 const logSpec = "cell: the accepted spec does not apply"
 
-// attrCellKey is the key of the attribute of the logs of the cell that names the cell.
-const attrCellKey = "cell"
+// errStatic is the error of the factory of the placer static.
+var errStatic = errors.New("test: the placer does not build")
 
 // none is the configuration of a strategy of the tests without settings.
 type none struct{}
 
 // Validate returns nil.
 func (none) Validate() error { return nil }
-
-// errStatic is the error of the factory of the placer static.
-var errStatic = errors.New("test: the placer does not build")
 
 // static is the factory of a placer other than the planner. A controller refuses such a
 // placer before it builds one, so its New returns an error.
@@ -149,9 +137,9 @@ func TestSpec(t *testing.T) {
 			h.commitSpec(t, firstVersion+1, func(s *config.Spec) {
 				s.Partitioning = config.Selection{Name: fixedslots.Name, Config: json.RawMessage(otherSlots)}
 			})
-			got := h.logs.logged(logSpec)
+			got := h.logged(logSpec)
 			assert.Length(t, got, 1, "the cell must log the spec that does not apply")
-			expect.Equal(t, got[0].attrs[attrCellKey], string(cellID), "the log must name the cell")
+			expect.Equal(t, got[0][attrCellKey], string(cellID), "the log must name the cell")
 			expect.Equal(t, h.state(t).Cell.SpecVersion, firstVersion, "the cell must keep its spec")
 		})
 
@@ -177,7 +165,7 @@ func TestSpec(t *testing.T) {
 			h.commitRoot(t, &store.Mutation{})
 			h.follow(t)
 			expect.Length(t, h.plans, 1, "a generation without a spec must not start a pass")
-			expect.Empty(t, h.logs.logged(logSpec), "a generation without a spec must not resolve a spec")
+			expect.Empty(t, h.logged(logSpec), "a generation without a spec must not resolve a spec")
 		})
 
 		t.Run("reads a root scope of many pages", func(t *testing.T) {
@@ -190,32 +178,4 @@ func TestSpec(t *testing.T) {
 			assert.NotEqual(t, h.views, machine.Token(0), "the cell must watch its views after the snapshot")
 		})
 	})
-}
-
-// specMutation returns the mutation of the root that accepts the spec of the tests at the
-// version v, after change changes it.
-func specMutation(tb testCase, v epoch.Epoch, change func(*config.Spec)) *store.Mutation {
-	tb.Helper()
-	spec := config.Spec{
-		Namespace:    namespace,
-		Preset:       builtin.ExclusiveWorker,
-		Partitioning: config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)},
-		Version:      v,
-	}
-	if change != nil {
-		change(&spec)
-	}
-	res, err := config.Resolve(registry(tb), &spec, provided)
-	assert.NoError(tb, err, "the spec must resolve")
-	raw, err := json.Marshal(&res.Spec)
-	assert.NoError(tb, err, "the resolved spec must encode")
-	return &store.Mutation{Spec: raw}
-}
-
-// commitSpec commits the spec of the tests at the version v to the root scope, after
-// change changes it, and passes the generation to the machine.
-func (h *harness) commitSpec(tb testCase, v epoch.Epoch, change func(*config.Spec)) {
-	tb.Helper()
-	h.commitRoot(tb, specMutation(tb, v, change))
-	h.follow(tb)
 }
