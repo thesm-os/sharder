@@ -6,13 +6,16 @@ package root_test
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
+	"go.thesmos.sh/core/coretest/telemetrytest"
 	"go.thesmos.sh/core/epoch"
+	"go.thesmos.sh/core/id"
+	"go.thesmos.sh/core/page"
 	"go.thesmos.sh/core/telemetry"
-	"go.thesmos.sh/core/telemetry/noop"
 
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
@@ -23,6 +26,7 @@ import (
 	"go.thesmos.sh/sharder/proposal"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
+	"go.thesmos.sh/sharder/store"
 )
 
 // The names of the strategies of the tests.
@@ -33,8 +37,17 @@ const (
 	unknownPreset config.PresetName = "unknown"
 )
 
+// otherTerm is the term of another root of the namespace.
+const otherTerm epoch.Epoch = 1
+
+// gapInstrument is the name of the histogram of the writer gaps.
+const gapInstrument telemetry.InstrumentName = "sharder.writer.gap"
+
 // errStatic is the error of the factory of the placer static.
 var errStatic = errors.New("test: the placer does not build")
+
+// incB is the incarnation of a namespace that another root creates.
+var incB = shard.NamespaceIncarnation{ID: id.New128([16]byte{0: 0x1a, 15: 0x0b})}
 
 // none is the configuration of a strategy of the tests without settings.
 type none struct{}
@@ -204,12 +217,16 @@ func TestSpec(t *testing.T) {
 
 		t.Run("records the writer gap of a cell at the commit that ends its move", func(t *testing.T) {
 			t.Parallel()
-			r := &histograms{Reporter: noop.New(), records: make(map[telemetry.InstrumentName]int)}
-			h := newHarness(t, func(s *setup) { s.cfg.Reporter = r })
+			rec := telemetrytest.NewRecorder()
+			h := newHarness(t, func(s *setup) { s.cfg.Reporter = rec })
 			h.start(t)
 			h.view(t, procA)
 			h.view(t, procB)
-			assert.Equal(t, r.records[gapInstrument], 1, "the root must record the gap of the cell when its move ends")
+			records := 0
+			for _, attrs := range rec.Series(gapInstrument) {
+				records += len(rec.Values(gapInstrument, attrs...))
+			}
+			assert.Equal(t, records, 1, "the root must record the gap of the cell when its move ends")
 		})
 
 		t.Run("applies a spec proposal", func(t *testing.T) {
@@ -249,4 +266,52 @@ func TestSpec(t *testing.T) {
 				"the root must authenticate the callers of its config")
 		})
 	})
+}
+
+// deliver performs the oldest pending effect, and passes the event of its result to the
+// machine.
+func (h *harness) deliver(tb assert.TB) {
+	tb.Helper()
+	assert.NotEmpty(tb, h.pending, "an effect of the machine must be pending")
+	e := h.pending[0]
+	h.pending = slices.Delete(h.pending, 0, 1)
+	h.step(tb, h.perform(tb, e))
+}
+
+// placements returns the placements of the root scope.
+func (h *harness) placements(tb assert.TB) []shard.Placement {
+	tb.Helper()
+	ctx := assert.Context(tb)
+	_, cursor, err := h.st.Read(ctx, rootScope, shard.NamespaceIncarnation{}, store.Query{}, page.Page{})
+	assert.NoError(tb, err, "the store must read the root scope")
+	defer func() { assert.NoError(tb, cursor.Close(), "the cursor must close") }()
+	var ps []shard.Placement
+	for p, err := range cursor.Seq(ctx) {
+		assert.NoError(tb, err, "the cursor of the memory store must yield its placements")
+		ps = append(ps, p)
+	}
+	return ps
+}
+
+// create commits the creation of the namespace of the tests by another root, in the
+// incarnation incB with the spec of the version v.
+func (h *harness) create(tb assert.TB, v epoch.Epoch) {
+	tb.Helper()
+	ctx := assert.Context(tb)
+	spec := namespaceSpec()
+	spec.Version = v
+	res, err := config.Resolve(registry(tb), &spec, provided)
+	assert.NoError(tb, err, "the spec of the other root must resolve")
+	raw, err := json.Marshal(&res.Spec)
+	assert.NoError(tb, err, "the spec of the other root must encode")
+	head, err := h.st.Head(ctx, rootScope)
+	assert.NoError(tb, err, "the store must return the header of the root scope")
+	h.others++
+	m := &store.Mutation{
+		ID:      store.CommitID{Incarnation: incB, Term: otherTerm, Seq: h.others},
+		Mapping: &res.Mapping,
+		Spec:    raw,
+	}
+	_, err = h.st.Writer(rootScope, incB, otherTerm).Commit(ctx, head.Generation, m)
+	assert.NoError(tb, err, "the other root must commit")
 }

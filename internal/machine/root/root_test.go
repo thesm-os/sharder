@@ -4,100 +4,72 @@
 package root_test
 
 import (
-	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"slices"
-	"sync"
 	"testing"
 	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
-	"go.thesmos.sh/core/clock/fake"
+	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/assert/stateful"
+	"go.thesmos.sh/core/coretest/telemetrytest"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/fsm"
-	"go.thesmos.sh/core/id"
-	"go.thesmos.sh/core/page"
-	"go.thesmos.sh/core/rand"
-	"go.thesmos.sh/core/telemetry"
-	"go.thesmos.sh/core/telemetry/noop"
 
 	"go.thesmos.sh/sharder/budget"
-	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
 	"go.thesmos.sh/sharder/internal/control"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/machine/root"
-	"go.thesmos.sh/sharder/membership"
-	"go.thesmos.sh/sharder/partition/fixedslots"
-	"go.thesmos.sh/sharder/placement"
-	"go.thesmos.sh/sharder/proposal"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
-	"go.thesmos.sh/sharder/store/memory"
 )
-
-// The names of the records and the callers of the tests.
-const (
-	// namespace is the namespace of the tests.
-	namespace shard.Namespace = "orders"
-	// operator is the identity of the operator of the tests.
-	operator shard.Identity = "operator"
-	// rootAddress is the address of the controller process of the root of the tests.
-	rootAddress = "controller-1:7000"
-	// rootIdentity is the identity of the controller process of the root of the tests.
-	rootIdentity shard.Identity = "controller-1"
-	// slotsConfig is the configuration of fixed-slots in the spec of the tests.
-	slotsConfig = `{"slots":4}`
-	// otherTerm is the term of another root of the namespace.
-	otherTerm epoch.Epoch = 1
-)
-
-// maxDeliveries bounds the effects that run performs, so a machine that never settles
-// fails its test instead of the timeout of go test.
-const maxDeliveries = 10000
-
-// marker is the effect that the harness passes in out with each event: an Unwatch without a
-// watch, which the machine never returns itself.
-var marker machine.Effect = machine.Unwatch{}
 
 // The log message of an error of a term.
 const logTerm = "root: the term failed"
 
-// gapInstrument is the name of the histogram of the writer gaps.
-const gapInstrument telemetry.InstrumentName = "sharder.writer.gap"
+// attrNamespaceKey is the key of the attribute that contains the namespace in the logs of
+// the root.
+const attrNamespaceKey = "namespace"
 
-// The controller processes of the tests, each at its first incarnation and with the
-// capacity of one cell.
-var (
-	procA = shard.Node{
-		ID: "proc-a", Address: "proc-a:7000", Identity: "proc-a", Incarnation: 1,
-		Capacity: map[string]float64{root.Capacity: 1},
-	}
-	procB = shard.Node{
-		ID: "proc-b", Address: "proc-b:7000", Identity: "proc-b", Incarnation: 1,
-		Capacity: map[string]float64{root.Capacity: 1},
-	}
+// firstCampaignBackoff is the backoff before the first retry of a campaign with the source
+// of randomness of the tests: half of root.CampaignRetryBase.
+const firstCampaignBackoff = root.CampaignRetryBase / 2
+
+// grants is the weight of the grant of a campaign in the property of a root, which a case takes
+// more often than the other actions.
+const grants = 3
+
+// The labels of the cases of the property of a root, which its coverage requirements count.
+const (
+	// labelGranted counts a case in which a step grants a term to the root.
+	labelGranted = "a step grants a term"
+	// labelEnded counts a case in which a step ends a term of the root in the store.
+	labelEnded = "a step ends a term"
+	// labelFault counts a case in which an error of the controller of a term ends the term.
+	labelFault = "an error of a controller ends its term"
+	// labelStopped counts a case in which a step stops the root.
+	labelStopped = "a step stops the root"
+	// labelOutage counts a case in which the root arms a Timer during an outage of the store.
+	labelOutage = "the root arms a Timer during an outage"
 )
 
-// The scope, the incarnations, the clock and the capabilities of the tests.
-var (
-	// rootScope is the root scope of the namespace of the tests.
-	rootScope = shard.Scope{Namespace: namespace}
-	// incB is the incarnation of a namespace that another root creates.
-	incB = shard.NamespaceIncarnation{ID: id.New128([16]byte{0: 0x1a, 15: 0x0b})}
-	// origin is the start of the clock of each test.
-	origin = time.Date(2026, time.October, 12, 0, 0, 0, 0, time.UTC)
-	// provided lists the capabilities of the store and the membership of the tests.
-	provided = map[config.Axis][]config.Capability{
-		config.Store:      {config.Durable},
-		config.Membership: {config.Leases},
-	}
+// The shares of the cases of the property of a root that its labels must count, about half of
+// the shares that 1,000 cases measured.
+const (
+	// often is the share of labelGranted and labelStopped. The measured shares were 30% and
+	// 37%.
+	often = 0.15
+	// sometimes is the share of labelEnded. The measured share was 16%.
+	sometimes = 0.08
+	// rare is the share of labelFault, which needs a fault and a commit after it, and of
+	// labelOutage. The measured shares were 8.7% and 8.8%.
+	rare = 0.04
 )
 
 // The errors of the campaigns of the tests.
@@ -108,203 +80,418 @@ var (
 	errBroken = errs.WithClass(errors.New("test: the store is broken"), errs.Invalid)
 )
 
-// halves is a source of randomness whose every draw of rand.Float64 is one half, so each
-// backoff is half of its ceiling. Its values differ in their low bits, so the IDs that the
-// root generates differ.
-type halves struct {
-	// n counts the draws.
-	n uint64
+// processes lists the sets of controller processes that the views of the property of a root
+// contain.
+var processes = [][]shard.Node{{procA}, {procB}, {procA, procB}, {}}
+
+// cellCalls build the calls of a cell controller that the root refuses, each for the token of
+// its reply.
+var cellCalls = []func(to machine.ReplyToken) machine.Event{
+	func(to machine.ReplyToken) machine.Event {
+		return machine.Report{Report: &protocol.Report{Scope: rootScope}, Reply: to}
+	},
+	func(to machine.ReplyToken) machine.Event {
+		return machine.Disrupt{Disruption: &budget.Disruption{Scope: rootScope}, Reply: to}
+	},
+	func(to machine.ReplyToken) machine.Event {
+		return machine.Done{Args: &protocol.DoneArgs{Scope: rootScope}, Reply: to}
+	},
 }
 
-var _ rand.Rand = (*halves)(nil)
-
-// Uint64 returns the next value: the top bit and the count of the draws.
-func (h *halves) Uint64() uint64 {
-	h.n++
-	return 1<<63 | h.n
+// model is the expected state of a root that the property of a root drives, and the record of
+// what the root did. Its harness performs a Campaign only when a step grants it, and passes
+// each effect of the root to observe.
+type model struct {
+	// c is the case of the property.
+	c *prop.Case
+	// h is the harness of the root.
+	h *harness
+	// leader is the term that the store has granted to the root and not ended, and nil
+	// without one.
+	leader store.Leadership
+	// want maps the token of each call whose reply the model knows to the error of the reply.
+	want map[machine.ReplyToken]error
+	// replies counts the replies of the root to each call.
+	replies map[machine.ReplyToken]int
+	// replied maps the token of each call to the error of its last reply.
+	replied map[machine.ReplyToken]error
+	// cancelled contains the token of each call that the runtime cancelled.
+	cancelled map[machine.ReplyToken]bool
+	// late contains the token of each call that the root took after it had stopped.
+	late map[machine.ReplyToken]bool
+	// watches maps the token of each WatchViews that has not ended to the term of its
+	// controller.
+	watches map[machine.Token]epoch.Epoch
+	// backoffs contains the token of each Timer that the drain ends. Such a Timer is the
+	// backoff before a campaign, or a Timer that the root armed during an outage.
+	backoffs map[machine.Token]bool
+	// sent lists the token of each call, in order.
+	sent []machine.ReplyToken
+	// granted is the token of the last campaign that the store granted.
+	granted machine.Token
+	// term is the term of the controller that runs, and zero outside a term.
+	term epoch.Epoch
+	// fenced is the term of the last commit of another writer, and zero without one.
+	fenced epoch.Epoch
+	// proposals counts the proposals, and gives each proposal its ID.
+	proposals byte
+	// full is true while the bound of a commit refuses every mutation.
+	full bool
+	// outage is true while the store refuses every call.
+	outage bool
+	// broken is true once a campaign has failed with an error that a retry does not fix.
+	broken bool
+	// stopping is true while Stopped is the step.
+	stopping bool
+	// stopped is true once the root has stopped.
+	stopped bool
 }
 
-// Read fills p with the bytes of successive values of Uint64.
-func (h *halves) Read(p []byte) (int, error) {
-	for i := 0; i < len(p); i += 8 {
-		var b [8]byte
-		binary.BigEndian.PutUint64(b[:], h.Uint64())
-		copy(p[i:], b[:])
+// newModel returns the model of a root that has taken Started and campaigns.
+func newModel(c *prop.Case) *model {
+	m := &model{
+		c:         c,
+		want:      make(map[machine.ReplyToken]error),
+		replies:   make(map[machine.ReplyToken]int),
+		replied:   make(map[machine.ReplyToken]error),
+		cancelled: make(map[machine.ReplyToken]bool),
+		late:      make(map[machine.ReplyToken]bool),
+		watches:   make(map[machine.Token]epoch.Epoch),
+		backoffs:  make(map[machine.Token]bool),
 	}
-	return len(p), nil
-}
-
-// journal is a slog.Handler that keeps the message and the attributes of every record.
-type journal struct {
-	// entries lists the records in order.
-	entries []entry
-	// mu guards entries.
-	mu sync.Mutex
-}
-
-// entry is one record of a journal.
-type entry struct {
-	// attrs maps the key of each attribute to its value as text.
-	attrs map[string]string
-	// message is the message of the record.
-	message string
-}
-
-var _ slog.Handler = (*journal)(nil)
-
-// Enabled reports true for every level.
-func (*journal) Enabled(context.Context, slog.Level) bool { return true }
-
-// Handle keeps the record r.
-func (j *journal) Handle(_ context.Context, r slog.Record) error {
-	e := entry{attrs: make(map[string]string), message: r.Message}
-	r.Attrs(func(a slog.Attr) bool {
-		e.attrs[a.Key] = a.Value.String()
-		return true
+	m.h = newHarness(c, func(s *setup) {
+		s.fits = func(mu *store.Mutation) error {
+			if m.full {
+				return store.ErrTooLarge
+			}
+			return m.h.st.Fits(rootScope, mu)
+		}
 	})
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	j.entries = append(j.entries, e)
+	m.h.paused = true
+	m.h.observe = m.observe
+	started := m.call()
+	m.want[started] = nil
+	m.step(c, machine.Started{Reply: started})
+	return m
+}
+
+// observe checks the effect e that the root appends, and takes what e changes in the expected
+// state.
+func (m *model) observe(e machine.Effect) {
+	c := m.c
+	c.Helper()
+	assert.False(c, m.stopped, "a stopped root must not append an effect")
+	switch e.(type) {
+	case machine.Reply[struct{}], machine.Reply[protocol.Ack], machine.Reply[protocol.Receipt],
+		machine.Reply[budget.Decision]:
+	default:
+		expect.False(c, m.stopping, "the root must append only replies at Stopped")
+	}
+	var to machine.ReplyToken
+	var err error
+	switch e := e.(type) {
+	case machine.Campaign:
+		expect.Equal(c, m.term, epoch.Zero, "the root must campaign only outside a term")
+		return
+	case machine.Commit:
+		expect.NotEqual(c, m.term, epoch.Zero, "the root must commit only within a term")
+		expect.Equal(c, e.Term, m.term, "a commit must have the term of the controller that runs")
+		return
+	case machine.WatchViews:
+		expect.NotEqual(c, m.term, epoch.Zero, "the root must watch the views only within a term")
+		m.watches[e.Token] = m.term
+		return
+	case machine.Unwatch:
+		delete(m.watches, e.Token)
+		return
+	case machine.Timer:
+		if m.outage {
+			c.Classify(labelOutage)
+			m.backoffs[e.Token] = true
+		}
+		return
+	case machine.Resign:
+		expect.Equal(c, e.Token, m.granted, "a Resign must have the token of the campaign of the term")
+		expect.True(c, m.full || m.fenced > m.term,
+			"the root must resign a term only after a commit that does not fit or a fence")
+		c.Classify(labelFault)
+		m.term = epoch.Zero
+		return
+	case machine.Reply[struct{}]:
+		to, err = e.To, e.Err
+	case machine.Reply[protocol.Ack]:
+		to, err = e.To, e.Err
+	case machine.Reply[protocol.Receipt]:
+		to, err = e.To, e.Err
+	case machine.Reply[budget.Decision]:
+		to, err = e.To, e.Err
+	default:
+		return
+	}
+	m.replies[to]++
+	m.replied[to] = err
+	expect.Equal(c, m.replies[to], 1, "the root must reply to a call once")
+	expect.False(c, m.cancelled[to], "the root must not reply to a call that the runtime cancelled")
+	want, known := m.want[to]
+	switch {
+	case !known:
+	case want == nil:
+		expect.Nil(c, err, "the root must reply to Started without an error")
+	default:
+		expect.That(c, err).ErrorIs(want, "the reply must have the error that the call expects")
+	}
+}
+
+// call returns the token of the next inbound call. The model expects a reply only to a call
+// that the root takes before it stops.
+func (m *model) call() machine.ReplyToken {
+	to := m.h.call()
+	m.sent = append(m.sent, to)
+	m.late[to] = m.stopped
+	return to
+}
+
+// step passes ev to the root, and takes an error that stops the root.
+func (m *model) step(c *prop.Case, ev machine.Event) {
+	m.h.step(c, ev)
+	m.sync()
+}
+
+// run performs the effects that wait, except a Campaign, and passes their results to the
+// root.
+func (m *model) run(c *prop.Case) {
+	m.h.run(c)
+	m.sync()
+}
+
+// sync marks the root as stopped once an error has stopped it.
+func (m *model) sync() {
+	if m.h.machine.Err() != nil {
+		m.stopped = true
+	}
+}
+
+// campaign removes the Campaign that waits for its result from the effects that wait, and
+// returns it.
+func (m *model) campaign(c *prop.Case) machine.Campaign {
+	i := slices.IndexFunc(m.h.pending, campaigning)
+	assert.True(c, i >= 0, "a Campaign of the root must wait for its result")
+	camp := m.h.pending[i].(machine.Campaign)
+	m.h.pending = slices.Delete(m.h.pending, i, i+1)
+	return camp
+}
+
+// grant has the store grant the term of the Campaign that waits, and runs the root until the
+// controller of the term serves.
+func (m *model) grant(c *prop.Case) {
+	camp := m.campaign(c)
+	assert.Nil(c, m.leader, "the store must end each term of the root before the root campaigns")
+	l, err := m.h.st.Campaign(assert.Context(c), rootScope)
+	assert.NoError(c, err, "the store must grant a term to the only candidate")
+	m.leader, m.granted, m.term = l, camp.Token, l.Term()
+	m.step(c, machine.Campaigned{Token: camp.Token, Term: l.Term()})
+	m.run(c)
+}
+
+// lose ends the Campaign that waits with err, and passes the result to the root. A transient
+// err starts a backoff, whose Timer the model keeps.
+func (m *model) lose(c *prop.Case, err error) {
+	camp := m.campaign(c)
+	before := len(m.h.timers)
+	m.step(c, machine.Campaigned{Err: err, Token: camp.Token})
+	for _, tm := range m.h.timers[before:] {
+		m.backoffs[tm.Token] = true
+	}
+}
+
+// end has the store end the term that it granted to the root, and passes the end of the term
+// to the root, which campaigns again.
+func (m *model) end(c *prop.Case) {
+	assert.NoError(c, m.leader.Resign(assert.Context(c)), "the store must end the term")
+	m.leader, m.term = nil, epoch.Zero
+	m.step(c, machine.TermEnded{Token: m.granted})
+	m.run(c)
+}
+
+// elapse ends the Timer at the index i of the Timers that the root has armed, and runs the
+// root.
+func (m *model) elapse(c *prop.Case, i int) {
+	tm := m.h.timers[i]
+	m.h.timers = slices.Delete(m.h.timers, i, i+1)
+	delete(m.backoffs, tm.Token)
+	m.step(c, machine.Elapsed{Token: tm.Token})
+	m.run(c)
+}
+
+// view passes a view of the controller processes that c chooses, and runs the root.
+func (m *model) view(c *prop.Case) {
+	m.h.view(c, c.Draw(prop.SampledFrom(processes...), "processes")...)
+	m.sync()
+}
+
+// submit passes a proposal of the next version of the spec of the root scope. The root
+// replies with control.ErrNotServing outside a term.
+func (m *model) submit(c *prop.Case) {
+	to := m.call()
+	if !m.stopped && m.term == epoch.Zero {
+		m.want[to] = control.ErrNotServing
+	}
+	base := m.version(c)
+	m.proposals++
+	m.step(c, machine.Submit{
+		Proposal: m.h.specProposal(c, m.proposals, base, base+1),
+		Metadata: protocol.Metadata{Caller: operator, Version: protocol.Current},
+		Reply:    to,
+	})
+}
+
+// version returns the version of the spec of the root scope, and zero before the namespace
+// exists.
+func (m *model) version(c *prop.Case) epoch.Epoch {
+	st := m.h.state(c)
+	if len(st.Spec) == 0 {
+		return epoch.Zero
+	}
+	var s config.Spec
+	assert.NoError(c, json.Unmarshal(st.Spec, &s), "the spec of the root scope must decode")
+	return s.Version
+}
+
+// misdirect passes the call of a cell controller that c chooses. The root refuses the call
+// with control.ErrCall.
+func (m *model) misdirect(c *prop.Case) {
+	to := m.call()
+	if !m.stopped {
+		m.want[to] = control.ErrCall
+	}
+	m.step(c, c.Draw(prop.SampledFrom(cellCalls...), "call")(to))
+}
+
+// cancel ends the wait of the caller of a call without a reply. c chooses the call.
+func (m *model) cancel(c *prop.Case) {
+	calls := m.waiting()
+	to := calls[c.Draw(prop.Integer(0, len(calls)-1), "call")]
+	m.cancelled[to] = true
+	m.step(c, machine.Cancelled{Reply: to})
+}
+
+// waiting returns the tokens of the calls whose callers wait for their replies, in their
+// order.
+func (m *model) waiting() []machine.ReplyToken {
+	var calls []machine.ReplyToken
+	for _, to := range m.sent {
+		if m.replies[to] == 0 && !m.cancelled[to] && !m.late[to] {
+			calls = append(calls, to)
+		}
+	}
+	return calls
+}
+
+// fence commits to the root scope as a writer of a term above every term of the root, so the
+// next commit of the controller that runs fails.
+func (m *model) fence(c *prop.Case) {
+	ctx := assert.Context(c)
+	head, err := m.h.st.Head(ctx, rootScope)
+	assert.NoError(c, err, "the store must return the header of the root scope")
+	m.fenced = max(head.Watermark, m.term) + 1
+	mu := &store.Mutation{ID: store.CommitID{Incarnation: head.Incarnation, Term: m.fenced, Seq: 1}}
+	_, err = m.h.st.Writer(rootScope, head.Incarnation, m.fenced).Commit(ctx, head.Generation, mu)
+	assert.NoError(c, err, "a writer of a later term must commit")
+}
+
+// stale passes the result or the end of an older campaign that c chooses, and checks that the
+// root ignores it.
+func (m *model) stale(c *prop.Case) {
+	old := m.h.campaigns[c.Draw(prop.Integer(0, len(m.h.campaigns)-2), "campaign")]
+	ev := machine.Event(machine.TermEnded{Token: old})
+	if c.Draw(prop.Boolean(), "granted") {
+		ev = machine.Campaigned{Token: old, Term: max(m.term, m.fenced) + 1}
+	}
+	out := []machine.Effect{marker}
+	assert.Equal(c, m.h.machine.Step(ev, out), out, "the root must ignore the result of an older campaign")
+}
+
+// halt passes the Stopped of the run.
+func (m *model) halt(c *prop.Case) {
+	m.stopping = true
+	m.step(c, machine.Stopped{})
+	m.stopping, m.stopped = false, true
+}
+
+// toggle starts an outage of the store or ends the outage that runs.
+func (m *model) toggle(*prop.Case) {
+	if m.outage {
+		m.h.st.EndOutage()
+	} else {
+		m.h.st.StartOutage()
+	}
+	m.outage = !m.outage
+}
+
+// drain returns the next step towards a root that serves, and nil for a root that serves or
+// has stopped. The step is one of these:
+//   - the end of an outage.
+//   - the grant of a Campaign that waits.
+//   - the end of a term that the root has resigned or that a later term has fenced.
+//   - the end of a Timer that backoffs contains.
+func (m *model) drain() func(c *prop.Case) {
+	if m.stopped {
+		return nil
+	}
+	if m.outage {
+		return m.toggle
+	}
+	if slices.ContainsFunc(m.h.pending, campaigning) {
+		return m.grant
+	}
+	if m.leader != nil && (m.term == epoch.Zero || m.fenced > m.term) {
+		return m.end
+	}
+	if i := slices.IndexFunc(m.h.timers, func(tm machine.Timer) bool { return m.backoffs[tm.Token] }); i >= 0 {
+		return func(c *prop.Case) { m.elapse(c, i) }
+	}
 	return nil
 }
 
-// WithAttrs returns j. The tests read the attributes of the records of the root alone.
-func (j *journal) WithAttrs([]slog.Attr) slog.Handler { return j }
+// invariant checks what is true after every step. Only a campaign error that a retry does not
+// fix stops the root with an error, and every watch of a root that runs belongs to the
+// controller that runs.
+func (m *model) invariant(c *prop.Case) {
+	if err := m.h.machine.Err(); err != nil {
+		expect.True(c, m.broken, "only a campaign error that a retry does not fix may stop the root")
+		expect.That(c, err).ErrorIs(errBroken, "the root must stop with the error of the campaign")
+		return
+	}
+	if m.stopped {
+		return
+	}
+	for _, term := range m.watches {
+		expect.Equal(c, term, m.term, "every watch of the root must belong to the controller that runs")
+	}
+}
 
-// WithGroup returns j. The root does not group its attributes.
-func (j *journal) WithGroup(string) slog.Handler { return j }
-
-// logged returns the entries with the message message.
-func (j *journal) logged(message string) []entry {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	var got []entry
-	for _, e := range j.entries {
-		if e.message == message {
-			got = append(got, e)
+// settle checks the root once the drain has ended. The controller of the term records the
+// term in the root scope and applies a proposal. settle then stops the root, and checks that
+// the root has replied once to each call that it took before it stopped, unless the runtime
+// cancelled the call.
+func (m *model) settle(c *prop.Case) {
+	if !m.stopped {
+		m.run(c)
+		assert.NotEqual(c, m.term, epoch.Zero, "the root must lead a term once the drain ends")
+		assert.Equal(c, m.h.state(c).Cell.Epoch, m.term,
+			"the controller of the term must record the term in the root scope")
+		m.submit(c)
+		m.run(c)
+		to := m.sent[len(m.sent)-1]
+		assert.Equal(c, m.replies[to], 1, "the controller of the term must reply to a proposal")
+		assert.NoError(c, m.replied[to], "the controller of the term must apply a proposal of the next version")
+		m.halt(c)
+	}
+	for _, to := range m.sent {
+		if !m.late[to] && !m.cancelled[to] {
+			expect.Equal(c, m.replies[to], 1, "the root must reply once to each call that it took before it stopped")
 		}
 	}
-	return got
-}
-
-// histograms is a telemetry.Reporter that counts the records of each histogram. It returns
-// the instruments of its Reporter for every other kind.
-type histograms struct {
-	telemetry.Reporter
-	// records maps the name of each histogram to the number of its records.
-	records map[telemetry.InstrumentName]int
-}
-
-var _ telemetry.Reporter = (*histograms)(nil)
-
-// Histogram returns a histogram that counts its records in r.
-func (r *histograms) Histogram(spec telemetry.InstrumentSpec) telemetry.Histogram {
-	return &histogram{of: r, name: spec.Name}
-}
-
-// histogram is one histogram of a histograms reporter.
-type histogram struct {
-	// of is the reporter that counts the records.
-	of *histograms
-	// name is the name of the histogram.
-	name telemetry.InstrumentName
-}
-
-var _ telemetry.Histogram = (*histogram)(nil)
-
-// Record counts one record of h.
-func (h *histogram) Record(context.Context, float64) { h.of.records[h.name]++ }
-
-// With returns h. The tests count the records of a histogram over every attribute.
-func (h *histogram) With([]telemetry.Attr) telemetry.Histogram { return h }
-
-// Release does nothing, because h keeps no state of its attributes.
-func (*histogram) Release() {}
-
-// setup is the configuration of a harness before New.
-type setup struct {
-	// cfg is the Config of the machine, which newHarness completes.
-	cfg root.Config
-	// fits is the bound of a commit, and nil for the bound of the store.
-	fits func(m *store.Mutation) error
-}
-
-// option changes the setup of a harness.
-type option func(*setup)
-
-// harness is the runtime of the tests. It performs the effects of one root machine against
-// a memory store, replies to the callbacks of the machine as the controller processes do,
-// runs its passes and keeps its replies.
-type harness struct {
-	// answer returns the answer of a controller process to the request r, and nil for
-	// success. With a nil answer, every process replies with success.
-	answer func(r *protocol.Request) error
-	// st is the store of the machine.
-	st *memory.Store
-	// machine is the machine under test.
-	machine *root.Machine
-	// logs are the logs of the machine.
-	logs *journal
-	// terms maps the token of each Campaign that the store granted to its term.
-	terms map[machine.Token]store.Leadership
-	// pending lists the effects that run performs, the oldest first.
-	pending []machine.Effect
-	// timers lists the Timers that the machine armed, the oldest first.
-	timers []machine.Timer
-	// replies lists every reply of the machine, in order.
-	replies []machine.Effect
-	// sent lists the request of every callback of the machine, in order.
-	sent []*protocol.Request
-	// campaigns lists the token of every Campaign of the machine, in order.
-	campaigns []machine.Token
-	// tokens lists the token of every effect of the machine that has a token of its own, in
-	// order.
-	tokens []machine.Token
-	// resigned lists the token of every Resign of the machine, in order.
-	resigned []machine.Token
-	// unwatched lists the token of every Unwatch of the machine, in order.
-	unwatched []machine.Token
-	// views is the token of the WatchViews that runs, and zero without one.
-	views machine.Token
-	// revision is the revision of the last view that the harness passed.
-	revision epoch.Epoch
-	// calls is the token of the last inbound call of the harness.
-	calls machine.ReplyToken
-	// others is the Seq of the last commit of another root.
-	others uint64
-	// paused reports that run does not perform a Campaign, so a campaign remains in flight.
-	paused bool
-}
-
-// newHarness returns a harness of a root machine of the namespace of the tests. Each
-// option changes the setup before New.
-func newHarness(tb testing.TB, opts ...option) *harness {
-	tb.Helper()
-	s := setup{cfg: root.Config{
-		Rand:        &halves{},
-		Reporter:    noop.New(),
-		Provided:    provided,
-		Spec:        namespaceSpec(),
-		Operators:   []shard.Identity{operator},
-		Node:        shard.Node{ID: "controller-1", Address: rootAddress, Identity: rootIdentity},
-		Parallelism: 1,
-	}}
-	for _, opt := range opts {
-		opt(&s)
-	}
-	h := &harness{st: memory.New(fake.New(origin)), logs: &journal{}, terms: make(map[machine.Token]store.Leadership)}
-	tb.Cleanup(func() { assert.NoError(tb, h.st.Close(), "the store must close") })
-	s.cfg.Clock = fake.New(origin)
-	s.cfg.Registry = registry(tb)
-	s.cfg.Logger = slog.New(h.logs)
-	s.cfg.Fits = s.fits
-	if s.fits == nil {
-		s.cfg.Fits = func(m *store.Mutation) error { return h.st.Fits(rootScope, m) }
-	}
-	var err error
-	h.machine, err = root.New(&s.cfg)
-	assert.NoError(tb, err, "New must return a machine of a complete config")
-	return h
 }
 
 // TestMachine checks the construction, the lifecycle and the replies of a root machine.
@@ -506,9 +693,16 @@ func TestMachine(t *testing.T) {
 			h.view(t, procA)
 			expect.Equal(t, h.resigned, h.campaigns, "the root must resign the term")
 			expect.Nil(t, h.machine.Err(), "an error of the controller of a term must not stop the root")
-			got := h.logs.logged(logTerm)
+			got := slices.DeleteFunc(h.logs.All(), func(r slog.Record) bool { return r.Message != logTerm })
 			assert.Length(t, got, 1, "the root must log the error of the term")
-			expect.Equal(t, got[0].attrs[attrNamespaceKey], string(namespace), "the log must name the namespace")
+			var named string
+			got[0].Attrs(func(a slog.Attr) bool {
+				if a.Key == attrNamespaceKey {
+					named = a.Value.String()
+				}
+				return true
+			})
+			expect.Equal(t, named, string(namespace), "the log must name the namespace")
 			full = false
 			h.end(t)
 			expect.Length(t, h.campaigns, 2, "the root must campaign again once the term has ended")
@@ -525,6 +719,27 @@ func TestMachine(t *testing.T) {
 			expect.ErrorIs(t, replyTo[struct{}](t, h, second).Err, fsm.ErrRejected,
 				"the second Started must get the error that stopped the root")
 			expect.Equal(t, h.resigned, h.campaigns, "the root must end the campaign that it waits for")
+		})
+
+		t.Run("releases the instruments of every controller when a second grant stops it", func(t *testing.T) {
+			t.Parallel()
+			rec := telemetrytest.NewRecorder()
+			h := newHarness(t, func(s *setup) { s.cfg.Reporter = rec })
+			h.start(t)
+			h.step(t, machine.Campaigned{Token: h.campaigns[len(h.campaigns)-1], Term: h.term(t) + 1})
+			expect.ErrorIs(
+				t,
+				h.machine.Err(),
+				fsm.ErrRejected,
+				"the lifecycle must refuse a second grant of a campaign",
+			)
+			assert.NotEmpty(t, rec.Specs(), "the controllers of the root must report instruments")
+			for _, spec := range rec.Specs() {
+				for _, attrs := range rec.Series(spec.Name) {
+					expect.Equal(t, rec.Bound(spec.Name, attrs...), 0,
+						"the root must release every instrument that its controllers bound")
+				}
+			}
 		})
 
 		t.Run("replies to the first Started once", func(t *testing.T) {
@@ -657,6 +872,17 @@ func TestMachine(t *testing.T) {
 			assert.ErrorIs(t, replyTo[struct{}](t, h, call.Reply).Err, control.ErrCall,
 				"the root must refuse the end of a disruption")
 		})
+
+		t.Run("keeps its contract under every sequence of events", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "a root keeps its contract under every sequence of events", exercise,
+				prop.Require(labelGranted, often),
+				prop.Require(labelEnded, sometimes),
+				prop.Require(labelFault, rare),
+				prop.Require(labelStopped, often),
+				prop.Require(labelOutage, rare),
+			)
+		})
 	})
 
 	t.Run("Err", func(t *testing.T) {
@@ -671,60 +897,140 @@ func TestMachine(t *testing.T) {
 	})
 }
 
-// firstCampaignBackoff is the backoff before the first retry of a campaign with the source
-// of randomness of the tests: half of root.CampaignRetryBase.
-const firstCampaignBackoff = root.CampaignRetryBase / 2
-
-// attrNamespaceKey is the key of the attribute of the logs of the root that names the
-// namespace.
-const attrNamespaceKey = "namespace"
-
-// namespaceSpec returns the spec of the namespace of the tests.
-func namespaceSpec() config.Spec {
-	return config.Spec{
-		Namespace:    namespace,
-		Preset:       builtin.ExclusiveWorker,
-		Partitioning: config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)},
-	}
+// campaigning reports whether e is a Campaign.
+func campaigning(e machine.Effect) bool {
+	_, ok := e.(machine.Campaign)
+	return ok
 }
 
-// registry returns a registry with every built-in strategy of the support matrix.
-func registry(tb assert.TB) *config.Registry {
-	tb.Helper()
-	r := config.NewRegistry(builtin.Support())
-	assert.NoError(tb, builtin.Register(r), "the built-ins must register")
-	return r
-}
-
-// completeConfig returns a Config that New accepts.
-func completeConfig(tb assert.TB) root.Config {
-	tb.Helper()
-	return root.Config{
-		Clock:       fake.New(origin),
-		Rand:        &halves{},
-		Reporter:    noop.New(),
-		Provided:    provided,
-		Logger:      slog.New(&journal{}),
-		Fits:        func(*store.Mutation) error { return nil },
-		Registry:    registry(tb),
-		Spec:        namespaceSpec(),
-		Node:        shard.Node{Address: rootAddress},
-		Parallelism: 1,
-	}
-}
-
-// call returns the token of the next inbound call.
-func (h *harness) call() machine.ReplyToken {
-	h.calls++
-	return h.calls
-}
-
-// start passes Started to the machine and runs it until the controller of its first term
-// serves.
-func (h *harness) start(tb assert.TB) {
-	tb.Helper()
-	h.step(tb, machine.Started{Reply: h.call()})
-	h.run(tb)
+// exercise runs the steps of the case c over a root that has taken Started, as the store, the
+// controller processes, the operators and the runtime drive it. The steps of a case:
+//   - grant, lose and fail campaigns.
+//   - end terms in the store.
+//   - end Timers and run the effects that wait.
+//   - pass views, proposals and the calls of a cell controller.
+//   - cancel calls.
+//   - fence the root scope with a later term.
+//   - make the bound of a commit refuse every mutation.
+//   - start and end outages of the store.
+//   - pass the results of older campaigns.
+//   - stop the root.
+//
+// During an outage the store does not grant or end a term, another writer does not commit,
+// and the operators do not send a proposal. The model checks the contract of the root after
+// every step:
+//   - Only a campaign error that a retry does not fix stops the root with an error. A stopped
+//     root does not append an effect, and Stopped appends only replies.
+//   - The root replies to each call once, and never to a call that the runtime cancelled.
+//   - It replies to Started without an error, to a proposal outside a term with
+//     control.ErrNotServing, and to each call of a cell controller with control.ErrCall.
+//   - It campaigns only outside a term. It commits and watches the views only within a term,
+//     with the term of the controller that runs.
+//   - Every watch of a root that runs belongs to the controller that runs, so one controller
+//     runs at a time.
+//   - Each Resign has the token of the campaign of the term.
+//   - Only a commit that does not fit or a fence leads to a Resign, so an outage does not end
+//     a term.
+//   - The root ignores the results of older campaigns.
+//
+// The drain takes the steps that drain returns until the root serves again. The controller
+// of the term then applies a proposal. Once Stopped, the root has replied once to each call
+// that it took before it stopped, unless the runtime cancelled the call.
+func exercise(c *prop.Case) {
+	m := newModel(c)
+	campaigns := func(struct{}) bool { return !m.stopped && slices.ContainsFunc(m.h.pending, campaigning) }
+	stateful.Steps(c, stateful.Machine[struct{}]{
+		Actions: []stateful.Action[struct{}]{
+			{
+				Name: "grant", Weight: grants,
+				Enabled: func(s struct{}) bool { return campaigns(s) && !m.outage },
+				Run: func(c *prop.Case, _ int, _ any) {
+					c.Classify(labelGranted)
+					m.grant(c)
+				},
+			},
+			{
+				Name:    "lose a campaign",
+				Enabled: campaigns,
+				Run:     func(c *prop.Case, _ int, _ any) { m.lose(c, errOutage) },
+			},
+			{
+				Name: "fail a campaign", Enabled: campaigns,
+				Run: func(c *prop.Case, _ int, _ any) {
+					m.broken = true
+					m.lose(c, errBroken)
+				},
+			},
+			{
+				Name:    "end the term",
+				Enabled: func(struct{}) bool { return !m.stopped && m.leader != nil && !m.outage },
+				Run: func(c *prop.Case, _ int, _ any) {
+					c.Classify(labelEnded)
+					m.end(c)
+				},
+			},
+			{
+				Name: "elapse", Enabled: func(struct{}) bool { return !m.stopped && len(m.h.timers) > 0 },
+				Run: func(c *prop.Case, _ int, _ any) {
+					m.elapse(c, c.Draw(prop.Integer(0, len(m.h.timers)-1), "timer"))
+				},
+			},
+			{
+				Name: "view", Enabled: func(struct{}) bool { return !m.stopped && m.h.views != 0 },
+				Run: func(c *prop.Case, _ int, _ any) { m.view(c) },
+			},
+			{
+				Name: "submit", Enabled: func(struct{}) bool { return !m.outage },
+				Run: func(c *prop.Case, _ int, _ any) { m.submit(c) },
+			},
+			{Name: "call as a cell controller", Run: func(c *prop.Case, _ int, _ any) { m.misdirect(c) }},
+			{
+				Name: "cancel", Enabled: func(struct{}) bool { return !m.stopped && len(m.waiting()) > 0 },
+				Run: func(c *prop.Case, _ int, _ any) { m.cancel(c) },
+			},
+			{
+				Name: "run",
+				Enabled: func(struct{}) bool {
+					return !m.stopped &&
+						slices.ContainsFunc(m.h.pending, func(e machine.Effect) bool { return !campaigning(e) })
+				},
+				Run: func(c *prop.Case, _ int, _ any) { m.run(c) },
+			},
+			{
+				Name:    "fence",
+				Enabled: func(struct{}) bool { return !m.stopped && m.term != epoch.Zero && !m.outage },
+				Run:     func(c *prop.Case, _ int, _ any) { m.fence(c) },
+			},
+			{Name: "fill the store", Run: func(*prop.Case, int, any) { m.full = !m.full }},
+			{
+				Name: "toggle an outage", Enabled: func(struct{}) bool { return !m.stopped },
+				Run: func(c *prop.Case, _ int, _ any) { m.toggle(c) },
+			},
+			{
+				Name: "pass an older result", Enabled: func(struct{}) bool { return len(m.h.campaigns) > 1 },
+				Run: func(c *prop.Case, _ int, _ any) { m.stale(c) },
+			},
+			{
+				Name: "stop", Enabled: func(struct{}) bool { return !m.stopped },
+				Run: func(c *prop.Case, _ int, _ any) {
+					c.Classify(labelStopped)
+					m.halt(c)
+				},
+			},
+			{
+				Name: "complete", Drain: true,
+				Enabled: func(struct{}) bool { return m.drain() != nil || m.full && !m.stopped },
+				Run: func(c *prop.Case, _ int, _ any) {
+					m.full = false
+					if step := m.drain(); step != nil {
+						step(c)
+					}
+				},
+			},
+		},
+		Invariant: func(c *prop.Case, _ struct{}) { m.invariant(c) },
+		Settle:    func(c *prop.Case, _ struct{}) { m.settle(c) },
+	})
 }
 
 // grant performs the Campaign in flight, and runs the machine until the controller of the
@@ -735,8 +1041,8 @@ func (h *harness) grant(tb assert.TB) {
 	h.run(tb)
 }
 
-// end resigns the term in the store, passes its end to the machine, and runs the machine.
-// The machine campaigns again, and the harness keeps the new campaign pending.
+// end resigns the term in the store and passes its end to the machine. It then runs the
+// machine and keeps the next Campaign of the machine pending.
 func (h *harness) end(tb assert.TB) {
 	tb.Helper()
 	tok := h.campaigns[len(h.campaigns)-1]
@@ -756,57 +1062,6 @@ func (h *harness) term(tb assert.TB) epoch.Epoch {
 	return l.Term()
 }
 
-// step passes ev to the machine with the marker in out, checks that the machine keeps out,
-// and keeps the effects that the machine appends.
-func (h *harness) step(tb assert.TB, ev machine.Event) {
-	tb.Helper()
-	got := h.machine.Step(ev, []machine.Effect{marker})
-	assert.NotEmpty(tb, got, "the machine must keep the effects that out has")
-	assert.Equal(tb, got[0], marker, "the machine must keep the effects that out has")
-	h.route(got[1:])
-}
-
-// route keeps each effect of effects in the list of its kind. It also keeps the token of
-// each effect that has a token of its own.
-func (h *harness) route(effects []machine.Effect) {
-	for _, e := range effects {
-		switch e := e.(type) {
-		case machine.Campaign:
-			h.tokens = append(h.tokens, e.Token)
-			h.campaigns = append(h.campaigns, e.Token)
-			h.pending = append(h.pending, e)
-		case machine.Resign:
-			h.resigned = append(h.resigned, e.Token)
-		case machine.Unwatch:
-			h.unwatched = append(h.unwatched, e.Token)
-			if h.views == e.Token {
-				h.views = 0
-			}
-		case machine.WatchViews:
-			h.tokens = append(h.tokens, e.Token)
-			h.views = e.Token
-		case machine.Timer:
-			h.tokens = append(h.tokens, e.Token)
-			h.timers = append(h.timers, e)
-		case machine.Reply[struct{}], machine.Reply[protocol.Ack], machine.Reply[protocol.Receipt],
-			machine.Reply[budget.Decision]:
-			h.replies = append(h.replies, e)
-		case machine.Callback:
-			h.tokens = append(h.tokens, e.Token)
-			h.sent = append(h.sent, e.Request)
-			h.pending = append(h.pending, e)
-		case machine.Head:
-			h.tokens = append(h.tokens, e.Token)
-			h.pending = append(h.pending, e)
-		case machine.Commit:
-			h.tokens = append(h.tokens, e.Token)
-			h.pending = append(h.pending, e)
-		default:
-			h.pending = append(h.pending, e)
-		}
-	}
-}
-
 // campaigned drops the pending Campaign of the last campaign of the machine, and passes a
 // result of the campaign with the error err and the fence epoch term to the machine. The
 // store does not grant a term to a campaign that this method ends.
@@ -820,102 +1075,6 @@ func (h *harness) campaigned(tb assert.TB, err error, term epoch.Epoch) {
 	h.step(tb, machine.Campaigned{Err: err, Token: tok, Term: term})
 }
 
-// deliver performs the oldest pending effect, and passes the event of its result to the
-// machine.
-func (h *harness) deliver(tb assert.TB) {
-	tb.Helper()
-	assert.NotEmpty(tb, h.pending, "an effect of the machine must be pending")
-	e := h.pending[0]
-	h.pending = slices.Delete(h.pending, 0, 1)
-	h.step(tb, h.perform(tb, e))
-}
-
-// run performs the pending effects, the oldest first, and passes their results to the
-// machine until no effect is pending. It leaves a Campaign pending while paused is set.
-func (h *harness) run(tb assert.TB) {
-	tb.Helper()
-	for range maxDeliveries {
-		i := slices.IndexFunc(h.pending, func(e machine.Effect) bool {
-			_, isCampaign := e.(machine.Campaign)
-			return !h.paused || !isCampaign
-		})
-		if i < 0 {
-			return
-		}
-		e := h.pending[i]
-		h.pending = slices.Delete(h.pending, i, i+1)
-		h.step(tb, h.perform(tb, e))
-	}
-	tb.Fatalf("the machine still runs after %d deliveries", maxDeliveries)
-}
-
-// perform performs e and returns the event of its result.
-func (h *harness) perform(tb assert.TB, e machine.Effect) machine.Event {
-	tb.Helper()
-	ctx := assert.Context(tb)
-	switch e := e.(type) {
-	case machine.Campaign:
-		l, err := h.st.Campaign(ctx, e.Scope)
-		assert.NoError(tb, err, "the store must grant a term")
-		h.terms[e.Token] = l
-		return machine.Campaigned{Token: e.Token, Term: l.Term()}
-	case machine.Head:
-		head, err := h.st.Head(ctx, e.Scope)
-		return machine.HeadRead{Err: err, Token: e.Token, Head: head}
-	case machine.Read:
-		state, cursor, err := h.st.Read(ctx, e.Scope, e.Incarnation, e.Query, e.Page)
-		if err != nil {
-			return machine.PageRead{Err: err, Token: e.Token}
-		}
-		var ps []shard.Placement
-		for p, err := range cursor.Seq(ctx) {
-			assert.NoError(tb, err, "the cursor of the memory store must yield its placements")
-			ps = append(ps, p)
-		}
-		next := cursor.NextPage()
-		assert.NoError(tb, cursor.Close(), "the cursor must close")
-		return machine.PageRead{Placements: ps, Next: next, State: state, Token: e.Token}
-	case machine.Commit:
-		gen, err := h.st.Writer(e.Scope, e.Incarnation, e.Term).Commit(ctx, e.Expect, e.Mutation)
-		return machine.Committed{Err: err, Token: e.Token, Generation: gen}
-	case machine.Outcome:
-		receipt, found, err := h.st.Outcome(ctx, e.Scope, e.ID)
-		return machine.OutcomeRead{Err: err, Token: e.Token, Receipt: receipt, Found: found}
-	case machine.Callback:
-		var err error
-		if h.answer != nil {
-			err = h.answer(e.Request)
-		}
-		return machine.Called{Err: err, Token: e.Token}
-	case machine.Plan:
-		plan, err := e.Placer.Place(ctx, e.Input)
-		var violations []placement.Violation
-		if err == nil {
-			violations, err = placement.Validate(e.Input, plan, e.Constraints)
-		}
-		return machine.Planned{Err: err, Violations: violations, Plan: plan, Token: e.Token}
-	default:
-		tb.Fatalf("the machine returned a %T, which the harness does not perform", e)
-		return nil
-	}
-}
-
-// view passes the view of the controller processes procs to the machine, and runs the
-// machine afterwards.
-func (h *harness) view(tb assert.TB, procs ...shard.Node) {
-	tb.Helper()
-	assert.NotEqual(tb, h.views, machine.Token(0), "the machine must watch the views")
-	h.revision++
-	v := membership.View{
-		Scope:       rootScope,
-		Nodes:       slices.Clone(procs),
-		Revision:    h.revision,
-		Incarnation: h.state(tb).Head.Incarnation,
-	}
-	h.step(tb, machine.Viewed{View: v, Token: h.views})
-	h.run(tb)
-}
-
 // elapse performs the oldest Timer whose Duration is d, and runs the machine afterwards.
 func (h *harness) elapse(tb assert.TB, d time.Duration) {
 	tb.Helper()
@@ -925,94 +1084,4 @@ func (h *harness) elapse(tb assert.TB, d time.Duration) {
 	h.timers = slices.Delete(h.timers, i, i+1)
 	h.step(tb, machine.Elapsed{Token: tm.Token})
 	h.run(tb)
-}
-
-// state returns the state of the root scope.
-func (h *harness) state(tb assert.TB) store.State {
-	tb.Helper()
-	state, cursor, err := h.st.Read(assert.Context(tb), rootScope, shard.NamespaceIncarnation{}, store.Query{},
-		page.Page{})
-	assert.NoError(tb, err, "the store must read the root scope")
-	assert.NoError(tb, cursor.Close(), "the cursor must close")
-	return state
-}
-
-// placements returns the placements of the root scope.
-func (h *harness) placements(tb assert.TB) []shard.Placement {
-	tb.Helper()
-	ctx := assert.Context(tb)
-	_, cursor, err := h.st.Read(ctx, rootScope, shard.NamespaceIncarnation{}, store.Query{}, page.Page{})
-	assert.NoError(tb, err, "the store must read the root scope")
-	defer func() { assert.NoError(tb, cursor.Close(), "the cursor must close") }()
-	var ps []shard.Placement
-	for p, err := range cursor.Seq(ctx) {
-		assert.NoError(tb, err, "the cursor of the memory store must yield its placements")
-		ps = append(ps, p)
-	}
-	return ps
-}
-
-// create commits the creation of the namespace of the tests by another root, in the
-// incarnation incB with the spec of the version v.
-func (h *harness) create(tb assert.TB, v epoch.Epoch) {
-	tb.Helper()
-	ctx := assert.Context(tb)
-	spec := namespaceSpec()
-	spec.Version = v
-	res, err := config.Resolve(registry(tb), &spec, provided)
-	assert.NoError(tb, err, "the spec of the other root must resolve")
-	raw, err := json.Marshal(&res.Spec)
-	assert.NoError(tb, err, "the spec of the other root must encode")
-	head, err := h.st.Head(ctx, rootScope)
-	assert.NoError(tb, err, "the store must return the header of the root scope")
-	h.others++
-	m := &store.Mutation{
-		ID:      store.CommitID{Incarnation: incB, Term: otherTerm, Seq: h.others},
-		Mapping: &res.Mapping,
-		Spec:    raw,
-	}
-	_, err = h.st.Writer(rootScope, incB, otherTerm).Commit(ctx, head.Generation, m)
-	assert.NoError(tb, err, "the other root must commit")
-}
-
-// specProposal returns a spec proposal with the ID n and the base base, whose body is the
-// spec of the namespace at the version v, in the incarnation of the root scope.
-func (h *harness) specProposal(tb assert.TB, n byte, base, v epoch.Epoch) *proposal.Proposal {
-	tb.Helper()
-	spec := namespaceSpec()
-	spec.Version = v
-	body, err := json.Marshal(&spec)
-	assert.NoError(tb, err, "the spec must encode")
-	return &proposal.Proposal{
-		Scope:       rootScope,
-		Expires:     origin.Add(time.Hour),
-		Body:        body,
-		Base:        base,
-		Incarnation: h.state(tb).Head.Incarnation,
-		ID:          proposal.ID{ID: id.New128([16]byte{0: 0x9e, 15: n})},
-		Kind:        proposal.SpecChange,
-	}
-}
-
-// submitCall returns the Submit of p from caller as the next inbound call.
-func (h *harness) submitCall(tb assert.TB, p *proposal.Proposal, caller shard.Identity) machine.Submit {
-	tb.Helper()
-	return machine.Submit{
-		Proposal: p,
-		Metadata: protocol.Metadata{Caller: caller, Version: protocol.Current},
-		Reply:    h.call(),
-	}
-}
-
-// replyTo returns the reply of the machine to the call to, which must have the type
-// machine.Reply[T].
-func replyTo[T machine.Result](tb assert.TB, h *harness, to machine.ReplyToken) machine.Reply[T] {
-	tb.Helper()
-	for _, e := range h.replies {
-		if r, ok := e.(machine.Reply[T]); ok && r.To == to {
-			return r
-		}
-	}
-	tb.Fatalf("the machine has not replied to the call %d", to)
-	return machine.Reply[T]{}
 }

@@ -133,7 +133,7 @@ type state uint8
 const (
 	// stateIdle is the state before Started.
 	stateIdle state = 1 // idle
-	// stateCampaigning is the wait for the term that a campaign asks for.
+	// stateCampaigning is the wait for the result of the last Campaign.
 	stateCampaigning state = 2 // campaigning
 	// stateWaiting is the backoff after a campaign that ended with a transient error.
 	stateWaiting state = 3 // waiting
@@ -194,7 +194,7 @@ var lifecycle = fsm.Must(fsm.NewBuilder[state, event, struct{}](stateIdle).
 //
 // # Concurrency
 //
-// A Machine is not safe for concurrent use. A runtime calls Step from one goroutine at a
+// A Machine is not safe for concurrent use, so a runtime calls Step from one goroutine at a
 // time. [Machine.Err] is safe for concurrent use.
 type Machine struct {
 	// rand is the source of the jitter of each backoff.
@@ -309,8 +309,11 @@ func (m *Machine) Err() error {
 //
 // An error of the controller of a term ends the term: the root logs the error, stops the
 // controller and resigns the term. Any other error of the event stops the root. The root
-// then drops the effects of the event, stops the controller of its term, resigns the
-// term or ends the campaign that it waits for, and publishes the error in [Machine.Err].
+// then takes these steps:
+//   - It drops the effects of the event.
+//   - It stops the controller of its term.
+//   - It resigns the term, or ends the campaign that it waits for.
+//   - It publishes the error in [Machine.Err].
 func (m *Machine) Step(ev machine.Event, out []machine.Effect) []machine.Effect {
 	if m.lc.State() == stateStopped {
 		return out
@@ -390,11 +393,15 @@ func (m *Machine) elect(out []machine.Effect) []machine.Effect {
 }
 
 // campaigned takes the result of a campaign. A term that the election granted starts the
-// controller of the term, which acquires the root scope. A campaign that ended with a
-// transient error runs again after a backoff.
+// controller of the term, which acquires the root scope. The root records the grant in its
+// lifecycle before it creates the controller, so a grant outside a campaign creates no
+// controller. It keeps the controller before the acquisition, so the stop of a root whose
+// acquisition fails also stops the controller. A campaign that ended with a transient error
+// runs again after a backoff.
 //
 // Error modes:
 //   - an error that wraps the error of the campaign for an error that is not transient.
+//   - an error that wraps fsm.ErrRejected for a grant outside a campaign.
 //   - an error that wraps control.ErrConfig for a term that control.New refuses, such as
 //     the zero term.
 func (m *Machine) campaigned(ev *machine.Campaigned, out []machine.Effect) ([]machine.Effect, error) {
@@ -409,20 +416,21 @@ func (m *Machine) campaigned(ev *machine.Campaigned, out []machine.Effect) ([]ma
 		delay := resilience.Backoff(m.rand, m.attempt, CampaignRetryBase, CampaignRetryMax)
 		return append(out, machine.Timer{Token: m.wait, Duration: delay}), lost
 	}
-	m.attempt, m.term = 0, ev.Term
-	cfg := m.cfg
-	cfg.Term = ev.Term
-	ctl, err := control.New(&cfg)
+	err := m.fire(eventGranted)
+	var ctl *control.Controller
 	if err == nil {
-		out, err = ctl.Acquire(m.strategies, shard.Range{}, out)
+		m.attempt, m.term = 0, ev.Term
+		cfg := m.cfg
+		cfg.Term = ev.Term
+		ctl, err = control.New(&cfg)
 	}
 	if err == nil {
-		err = m.fire(eventGranted)
+		m.control = ctl
+		out, err = ctl.Acquire(m.strategies, shard.Range{}, out)
 	}
 	if err != nil {
 		return out, fmt.Errorf("root: the term %d of %v: %w", ev.Term, m.scopeOf, err)
 	}
-	m.control = ctl
 	return out, nil
 }
 
