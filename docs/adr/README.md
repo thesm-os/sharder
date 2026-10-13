@@ -37,3 +37,10 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0026](0026-agent-joins-again-after-its-session.md) | The agent joins its cell again with a new incarnation after its session ends | Accepted |
 | [0027](0027-agent-raises-epoch-from-the-ack.md) | The agent raises its controller epoch from the ack of a report | Accepted |
 | [0028](0028-close-ends-at-its-deadline.md) | The disruption of a Close ends at the deadline of the call | Accepted |
+| [0029](0029-router-watches-every-cell.md) | The router watches every cell of the cell map | Accepted |
+| [0030](0030-routes-take-addresses-from-views.md) | A route takes the address of each replica from the view of its cell | Accepted |
+| [0031](0031-constructors-take-a-config.md) | The constructors of the components take a pointer to their configuration | Accepted |
+| [0032](0032-controller-hosts-cells-through-a-root-agent.md) | A controller process hosts its cells through an agent of the root | Accepted |
+| [0033](0033-placement-records-the-writer-incarnation.md) | A placement records the incarnation of its writer | Accepted |
+| [0034](0034-replica-declares-the-agent-of-the-matrix.md) | Package replica declares the agent of the support matrix in the form of the interfaces standard | Accepted |
+| [0035](0035-router-declares-the-router-of-the-matrix.md) | Package router declares the router of the support matrix in the form of the interfaces standard | Accepted |
