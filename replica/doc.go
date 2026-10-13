@@ -43,6 +43,13 @@
 // callback before it looks up its key or calls the handler. A callback that starts a tenure
 // runs once the placements that the agent watches list the tenure.
 //
+// # Refusals
+//
+// A server of the application refuses a request for a shard that its node does not serve
+// with a router.NotOwnerError, before it starts the request. [Agent.Observed] returns the
+// cell of the node, the last generation of the scope of the cell that the agent has applied,
+// and the namespace incarnation, which the refusal contains.
+//
 // # Faults
 //
 // [Agent.ReportFault] reports a fault in a replica, and [Agent.Recovered] reports that a
