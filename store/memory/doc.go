@@ -42,6 +42,6 @@
 // # Dependency position
 //
 // memory imports the standard library, the packages btree, clock, crypto, epoch, errs,
-// id, page and version of go.thesmos.sh/core, and the packages budget, config,
+// id, idmap, page and version of go.thesmos.sh/core, and the packages budget, config,
 // membership, ownership, proposal, shard and store of go.thesmos.sh/sharder.
 package memory

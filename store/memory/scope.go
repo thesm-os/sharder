@@ -17,6 +17,7 @@ import (
 	"go.thesmos.sh/core/btree"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/epoch"
+	"go.thesmos.sh/core/idmap"
 	"go.thesmos.sh/core/page"
 	"go.thesmos.sh/core/version"
 
@@ -34,9 +35,9 @@ const defaultPageSize = 1000
 type scope struct {
 	// receipts maps the ID of each commit whose receipt the scope keeps to the receipt.
 	receipts map[store.CommitID]store.Receipt
-	// starts maps each shard to the start of the range of its current placement, which
+	// starts maps each shard to the start of the range of its current placement. The start
 	// is the key of the placement in the generations.
-	starts map[shard.ID][]byte
+	starts *idmap.Map[shard.ID, []byte]
 	// changed is closed at every change that a watcher of the scope reads, and replaced
 	// by a new channel.
 	changed chan struct{}
@@ -57,7 +58,7 @@ type scope struct {
 func newScope(id shard.Scope) *scope {
 	return &scope{
 		receipts: make(map[store.CommitID]store.Receipt),
-		starts:   make(map[shard.ID][]byte),
+		starts:   idmap.NewTyped128[shard.ID, []byte](0),
 		changed:  make(chan struct{}),
 		members:  newMembers(),
 		id:       id,
@@ -140,12 +141,12 @@ func (sc *scope) next(m *store.Mutation) *generation {
 	}
 	for i := range m.Put {
 		p := &m.Put[i]
-		if start, ok := sc.starts[p.Shard]; ok {
+		if start, ok := sc.starts.Get(p.Shard); ok {
 			before, _ := g.placements.Delete(start)
 			g.previous[i] = *before
 		}
 		g.placements.Set(p.Range.Start, p)
-		sc.starts[p.Shard] = p.Range.Start
+		sc.starts.Set(p.Shard, p.Range.Start)
 	}
 	g.state.Head = sc.head
 	if m.Cell != nil {
@@ -344,23 +345,26 @@ func applied(prev map[proposal.ID]time.Time, m *store.Mutation) map[proposal.ID]
 // shards, and the transitions that m ends. m ends the transitions of m.Done first, and
 // then creates or advances those of m.Transitions. It does not modify prev.
 func transitions(prev []store.Transition, m *store.Mutation) ([]store.Transition, []store.Transition) {
-	byShard := make(map[shard.ID]store.Transition, len(prev)+len(m.Transitions))
+	//dokimi:mutate-skip aor: the sum presizes the map, and Set grows a map of a smaller capacity
+	byShard := idmap.NewTyped128[shard.ID, *store.Transition](len(prev) + len(m.Transitions))
 	for i := range prev {
-		byShard[prev[i].Operation.Shard] = prev[i]
+		byShard.Set(prev[i].Operation.Shard, &prev[i])
 	}
 	var ended []store.Transition
 	for _, id := range m.Done {
-		if t, ok := byShard[id]; ok {
-			ended = append(ended, t)
-			delete(byShard, id)
+		if t, ok := byShard.Delete(id); ok {
+			ended = append(ended, *t)
 		}
 	}
 	for i := range m.Transitions {
-		byShard[m.Transitions[i].Operation.Shard] = m.Transitions[i]
+		byShard.Set(m.Transitions[i].Operation.Shard, &m.Transitions[i])
 	}
-	return slices.SortedFunc(maps.Values(byShard), func(a, b store.Transition) int {
-		return a.Operation.Shard.Compare(b.Operation.Shard)
-	}), ended
+	next := slices.Grow([]store.Transition(nil), byShard.Len())
+	for _, t := range byShard.All() {
+		next = append(next, *t)
+	}
+	slices.SortFunc(next, func(a, b store.Transition) int { return a.Operation.Shard.Compare(b.Operation.Shard) })
+	return next, ended
 }
 
 // reservations returns the reservations of a state after m, in the order of their IDs:
@@ -556,7 +560,7 @@ func (s *Store) Delete(id shard.Scope) {
 	sc.head = store.Head{}
 	sc.history = nil
 	clear(sc.receipts)
-	clear(sc.starts)
+	sc.starts.Clear()
 }
 
 // events returns the events of the generations of the scope id from next on, for a
