@@ -7,7 +7,7 @@ go 1.27.2
 
 require (
 	go.dokimi.dev/assert v0.2.0
-	go.thesmos.sh/core v0.19.0
+	go.thesmos.sh/core v0.20.0
 	go.thesmos.sh/sharder v0.1.1
 )
 
