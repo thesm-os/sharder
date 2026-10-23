@@ -4,7 +4,6 @@
 package engine
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -525,6 +524,18 @@ func (e *Engine) Inbound(n shard.NodeID, roles []shard.Role) int {
 	return count
 }
 
+// Records appends the record of each transition in flight to dst, in the order in which the
+// transitions joined the Engine, and returns the result. A transition that Start started and
+// whose first batch has not applied has its record too. A transition is in flight until the
+// batch that ends it has applied. Records costs O(t) for t transitions in flight, and
+// allocates only when dst lacks room.
+func (e *Engine) Records(dst []store.Transition) []store.Transition {
+	for _, t := range e.order {
+		dst = append(dst, t.record)
+	}
+	return dst
+}
+
 // add adds t to the transitions in flight.
 func (e *Engine) add(t *transition) {
 	e.transitions.Set(t.record.Operation.Shard, t)
@@ -610,17 +621,16 @@ func (e *Engine) dispatch(t *transition, out []machine.Effect) []machine.Effect 
 }
 
 // called takes the result err of the callback of t, and appends the effects that follow
-// it to out. A callback that runs past its timeout fails with the error of its context,
-// which a retry can fix, so called classifies it as transient.
+// it to out. It classifies err with machine.ClassifyAttempt, so a callback that ran past
+// its timeout fails with a transient error. The retrier grants or refuses the retry of such
+// a callback.
 func (e *Engine) called(t *transition, err error, out []machine.Effect) []machine.Effect {
 	out = e.release(t.endpoint(t.step().Side).Node, out)
 	if err == nil {
 		e.complete(t)
 		return out
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		err = errs.WithClass(err, errs.Transient)
-	}
+	err = machine.ClassifyAttempt(err)
 	delay, refusal := e.retrier.Retry(t.attempt+1, err)
 	if refusal == nil {
 		t.attempt++

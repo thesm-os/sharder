@@ -1509,6 +1509,36 @@ func TestEngine(t *testing.T) {
 				"Inbound must not count a transition whose last batch has applied")
 		})
 	})
+
+	t.Run("Records", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("appends the record of each transition in flight in the order of its start", func(t *testing.T) {
+			t.Parallel()
+			first, second := placement(1, nodeA), placement(2, nodeB)
+			h := newHarness(t, []shard.Placement{first, second})
+			assert.True(t, h.start(t, moveOf(second, nodeB, nodeC, nodeB)), "Start must admit the first move")
+			assert.True(t, h.start(t, moveOf(first, nodeA, nodeC, nodeA)), "Start must admit the second move")
+			marker := store.Transition{Protocol: "marker"}
+			got := h.engine.Records([]store.Transition{marker})
+			assert.Length(t, got, 3, "Records must append a record of each transition to the records of dst")
+			expect.Equal(t, got[0], marker, "Records must keep the records of dst")
+			expect.Equal(t, got[1].Operation.Shard, second.Shard, "the first record must be of the first move")
+			expect.Equal(t, got[2].Operation.Shard, first.Shard, "the second record must be of the second move")
+			expect.Equal(t, got[2].To.Node, nodeC.ID, "a record must have the destination of its move")
+			expect.Equal(t, got[2].Fallback.Node, nodeA.ID, "a record must have the fallback of its move")
+		})
+
+		t.Run("appends no record once the transition has ended", func(t *testing.T) {
+			t.Parallel()
+			p := placement(1, nodeA)
+			h := newHarness(t, []shard.Placement{p})
+			h.view(t, nodeA, nodeB)
+			h.start(t, moveOf(p, nodeA, nodeB, nodeA))
+			h.drain(t)
+			assert.Empty(t, h.engine.Records(nil), "Records must not append a transition whose last batch has applied")
+		})
+	})
 }
 
 // exercise runs the steps of the case c over an Engine of the shards of the property. The
