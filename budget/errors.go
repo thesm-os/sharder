@@ -13,7 +13,9 @@ import (
 var (
 	// ErrUnknownImpact reports an Impact that is not one of the three impacts. A codec
 	// returns an error that wraps it for such an impact other than zero, because an
-	// encoding leaves out a field of the zero impact. It classifies as errs.Invalid.
+	// encoding leaves out a field of the zero impact. ParseImpact and Impact.UnmarshalText
+	// return one for text that is not the spelling of an impact. It classifies as
+	// errs.Invalid.
 	ErrUnknownImpact = errs.WithClass(errors.New("budget: unknown impact"), errs.Invalid)
 
 	// ErrReusedID reports a disruption whose ID the scope has recorded for another

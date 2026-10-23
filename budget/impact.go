@@ -4,27 +4,29 @@
 package budget
 
 //go:generate go tool kanon -type=Impact -validate=valid
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=Impact -linecomment -output=impact.string_gen.go
 
 import "fmt"
 
 // Impact is what a disruption does to the replicas on its nodes, such as
 // [ProcessRestart].
 //
-// The zero Impact is not Valid. An encoding leaves out a field of the zero impact, so
-// a codec does not check it, and the controller that receives a disruption checks
-// [Impact.Valid].
+// [Impact.IsValid] refuses the zero Impact. An encoding leaves out a field of the zero
+// impact, so a codec does not check it, and the controller that receives a disruption
+// checks [Impact.IsValid].
 //
 // # Encoding
 //
-// kanon encodes an Impact as an unsigned varint of its number. A codec returns an
-// error that wraps [ErrUnknownImpact] for an impact other than zero that is not Valid,
+// kanon encodes an Impact as an unsigned varint of its number. A codec returns an error
+// that wraps [ErrUnknownImpact] for an impact other than zero outside the three impacts,
 // on encode and on decode. [Impact.String] returns the spelling of an impact, such as
-// "process-restart", and the form "Impact(n)" for a value that is not Valid.
+// "process-restart", and the form "Impact(n)" for any other value. [ParseImpact] returns
+// the impact of a spelling.
 //
 // # Concurrency
 //
 // An Impact is a comparable value.
+//
+//dokimi:enum text=comment
 type Impact uint8
 
 const (
@@ -38,16 +40,11 @@ const (
 	FullLoss Impact = 3 // full-loss
 )
 
-// Valid reports whether i is one of the three impacts. The zero Impact is not.
-func (i Impact) Valid() bool {
-	return i >= NetworkLoss && i <= FullLoss
-}
-
-// valid returns nil for a Valid impact, and an error that wraps [ErrUnknownImpact] with
-// the number of i for any other. The generated ValidateKanon calls it, so a codec
-// refuses an impact outside the three.
+// valid returns nil for one of the three impacts, and an error that wraps
+// [ErrUnknownImpact] with the number of i for any other. The generated ValidateKanon
+// calls it, so a codec refuses an impact outside the three.
 func (i Impact) valid() error {
-	if !i.Valid() {
+	if !i.IsValid() {
 		return fmt.Errorf("%w: %d", ErrUnknownImpact, uint8(i))
 	}
 	return nil

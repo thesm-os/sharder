@@ -59,7 +59,7 @@ var recordedReservation = budget.Reservation{
 }
 
 // TestReservation checks the recorded encoding of a Reservation, and the refusal of a
-// Disruption whose impact is not Valid.
+// Disruption whose impact is not valid.
 func TestReservation(t *testing.T) {
 	t.Parallel()
 
@@ -75,7 +75,7 @@ func TestReservation(t *testing.T) {
 				"AppendBinary must write fields 1 to 5 as recorded")
 		})
 
-		t.Run("returns ErrUnknownImpact for a Disruption whose Impact is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownImpact for a Disruption whose Impact is not valid", func(t *testing.T) {
 			t.Parallel()
 			r := budget.Reservation{Disruption: budget.Disruption{Impact: budget.FullLoss + 1}}
 			_, err := r.AppendBinary(nil)
@@ -96,7 +96,7 @@ func TestReservation(t *testing.T) {
 			assert.Equal(t, got, recordedReservation, "UnmarshalBinary must return the recorded Reservation")
 		})
 
-		t.Run("returns ErrUnknownImpact for an encoded Disruption whose Impact is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownImpact for an encoded Disruption whose Impact is not valid", func(t *testing.T) {
 			t.Parallel()
 			data, err := hex.DecodeString(unknownNestedImpactHex)
 			assert.NoError(t, err, "the encoding must be hexadecimal")

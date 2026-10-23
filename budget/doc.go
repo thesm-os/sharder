@@ -44,4 +44,6 @@
 // budget imports the standard library, the packages crypto, epoch, errs and id of
 // go.thesmos.sh/core, and go.thesmos.sh/sharder/shard. Its generated codecs also
 // import go.thesmos.sh/kanon and go.thesmos.sh/kanon/wire.
+//
+//dokimi:sentinel
 package budget

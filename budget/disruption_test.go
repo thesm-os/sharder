@@ -77,7 +77,7 @@ var recordedDisruption = budget.Disruption{
 }
 
 // TestDisruption checks the recorded encoding of a Disruption, the refusal of an
-// impact that is not Valid, and the guarantees of the exact type ID.
+// impact that is not valid, and the guarantees of the exact type ID.
 func TestDisruption(t *testing.T) {
 	t.Parallel()
 
@@ -93,7 +93,7 @@ func TestDisruption(t *testing.T) {
 				"AppendBinary must write fields 1 to 9 as recorded")
 		})
 
-		t.Run("returns ErrUnknownImpact for an Impact that is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownImpact for an Impact that is not valid", func(t *testing.T) {
 			t.Parallel()
 			d := budget.Disruption{Impact: budget.FullLoss + 1}
 			_, err := d.AppendBinary(nil)
@@ -114,7 +114,7 @@ func TestDisruption(t *testing.T) {
 			assert.Equal(t, got, recordedDisruption, "UnmarshalBinary must return the recorded Disruption")
 		})
 
-		t.Run("returns ErrUnknownImpact for an encoded Impact that is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownImpact for an encoded Impact that is not valid", func(t *testing.T) {
 			t.Parallel()
 			data, err := hex.DecodeString(unknownImpactHex)
 			assert.NoError(t, err, "the encoding must be hexadecimal")

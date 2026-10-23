@@ -41,7 +41,7 @@ type ID struct{ id.ID }
 // Incarnation is field 3, Nodes is field 4, NodeIncarnation is field 5, Impact is
 // field 6, Start is field 7, End is field 8, and Negotiable is field 9. The codec
 // returns an error that wraps [ErrUnknownImpact] for an Impact other than zero that is
-// not Valid.
+// not valid.
 //
 // # Concurrency
 //
