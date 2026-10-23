@@ -27,7 +27,7 @@ not take effect.
 go get go.thesmos.sh/sharder@latest
 ```
 
-sharder requires Go 1.27.2 or later.
+sharder requires Go 1.27.3 or later.
 
 ## Quick start
 

@@ -3,13 +3,13 @@
 
 module go.thesmos.sh/sharder
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0
-	go.dokimi.dev/assert v0.2.0
-	go.thesmos.sh/core v0.19.0
-	go.thesmos.sh/kanon v0.2.0
+	go.dokimi.dev/assert v0.6.0
+	go.thesmos.sh/core v0.31.1
+	go.thesmos.sh/kanon v0.3.0
 )
 
 require (
