@@ -12,10 +12,7 @@ import (
 	"go.thesmos.sh/sharder/internal/driver"
 )
 
-// errorPrefix starts the text of every error of package driver.
-const errorPrefix = "driver: "
-
-// TestErrors checks the class and the text of each sentinel error of package driver.
+// TestErrors checks the class of each sentinel error of package driver.
 func TestErrors(t *testing.T) {
 	t.Parallel()
 
@@ -38,11 +35,6 @@ func TestErrors(t *testing.T) {
 			t.Run("classifies as its class", func(t *testing.T) {
 				t.Parallel()
 				assert.Equal(t, errs.Classify(tt.give), tt.want, "the error must have its class")
-			})
-
-			t.Run("starts its text with the name of the package", func(t *testing.T) {
-				t.Parallel()
-				assert.HasPrefix(t, tt.give.Error(), errorPrefix, "the text must start with the name of the package")
 			})
 		})
 	}

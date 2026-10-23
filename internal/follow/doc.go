@@ -62,4 +62,6 @@
 // follow imports the standard library, the packages epoch, errs, fsm, page, rand and
 // resilience of go.thesmos.sh/core, and the packages internal/machine, shard and store of
 // go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package follow

@@ -162,4 +162,6 @@
 // internal/machine, internal/scope, membership, ownership, partition, placement,
 // placement/planner, proposal, protocol, replication, shard and store of
 // go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package control

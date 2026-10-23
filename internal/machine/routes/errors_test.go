@@ -12,10 +12,7 @@ import (
 	"go.thesmos.sh/sharder/internal/machine/routes"
 )
 
-// errorPrefix starts the text of every error of package routes.
-const errorPrefix = "routes: "
-
-// TestErrors checks the class and the text of each sentinel error of package routes.
+// TestErrors checks the class of each sentinel error of package routes.
 func TestErrors(t *testing.T) {
 	t.Parallel()
 
@@ -37,11 +34,6 @@ func TestErrors(t *testing.T) {
 			t.Run("classifies as its class", func(t *testing.T) {
 				t.Parallel()
 				assert.Equal(t, errs.Classify(tt.give), tt.want, "the error must have its class")
-			})
-
-			t.Run("starts its text with the name of the package", func(t *testing.T) {
-				t.Parallel()
-				assert.HasPrefix(t, tt.give.Error(), errorPrefix, "the text must start with the name of the package")
 			})
 		})
 	}

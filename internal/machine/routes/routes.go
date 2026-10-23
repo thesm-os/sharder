@@ -3,8 +3,6 @@
 
 package routes
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=state,event -linecomment -output=routes.string_gen.go
-
 import (
 	"errors"
 	"fmt"
@@ -67,6 +65,8 @@ func (c *Config) validate() error {
 }
 
 // state is the state of a router in its lifecycle.
+//
+//dokimi:enum text=comment
 type state uint8
 
 // The states of a router.
@@ -85,6 +85,8 @@ const (
 )
 
 // event is an event of the lifecycle of a router.
+//
+//dokimi:enum text=comment
 type event uint8
 
 // The events of a router.

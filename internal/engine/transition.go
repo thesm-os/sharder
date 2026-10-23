@@ -3,8 +3,6 @@
 
 package engine
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=wait,event -linecomment -output=transition.string_gen.go
-
 import (
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/fsm"
@@ -20,6 +18,8 @@ import (
 const noSide handoff.Side = 0
 
 // wait is what a transition waits for.
+//
+//dokimi:enum text=comment
 type wait uint8
 
 // The waits of a transition.
@@ -44,6 +44,8 @@ const (
 )
 
 // event is an event of the wait of a transition. Each event leads to one wait.
+//
+//dokimi:enum text=comment
 type event uint8
 
 // The events of the wait of a transition.

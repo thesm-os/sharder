@@ -98,7 +98,7 @@ func (m *Machine) check(md *protocol.Metadata, r *protocol.Request) (crypto.Dige
 			record.ControllerIdentity,
 		)
 	}
-	if !r.Call.Valid() || r.Role != m.settings.writer {
+	if !r.Call.IsValid() || r.Role != m.settings.writer {
 		return digest, fmt.Errorf("%w: the callback %v in the role %v", protocol.ErrUnsupported, r.Call, r.Role)
 	}
 	if r.Path != protocol.Forward && r.Path != protocol.Abort {

@@ -3,8 +3,6 @@
 
 package agent
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=state,event -linecomment -output=agent.string_gen.go
-
 import (
 	"errors"
 	"fmt"
@@ -101,6 +99,8 @@ func (c *Config) validate() error {
 }
 
 // state is the state of an agent in its lifecycle.
+//
+//dokimi:enum text=comment
 type state uint8
 
 // The states of an agent.
@@ -124,6 +124,8 @@ const (
 )
 
 // event is an event of the lifecycle of an agent.
+//
+//dokimi:enum text=comment
 type event uint8
 
 // The events of an agent.

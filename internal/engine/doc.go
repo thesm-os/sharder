@@ -103,4 +103,6 @@
 // engine imports the standard library, the packages clock, epoch, errs, fsm, idmap, rand
 // and resilience of go.thesmos.sh/core, and the packages handoff, internal/machine,
 // membership, protocol, shard and store of go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package engine

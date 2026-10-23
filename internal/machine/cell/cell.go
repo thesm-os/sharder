@@ -3,8 +3,6 @@
 
 package cell
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=state,event -linecomment -output=cell.string_gen.go
-
 import (
 	"context"
 	"errors"
@@ -79,6 +77,8 @@ type Config struct {
 }
 
 // state is the state of a cell machine in its lifecycle.
+//
+//dokimi:enum text=comment
 type state uint8
 
 // The states of a cell machine.
@@ -96,6 +96,8 @@ const (
 )
 
 // event is an event of the lifecycle of a cell machine.
+//
+//dokimi:enum text=comment
 type event uint8
 
 // The events of a cell machine.

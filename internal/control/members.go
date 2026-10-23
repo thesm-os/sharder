@@ -297,7 +297,7 @@ func (c *Controller) report(ev *machine.Report, out []machine.Effect) ([]machine
 		return reply(c, ev.Reply, protocol.Ack{}, err, out), nil
 	}
 	for i := range r.Replicas {
-		if o := &r.Replicas[i]; !o.Status.Valid() {
+		if o := &r.Replicas[i]; !o.Status.IsValid() {
 			err := fmt.Errorf("%w: node %s reports shard %v with the status %v", ErrCall, r.Node, o.Shard, o.Status)
 			return reply(c, ev.Reply, protocol.Ack{}, err, out), nil
 		}

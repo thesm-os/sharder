@@ -65,4 +65,6 @@
 // resilience and telemetry of go.thesmos.sh/core, and the packages budget, builtin,
 // config, internal/control, internal/machine, placement/constraint, placement/goal,
 // placement/planner, proposal, protocol, shard and store of go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package root

@@ -12,10 +12,7 @@ import (
 	"go.thesmos.sh/sharder/internal/follow"
 )
 
-// errorPrefix is the prefix of the text of every error of package follow.
-const errorPrefix = "follow: "
-
-// TestErrors checks the class and the text of each sentinel error of package follow.
+// TestErrors checks the class of the sentinel error of package follow.
 func TestErrors(t *testing.T) {
 	t.Parallel()
 
@@ -26,12 +23,6 @@ func TestErrors(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, errs.Classify(follow.ErrConfig), errs.Invalid,
 				"the sentinel must classify as its documented class")
-		})
-
-		t.Run("starts its text with the package's name", func(t *testing.T) {
-			t.Parallel()
-			assert.HasPrefix(t, follow.ErrConfig.Error(), errorPrefix,
-				"the text of the sentinel must start with the name of the package")
 		})
 	})
 }

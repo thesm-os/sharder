@@ -169,7 +169,7 @@ func (b *budgets) covered(n shard.NodeID) bool {
 //   - an error that wraps ErrCall for a d without an ID, without nodes, or with an End
 //     that is not after its Start.
 //   - an error that wraps ErrCall and budget.ErrUnknownImpact for an Impact other than
-//     zero that is not Valid, and an error that wraps ErrCall for the zero Impact.
+//     zero that is not valid, and an error that wraps ErrCall for the zero Impact.
 func digest(d *budget.Disruption) (crypto.Digest, error) {
 	if d.ID.IsZero() {
 		return crypto.Digest{}, fmt.Errorf("%w: the disruption has no ID", ErrCall)
@@ -185,7 +185,7 @@ func digest(d *budget.Disruption) (crypto.Digest, error) {
 	if err != nil {
 		return crypto.Digest{}, fmt.Errorf("%w: disruption %v: %w", ErrCall, d.ID, err)
 	}
-	if !d.Impact.Valid() {
+	if !d.Impact.IsValid() {
 		return crypto.Digest{}, fmt.Errorf("%w: disruption %v has no impact", ErrCall, d.ID)
 	}
 	return sha256.Hasher{}.Hash(encoded), nil

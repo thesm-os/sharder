@@ -76,4 +76,6 @@
 // resilience and telemetry of go.thesmos.sh/core, and the packages config,
 // internal/follow, internal/machine, membership, partition, shard and store of
 // go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package routes

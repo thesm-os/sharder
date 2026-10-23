@@ -3,8 +3,6 @@
 
 package follow
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=state,event -linecomment -output=follower.string_gen.go
-
 import (
 	"errors"
 	"fmt"
@@ -79,6 +77,8 @@ type Result struct {
 }
 
 // state is the state of a Follower in its lifecycle.
+//
+//dokimi:enum text=comment
 type state uint8
 
 // The states of a Follower.
@@ -95,6 +95,8 @@ const (
 )
 
 // event is an event of the lifecycle of a Follower.
+//
+//dokimi:enum text=comment
 type event uint8
 
 // The events of a Follower.

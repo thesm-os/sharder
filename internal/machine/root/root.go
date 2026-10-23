@@ -3,8 +3,6 @@
 
 package root
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=state,event -linecomment -output=root.string_gen.go
-
 import (
 	"context"
 	"errors"
@@ -127,6 +125,8 @@ func (c *Config) validate() error {
 }
 
 // state is the state of a root machine in its lifecycle.
+//
+//dokimi:enum text=comment
 type state uint8
 
 // The states of a root machine.
@@ -148,6 +148,8 @@ const (
 )
 
 // event is an event of the lifecycle of a root machine.
+//
+//dokimi:enum text=comment
 type event uint8
 
 // The events of a root machine.

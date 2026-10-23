@@ -3,8 +3,6 @@
 
 package control
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=state,event -linecomment -output=controller.string_gen.go
-
 import (
 	"errors"
 	"fmt"
@@ -124,13 +122,15 @@ func (c *Config) validate() error {
 	if c.Parallelism < 1 {
 		return fmt.Errorf("%w: the parallelism %d is below one", ErrConfig, c.Parallelism)
 	}
-	if i := slices.IndexFunc(c.Kinds, func(k proposal.OperationKind) bool { return !k.Valid() }); i >= 0 {
+	if i := slices.IndexFunc(c.Kinds, func(k proposal.OperationKind) bool { return !k.IsValid() }); i >= 0 {
 		return fmt.Errorf("%w: the kind %v is not valid", ErrConfig, c.Kinds[i])
 	}
 	return nil
 }
 
 // state is the state of a Controller in its lifecycle.
+//
+//dokimi:enum text=comment
 type state uint8
 
 // The states of a Controller.
@@ -149,6 +149,8 @@ const (
 )
 
 // event is an event of the lifecycle of a Controller.
+//
+//dokimi:enum text=comment
 type event uint8
 
 // The events of a Controller.
@@ -327,7 +329,7 @@ type Controller struct {
 // Error modes:
 //   - an error that wraps ErrConfig for a nil cfg, and for a cfg without Clock, Reporter,
 //     Logger, Registry, Fits, Acquisition or the address of Node, with a Parallelism below
-//     one, or with a kind that is not Valid.
+//     one, or with a kind that is not valid.
 //   - an error that wraps ErrConfig and the error of scope.New for a cfg without Rand,
 //     Tokens, the namespace of Scope, or Term.
 func New(cfg *Config) (*Controller, error) {

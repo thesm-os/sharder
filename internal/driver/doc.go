@@ -79,4 +79,6 @@
 // driver imports the standard library, the packages clock, errs, pool and task of
 // go.thesmos.sh/core, and the packages budget, fence, internal/machine, membership,
 // placement, protocol, shard and store of go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package driver

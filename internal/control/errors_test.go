@@ -12,10 +12,7 @@ import (
 	"go.thesmos.sh/sharder/internal/control"
 )
 
-// errorPrefix starts the text of every error of package control.
-const errorPrefix = "control: "
-
-// TestErrors checks the class and the text of each sentinel error of package control.
+// TestErrors checks the class of each sentinel error of package control.
 func TestErrors(t *testing.T) {
 	t.Parallel()
 
@@ -41,12 +38,6 @@ func TestErrors(t *testing.T) {
 			t.Run("classifies as "+tt.class.String(), func(t *testing.T) {
 				t.Parallel()
 				assert.Equal(t, errs.Classify(tt.err), tt.class, "the sentinel must have its class")
-			})
-
-			t.Run("starts its text with the package's name", func(t *testing.T) {
-				t.Parallel()
-				assert.HasPrefix(t, tt.err.Error(), errorPrefix,
-					"the text of the sentinel must start with the name of the package")
 			})
 		})
 	}

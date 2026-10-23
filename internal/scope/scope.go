@@ -3,8 +3,6 @@
 
 package scope
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=state,event -linecomment -output=scope.string_gen.go
-
 import (
 	"context"
 	"errors"
@@ -94,6 +92,8 @@ type Result struct {
 }
 
 // state is the state of a Scope in its lifecycle.
+//
+//dokimi:enum text=comment
 type state uint8
 
 // The states of a Scope.
@@ -121,6 +121,8 @@ const (
 )
 
 // event is an event of the lifecycle of a Scope.
+//
+//dokimi:enum text=comment
 type event uint8
 
 // The events of a Scope.

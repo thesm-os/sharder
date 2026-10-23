@@ -56,4 +56,6 @@
 // cell imports the standard library, the packages clock, epoch, errs, fsm, rand and
 // telemetry of go.thesmos.sh/core, and the packages config, internal/control,
 // internal/follow, internal/machine, proposal, shard and store of go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package cell

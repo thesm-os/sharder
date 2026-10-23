@@ -47,7 +47,7 @@ func (c *Controller) submit(ev *machine.Submit, out []machine.Effect) ([]machine
 	case p.Kind == proposal.Explain:
 		return c.explain(ev, out)
 	default:
-		// New refuses a kind that is not Valid, so the kind left is SpecChange.
+		// New refuses a kind that is not valid, so the kind left is SpecChange.
 		return c.respec(ev, out)
 	}
 	return reply(c, ev.Reply, protocol.Receipt{}, err, out), nil

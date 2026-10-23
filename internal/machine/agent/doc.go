@@ -133,4 +133,6 @@
 // id/ulid, idmap, rand, resilience and telemetry of go.thesmos.sh/core, and the packages budget,
 // config, fence, handoff/breakbeforemake, internal/follow, internal/machine, ownership,
 // protocol, replication, shard and store of go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package agent
