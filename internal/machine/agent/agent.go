@@ -208,8 +208,8 @@ type Machine struct {
 	// shards maps each shard that the agent has seen to its state, in the order of the
 	// shards.
 	shards *btree.MapFunc[shard.ID, *shardState]
-	// effects maps the token of each Acquire, Handle and Timer of a callback or a cleanup to
-	// the work that waits for it.
+	// effects maps the token of each Acquire, Handle, Revoke and Timer of a callback, a cleanup
+	// or a revocation to the work that waits for it.
 	effects map[machine.Token]*work
 	// cellScope is the scope that the node joins: the scope of its cell, or the root scope
 	// for the agent of the root. It is empty before the agent knows it.
@@ -369,6 +369,8 @@ func (m *Machine) step(ev machine.Event, out []machine.Effect) ([]machine.Effect
 		return m.acquired(ev, out), nil
 	case machine.Handled:
 		return m.handled(ev, out), nil
+	case machine.Revoked:
+		return m.revoked(ev, out), nil
 	case machine.Reported:
 		return m.reported(&ev, out), nil
 	case machine.Decided:

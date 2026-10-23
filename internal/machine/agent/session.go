@@ -5,6 +5,7 @@ package agent
 
 import (
 	"fmt"
+	"slices"
 
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
@@ -82,9 +83,9 @@ func (m *Machine) joined(ev *machine.Joined, out []machine.Effect) ([]machine.Ef
 }
 
 // ended takes the end of the session of the node. Under ownership.Stop, the deadline of the
-// lease has passed, so Machine.Token returns an error for every tenure. The agent then joins
-// again after a backoff, with a new incarnation. The end of the session during a Close
-// either completes the Close or ends it.
+// lease has passed, so the agent revokes the tenures of the node, and Machine.Token returns
+// an error for every tenure. The agent then joins again after a backoff, with a new
+// incarnation. The end of the session during a Close either completes the Close or ends it.
 //
 // Error modes:
 //   - the error of fsm.Machine.Fire.
@@ -94,7 +95,7 @@ func (m *Machine) ended(ev machine.SessionEnded, out []machine.Effect) ([]machin
 	}
 	m.session.join, m.session.live = 0, false
 	if m.settings.lease.OnLoss == ownership.Stop {
-		m.revoke()
+		out = m.revokeTenures(out)
 	}
 	st := m.lc.State()
 	if st == stateClosing {
@@ -105,4 +106,20 @@ func (m *Machine) ended(ev machine.SessionEnded, out []machine.Effect) ([]machin
 		err = m.fire(eventLost)
 	}
 	return m.rejoin(out), err
+}
+
+// revokeTenures queues the revocation of each tenure whose fencing token Machine.Token
+// returns, in the order of the shards, and then revokes every fencing token of the node. A
+// revocation runs after the work of its shard that runs and before the work that waits.
+func (m *Machine) revokeTenures(out []machine.Effect) []machine.Effect {
+	for sid, g := range m.grants.All() {
+		if g.revoked {
+			continue
+		}
+		st := m.state(sid)
+		st.queue = slices.Insert(st.queue, 0, &work{state: st, token: g.token, revoke: true})
+		out = m.run(st, out)
+	}
+	m.revoke()
+	return out
 }

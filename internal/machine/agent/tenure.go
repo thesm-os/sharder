@@ -54,27 +54,33 @@ type tenure struct {
 	cleaned bool
 }
 
-// work is a callback or a cleanup of one shard that waits for its turn or runs.
+// work is a callback, a cleanup or a revocation of one shard that waits for its turn or runs.
 type work struct {
 	// state is the state of the shard of the work.
 	state *shardState
 	// waiters lists the tokens of the calls that wait for the result of the work, in their
-	// order. A cleanup has none.
+	// order. A cleanup and a revocation have none.
 	waiters []machine.ReplyToken
+	// token is the fencing token of the tenure of a revocation.
+	token fence.Token
 	// request is the request of the callback, or the request that the agent builds for a
-	// cleanup.
+	// cleanup. A revocation has none.
 	request protocol.Request
-	// effect is the token of the Acquire, the Handle or the Timer of the work in flight.
+	// effect is the token of the Acquire, the Handle, the Revoke or the Timer of the work in
+	// flight.
 	effect machine.Token
 	// attempt counts the transient errors of a cleanup in a row.
 	attempt int
 	// digest is the digest of the request of a callback.
 	digest crypto.Digest
-	// running is true from the start of the work until its result.
+	// running is true from the start of a callback or a cleanup until its result.
 	running bool
 	// cleanup is true for the cleanup of a tenure that the watched placements no longer
 	// list.
 	cleanup bool
+	// revoke is true for the revocation of a tenure whose session has ended under
+	// ownership.Stop.
+	revoke bool
 }
 
 // operation is what the agent knows about the newest operation of a shard.
@@ -195,6 +201,9 @@ func (m *Machine) run(st *shardState, out []machine.Effect) []machine.Effect {
 }
 
 // begin starts the work w of the shard st:
+//   - A revocation calls the handler with the fencing token of its tenure, and the timeout of
+//     a drop. It calls the handler also when the add that ran before it failed, because an
+//     earlier add of the tenure can have started the tenure.
 //   - A drop of a tenure that the node does not have completes without the handler. A
 //     cleanup of a tenure that is no longer active ends without an effect.
 //   - A drop and a cleanup of the tenure revoke its fencing token and call the handler.
@@ -205,6 +214,12 @@ func (m *Machine) run(st *shardState, out []machine.Effect) []machine.Effect {
 //     handler starts the controller of a cell, and the acquisition of the scope of the cell
 //     fences every older controller of the cell.
 func (m *Machine) begin(st *shardState, w *work, out []machine.Effect) []machine.Effect {
+	if w.revoke {
+		st.running = w
+		w.effect = m.next()
+		m.effects[w.effect] = w
+		return append(out, machine.Revoke{Fence: w.token, Token: w.effect, Timeout: m.settings.drop})
+	}
 	r := &w.request
 	if r.Call == protocol.Drop {
 		t := st.tenure
@@ -260,8 +275,10 @@ func (m *Machine) handle(st *shardState, w *work, timeout time.Duration, out []m
 // Machine.Token returns the token of the tenure, and the agent calls the handler. An
 // acquisition that fails ends the add with its error, and the tenure does not start.
 // Machine.Token then returns ErrNotWriter for the shard, also when the add replaced an
-// earlier tenure of the shard. Under ownership.Stop, an acquisition that completes after the
-// session of the incarnation of the add has ended fails with an error that wraps ErrStale.
+// earlier tenure of the shard. An acquisition that runs past its deadline ends the add with
+// a transient error, so a repeated add acquires the fence again. Under ownership.Stop, an
+// acquisition that completes after the session of the incarnation of the add has ended
+// fails with an error that wraps ErrStale.
 func (m *Machine) acquired(ev machine.Acquired, out []machine.Effect) []machine.Effect {
 	w, ok := m.effects[ev.Token]
 	if !ok {
@@ -281,7 +298,8 @@ func (m *Machine) acquired(ev machine.Acquired, out []machine.Effect) []machine.
 		}
 		st.tenure = nil
 		m.unissue(w.request.Shard)
-		err := fmt.Errorf("agent: the fence of shard %v at epoch %d: %w", w.request.Shard, w.request.Epoch, ev.Err)
+		err := fmt.Errorf("agent: the fence of shard %v at epoch %d: %w", w.request.Shard, w.request.Epoch,
+			machine.ClassifyAttempt(ev.Err))
 		return m.report(m.run(st, st.finish(w, err, out)))
 	}
 	m.issue(w.request.Shard, &st.tenure.token)
@@ -296,6 +314,9 @@ func (m *Machine) acquired(ev machine.Acquired, out []machine.Effect) []machine.
 //     that is not transient does not run again after a drop fails.
 //   - A cleanup that fails with a transient error runs again with the same request after a
 //     backoff. Any other error leaves the tenure failed, and the agent logs it.
+//   - A call of the handler that runs past its deadline fails with a transient error. The
+//     agent does not keep its result. A cleanup with such an error runs again after a
+//     backoff.
 //
 // The agent then reports the replicas of the node and runs the next work of the shard.
 func (m *Machine) handled(ev machine.Handled, out []machine.Effect) []machine.Effect {
@@ -304,7 +325,7 @@ func (m *Machine) handled(ev machine.Handled, out []machine.Effect) []machine.Ef
 		return out
 	}
 	delete(m.effects, ev.Token)
-	st, t, err := w.state, w.state.tenure, ev.Err
+	st, t, err := w.state, w.state.tenure, machine.ClassifyAttempt(ev.Err)
 	if w.cleanup && errs.Retryable(err) {
 		w.attempt++
 		w.effect = m.next()
@@ -328,6 +349,22 @@ func (m *Machine) handled(ev machine.Handled, out []machine.Effect) []machine.Ef
 			slog.String(attrShard, w.request.Shard.String()), slog.Any(attrError, err))
 	}
 	return m.report(m.run(st, st.finish(w, err, out)))
+}
+
+// revoked takes the result of the revocation of a tenure. The agent logs the error of a
+// revocation that failed, and runs the next work of the shard.
+func (m *Machine) revoked(ev machine.Revoked, out []machine.Effect) []machine.Effect {
+	w, ok := m.effects[ev.Token]
+	if !ok {
+		return out
+	}
+	delete(m.effects, ev.Token)
+	w.state.running = nil
+	if ev.Err != nil {
+		m.logger.LogAttrs(context.Background(), slog.LevelError, "agent: the revocation of a tenure failed",
+			slog.String(attrShard, w.token.Shard.String()), slog.Any(attrError, ev.Err))
+	}
+	return m.run(w.state, out)
 }
 
 // retried takes the end of the backoff of a cleanup, which runs again with the same

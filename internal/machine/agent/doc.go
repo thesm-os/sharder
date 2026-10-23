@@ -24,10 +24,13 @@
 // When the session of the node ends, the agent joins again with a new incarnation after a
 // backoff. An add of the ended incarnation does not start its tenure. Under ownership.Stop,
 // [Machine.Token] returns an error for every tenure from the end of the session on, and an
-// add whose fence acquisition completes after the end fails. Under ownership.ContinueFenced,
-// the tenures keep their tokens, and the fence rejects their writes once a newer tenure
-// acquires. The tenures of an ended incarnation end through cleanups once the controller
-// moves their shards. The machine stops when the root creates the namespace again.
+// add whose fence acquisition completes after the end fails. The agent also revokes each
+// tenure whose token Token returned until the end. Each revocation is a machine.Revoke in the
+// queue of the shard of the tenure. It runs after the work of the shard that runs and before
+// the work that waits. Under ownership.ContinueFenced, the tenures keep their tokens, and the
+// fence rejects their writes once a newer tenure acquires. The tenures of an ended
+// incarnation end through cleanups once the controller moves their shards. The machine stops
+// when the root creates the namespace again.
 //
 // # Callbacks
 //
@@ -53,12 +56,14 @@
 // incarnation. A server fills the refusal of a request with them.
 //
 // The machine keeps the result of each callback of the newest operation of a shard that did
-// not end with a transient error. It refuses a key that it has seen with another payload
-// with [ErrReused]. When a callback repeats the key of a callback that waits or runs, it
-// waits for the same result. An add waits until the watched placement of its shard has the
-// node as its writer at the epoch of the add. When its turn comes, it checks the placement
-// and the session of its incarnation again. The add then acquires the fence of the tenure,
-// and Machine.Token returns the token of the tenure from the acquisition on.
+// not end with a transient error. A fence acquisition or a call of the handler that ran past
+// its deadline ends its callback with a transient error. A repeated callback then runs again.
+// The machine refuses a key that it has seen with another payload with [ErrReused]. When a
+// callback repeats the key of a callback that waits or runs, it waits for the same result.
+// An add waits until the watched placement of its shard has the node as its writer at the
+// epoch of the add. When its turn comes, it checks the placement and the session of its
+// incarnation again. The add then acquires the fence of the tenure, and Machine.Token returns
+// the token of the tenure from the acquisition on.
 //
 // # Cleanups
 //

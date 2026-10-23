@@ -173,8 +173,9 @@ var errDisk = errors.New("test: the disk fails")
 
 // outcomes lists the results that a step of the property of an agent returns for a fence
 // acquisition or a handler call. The list has a success, a transient error, an error that a
-// retry does not fix, and the refusal of a fence.
-var outcomes = []error{nil, errBusy, errBroken, epoch.ErrFenced}
+// retry does not fix, the refusal of a fence, and the end of the context of an attempt at
+// its deadline.
+var outcomes = []error{nil, errBusy, errBroken, epoch.ErrFenced, context.DeadlineExceeded}
 
 // testCase is the test, or the case of a property, that a harness runs in.
 type testCase interface {
@@ -219,9 +220,15 @@ var rooted option = func(s *setup) {
 	s.acquire = false
 }
 
+// stops makes the ownership of the spec of a harness stop the writers at the deadline of
+// their lease.
+var stops option = func(s *setup) {
+	s.spec.Ownership = config.Selection{Config: json.RawMessage(stopOnLoss)}
+}
+
 // harness is the runtime of the tests. It performs the effects of one agent against a
 // memory store. The function fields of the harness return the results of the joins, the
-// fence acquisitions, the handler calls and the calls to the controller. The harness keeps
+// fence acquisitions, the handler calls, the revocations and the calls to the controller. The harness keeps
 // every effect that the agent sends. The tests commit to the scope of the cell as its
 // controller does, and pass the generations to the agent with follow.
 type harness struct {
@@ -231,6 +238,9 @@ type harness struct {
 	// fence returns the result of the fence acquisition of the token t, and nil for success.
 	// With a nil fence, every acquisition succeeds.
 	fence func(t *fence.Token) error
+	// revoking returns the result of the revocation of the tenure of the token t, and nil for
+	// success. With a nil revoking, every revocation succeeds.
+	revoking func(t *fence.Token) error
 	// joining returns the error of the next join, and nil for a session. With a nil joining,
 	// every join starts a session.
 	joining func() error
@@ -278,6 +288,8 @@ type harness struct {
 	acquires []machine.Acquire
 	// handles lists every Handle of the agent, in order.
 	handles []machine.Handle
+	// revokes lists every Revoke of the agent, in order.
+	revokes []machine.Revoke
 	// reports lists every report of the agent, in order.
 	reports []*protocol.Report
 	// disrupts lists every disruption that the agent asked for, in order.
@@ -501,6 +513,13 @@ func (h *harness) perform(tb assert.TB, e machine.Effect) machine.Event {
 			err = h.handler(e.Request)
 		}
 		return machine.Handled{Err: err, Token: e.Token}
+	case machine.Revoke:
+		h.revokes = append(h.revokes, e)
+		var err error
+		if h.revoking != nil {
+			err = h.revoking(&e.Fence)
+		}
+		return machine.Revoked{Err: err, Token: e.Token}
 	case machine.SendReport:
 		h.reports = append(h.reports, e.Report)
 		ack := protocol.Ack{Sequence: e.Report.Sequence, ControllerEpoch: cellTerm}
@@ -768,6 +787,8 @@ func tokenOf(e machine.Effect) machine.Token {
 	case machine.Acquire:
 		return e.Token
 	case machine.Handle:
+		return e.Token
+	case machine.Revoke:
 		return e.Token
 	case machine.SendReport:
 		return e.Token

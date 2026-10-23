@@ -4,16 +4,17 @@
 package agent_test
 
 import (
-	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/assert/stateful"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
 
-	"go.thesmos.sh/sharder/config"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/machine/agent"
 	"go.thesmos.sh/sharder/protocol"
@@ -26,6 +27,23 @@ var (
 	// errRefused is an error of a join that a retry does not fix.
 	errRefused = errs.WithClass(errors.New("test: the membership refuses the node"), errs.Invalid)
 )
+
+// The weights of the actions of the property of the sessions of an agent that a case takes
+// more often than the others.
+const (
+	// tenures is the weight of the assignment of a shard to the node.
+	tenures = 2
+	// results is the weight of a result of a pending fence acquisition, handler call or
+	// revocation.
+	results = 4
+	// losses is the weight of the end of the session of the node.
+	losses = 2
+)
+
+// revocations is the share of the cases of the property of the sessions of an agent in which
+// the agent revokes a tenure. It is at most half of the smallest share in three runs of 1,000
+// cases. The measured shares were 15.6% to 17.5%.
+const revocations = 0.07
 
 // TestSession checks the sessions of the node of an agent.
 func TestSession(t *testing.T) {
@@ -131,9 +149,7 @@ func TestSession(t *testing.T) {
 
 		t.Run("revokes every token when the session ends under stop", func(t *testing.T) {
 			t.Parallel()
-			h := newHarness(t, func(s *setup) {
-				s.spec.Ownership = config.Selection{Config: json.RawMessage(stopOnLoss)}
-			})
+			h := newHarness(t, stops)
 			h.start(t)
 			h.serve(t, shardA, 1, firstEpoch)
 			h.step(t, machine.SessionEnded{Token: h.join})
@@ -149,6 +165,86 @@ func TestSession(t *testing.T) {
 			h.step(t, machine.SessionEnded{Token: h.join})
 			_, err := h.machine.Token(shardA)
 			assert.NoError(t, err, "the end of the lease must keep the token under continue-fenced")
+		})
+
+		t.Run("revokes the tenure of each token in the order of the shards when the session ends under stop",
+			func(t *testing.T) {
+				t.Parallel()
+				h := newHarness(t, stops)
+				h.start(t)
+				h.serve(t, shardB, 1, firstEpoch)
+				h.serve(t, shardA, 1, firstEpoch)
+				h.step(t, machine.SessionEnded{Token: h.join})
+				h.run(t)
+				assert.Length(t, h.revokes, 2, "the end of the lease must revoke each tenure once")
+				expect.Equal(t, h.revokes[0].Fence, h.acquires[1].Fence, "the revocation of shard A must come first")
+				expect.Equal(t, h.revokes[1].Fence, h.acquires[0].Fence, "the revocation of shard B must come second")
+				expect.Equal(t, h.revokes[0].Timeout, dropTimeout, "a revocation must have the timeout of a drop")
+				expect.NotContains(t, h.logged(), logRevocation, "the agent must not log a revocation that succeeds")
+			})
+
+		t.Run("revokes no tenure when the session ends under continue-fenced", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.serve(t, shardA, 1, firstEpoch)
+			h.step(t, machine.SessionEnded{Token: h.join})
+			h.run(t)
+			assert.Empty(t, h.revokes, "the end of the lease must not revoke a tenure under continue-fenced")
+		})
+
+		t.Run("revokes a tenure whose add runs at the end of the session once the add returns", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, stops)
+			h.start(t)
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
+			h.place(t, shardA, firstEpoch)
+			h.do(t, h.request(protocol.Add, shardA, 1, firstEpoch))
+			h.step(t, machine.SessionEnded{Token: h.join})
+			h.run(t)
+			assert.Empty(t, h.revokes, "the revocation must wait for the add of its shard")
+			h.release(t)
+			assert.Length(t, h.revokes, 1, "the agent must revoke the tenure once its add returns")
+			expect.Equal(t, h.revokes[0].Fence, h.acquires[0].Fence, "the revocation must name the tenure of the add")
+		})
+
+		t.Run("revokes a served tenure whose repeated add fails after the end of the session", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, stops)
+			h.start(t)
+			h.serve(t, shardA, 1, firstEpoch)
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Acquire); return ok }
+			again := h.request(protocol.Add, shardA, 1, firstEpoch)
+			again.Step = 1
+			h.do(t, again)
+			h.step(t, machine.SessionEnded{Token: h.join})
+			h.release(t)
+			assert.Length(t, h.revokes, 1, "the agent must revoke the tenure that its first add started")
+			expect.Equal(t, h.revokes[0].Fence, h.acquires[0].Fence, "the revocation must name the served tenure")
+		})
+
+		t.Run("revokes no tenure whose fence acquisition runs at the end of the session", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, stops)
+			h.start(t)
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Acquire); return ok }
+			h.place(t, shardA, firstEpoch)
+			h.do(t, h.request(protocol.Add, shardA, 1, firstEpoch))
+			h.step(t, machine.SessionEnded{Token: h.join})
+			h.release(t)
+			assert.Empty(t, h.revokes, "the agent must not revoke a tenure whose add has not called the handler")
+		})
+
+		t.Run("revokes no tenure whose drop runs at the end of the session", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t, stops)
+			h.start(t)
+			h.serve(t, shardA, 1, firstEpoch)
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Handle); return ok }
+			h.do(t, h.request(protocol.Drop, shardA, 2, firstEpoch))
+			h.step(t, machine.SessionEnded{Token: h.join})
+			h.release(t)
+			assert.Empty(t, h.revokes, "the agent must not revoke a tenure that its drop ends")
 		})
 
 		t.Run("serves when its first session starts after the first snapshot", func(t *testing.T) {
@@ -206,5 +302,65 @@ func TestSession(t *testing.T) {
 			got := h.machine.Step(machine.Joined{Token: h.join + 100, Incarnation: 9}, out)
 			assert.Equal(t, got, out, "the agent must ignore the result of another join")
 		})
+
+		t.Run("keeps its contract under every sequence of the ends of its session", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "an agent keeps its contract under every sequence of the ends of its session",
+				sessions, prop.Require(labelRevoke, revocations))
+		})
 	})
+}
+
+// sessions runs the steps of the case c over an agent that serves under ownership.Stop or
+// ownership.ContinueFenced, as c chooses. Each step does one of these things:
+//   - It assigns a shard to the node, moves a shard away, or drops a shard.
+//   - It passes the next generation to the agent.
+//   - It passes success or a result that c chooses to a pending fence acquisition, handler
+//     call or revocation.
+//   - It ends the session of the node, or ends a Timer, such as the backoff before the next
+//     join.
+//
+// The model checks the contract of the agent after every step and at the end, as the property
+// of an agent does. Every case keeps every action, and the steps end the session of a node
+// with tenures more often than that property, so they revoke tenures in more cases.
+func sessions(c *prop.Case) {
+	m := newModel(c, c.Draw(prop.Boolean(), "stop at the end of the lease"))
+	behind := func(struct{}) bool {
+		return m.applied < len(m.commits) && !m.stopped &&
+			slices.ContainsFunc(m.h.watches, func(w machine.Watch) bool { return w.Scope == cellScope })
+	}
+	pending := func(struct{}) bool { return len(m.h.pending) > 0 }
+	stateful.Steps(c, stateful.Machine[struct{}]{
+		Actions: []stateful.Action[struct{}]{
+			{Name: "assign", Weight: tenures, Run: func(c *prop.Case, _ int, _ any) { m.assign(c) }},
+			{Name: "place", Run: func(c *prop.Case, _ int, _ any) { m.place(c) }},
+			{Name: "release", Run: func(c *prop.Case, _ int, _ any) { m.release(c) }},
+			{Name: "deliver", Weight: results, Enabled: behind, Run: func(c *prop.Case, _ int, _ any) { m.deliver(c) }},
+			{
+				Name: "succeed", Weight: results, Enabled: pending,
+				Run: func(c *prop.Case, _ int, _ any) { m.finish(c, 0, nil) },
+			},
+			{Name: "answer", Enabled: pending, Run: func(c *prop.Case, _ int, _ any) { m.answer(c) }},
+			{
+				Name: "end the session", Weight: losses, Enabled: func(struct{}) bool { return m.live },
+				Run: func(c *prop.Case, _ int, _ any) { m.end(c) },
+			},
+			{
+				Name: "elapse", Enabled: func(struct{}) bool { return len(m.h.timers) > 0 },
+				Run: func(c *prop.Case, _ int, _ any) {
+					m.expire(c, c.Draw(prop.Integer(0, len(m.h.timers)-1), "timer"))
+				},
+			},
+			{
+				Name: "complete", Drain: true,
+				Enabled: func(s struct{}) bool {
+					return pending(s) || behind(s) ||
+						slices.ContainsFunc(m.h.timers, func(tm machine.Timer) bool { return tm.Duration < loadWindow })
+				},
+				Run: func(c *prop.Case, _ int, _ any) { m.complete(c) },
+			},
+		},
+		Invariant: func(c *prop.Case, _ struct{}) { m.invariant(c) },
+		Settle:    func(c *prop.Case, _ struct{}) { m.settle(c) },
+	}, stateful.Swarm(false))
 }

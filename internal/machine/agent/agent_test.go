@@ -5,7 +5,6 @@ package agent_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"maps"
@@ -67,20 +66,25 @@ const (
 	labelServe = "a tenure serves"
 	// labelDrop counts a case in which the handler of a drop runs.
 	labelDrop = "the agent drops a tenure"
+	// labelRevoke counts a case in which the agent revokes a tenure.
+	labelRevoke = "the agent revokes a tenure"
 )
 
-// The shares of the cases of the property of an agent that its labels must count, about half
-// of the shares that 100 cases of one seed measured.
+// The shares of the cases of the property of an agent that its labels must count. Each share
+// is at most half of the smallest share of its labels in three runs of 1,000 cases. The last
+// check of a run fails a label that counts less than 90% of its share, so a share near the
+// measured one fails some runs.
 const (
 	// common is the share of labelResend, labelSession and labelCompaction, whose steps do
-	// not need a state. The measured shares were 22%, 26% and 28%.
+	// not need a state. The measured shares were 25% to 28%, 26% to 29% and 25% to 26%.
 	common = 0.1
 	// occasional is the share of labelCleanup and labelServe, which need a tenure. The
-	// measured shares were 15% and 18%.
+	// measured shares were 11% to 14% and 18% to 21%.
 	occasional = 0.05
-	// rare is the share of labelFenced and labelDrop, which need a tenure and one of the four
-	// results of a pending effect. The measured shares were 6% and 5%.
-	rare = 0.02
+	// rare is the share of labelFenced and labelDrop. Each needs an add and a second event of
+	// its tenure: the refusal of its fence, or its drop. The measured shares were 2.6% to 3.2%
+	// and 2.5% to 3.7%.
+	rare = 0.01
 )
 
 // model is the expected state of an agent that the property of an agent drives, and the
@@ -93,6 +97,9 @@ type model struct {
 	h *harness
 	// granted maps each shard to the fencing token that Token returns for it.
 	granted map[shard.ID]fence.Token
+	// due maps the fencing token of each tenure whose session ended under ownership.Stop to
+	// the number of its revocations that the agent has not appended.
+	due map[fence.Token]int
 	// read maps each shard to the placement of the last commit that the agent has read.
 	read map[shard.ID]shard.Placement
 	// retried maps the key of each callback and cleanup whose handler the agent has called
@@ -152,18 +159,17 @@ type commit struct {
 }
 
 // newModel returns the model of an agent that serves. The ownership of the agent stops its
-// writers at the end of the lease when stops is true.
-func newModel(c *prop.Case, stops bool) *model {
+// writers at the end of the lease when stopping is true.
+func newModel(c *prop.Case, stopping bool) *model {
 	opts := make([]option, 0, 1)
-	if stops {
-		opts = append(opts, func(s *setup) {
-			s.spec.Ownership = config.Selection{Config: json.RawMessage(stopOnLoss)}
-		})
+	if stopping {
+		opts = append(opts, stops)
 	}
 	m := &model{
 		c:          c,
 		h:          newHarness(c, opts...),
 		granted:    make(map[shard.ID]fence.Token),
+		due:        make(map[fence.Token]int),
 		read:       make(map[shard.ID]shard.Placement),
 		retried:    make(map[protocol.Key]bool),
 		calls:      make(map[machine.ReplyToken]*protocol.Request),
@@ -173,7 +179,7 @@ func newModel(c *prop.Case, stops bool) *model {
 		epochs:     make(map[shard.ID]epoch.Epoch),
 		operations: make(map[shard.ID]uint64),
 		term:       cellTerm,
-		stops:      stops,
+		stops:      stopping,
 	}
 	for _, sid := range allShards {
 		m.operations[sid] = 1
@@ -183,7 +189,7 @@ func newModel(c *prop.Case, stops bool) *model {
 	m.h.start(c)
 	m.h.pause = func(e machine.Effect) bool {
 		switch e.(type) {
-		case machine.Acquire, machine.Handle:
+		case machine.Acquire, machine.Handle, machine.Revoke:
 			return true
 		}
 		return false
@@ -204,6 +210,10 @@ func (m *model) observe(e machine.Effect) {
 		m.acquire(e)
 	case machine.Handle:
 		m.handle(e.Request)
+	case machine.Revoke:
+		expect.NotEqual(c, m.due[e.Fence], 0, "the agent must revoke only a tenure whose session ended under stop")
+		m.due[e.Fence]--
+		c.Classify(labelRevoke)
 	case machine.SendReport:
 		want := uint64(1)
 		if e.Report.NodeIncarnation == m.incarnation {
@@ -401,8 +411,8 @@ func (m *model) send(c *prop.Case, r *protocol.Request) {
 	m.sync()
 }
 
-// answer passes a result to a pending fence acquisition or handler call. c chooses the effect
-// and the result.
+// answer passes a result to a pending fence acquisition, handler call or revocation. c chooses
+// the effect and the result.
 func (m *model) answer(c *prop.Case) {
 	i := c.Draw(prop.Integer(0, len(m.h.pending)-1), "effect")
 	m.finish(c, i, c.Draw(prop.SampledFrom(outcomes...), "outcome"))
@@ -428,7 +438,7 @@ func (m *model) finish(c *prop.Case, i int, err error) {
 		m.h.step(c, machine.Acquired{Err: err, Token: e.Token})
 	case machine.Handle:
 		r := e.Request
-		m.retried[r.Key()] = errs.Retryable(err)
+		m.retried[r.Key()] = errs.Retryable(err) || errors.Is(err, context.DeadlineExceeded)
 		if err != nil && r.Call == protocol.Add {
 			delete(m.granted, r.Shard)
 		}
@@ -439,6 +449,8 @@ func (m *model) finish(c *prop.Case, i int, err error) {
 			c.Classify(labelDrop)
 		}
 		m.h.step(c, machine.Handled{Err: err, Token: e.Token})
+	case machine.Revoke:
+		m.h.step(c, machine.Revoked{Err: err, Token: e.Token})
 	}
 	m.h.run(c)
 	m.sync()
@@ -453,12 +465,16 @@ func (m *model) expire(c *prop.Case, i int) {
 	m.sync()
 }
 
-// end ends the session of the node. Under ownership.Stop, the end revokes every token.
+// end ends the session of the node. Under ownership.Stop, the end revokes every token, and
+// the agent then appends one revocation for the tenure of each.
 func (m *model) end(c *prop.Case) {
 	c.Classify(labelSession)
 	m.live = false
 	m.ends++
 	if m.stops {
+		for _, tok := range m.granted {
+			m.due[tok]++
+		}
 		clear(m.granted)
 	}
 	m.h.step(c, machine.SessionEnded{Token: m.h.join})
@@ -534,9 +550,9 @@ func (m *model) halt(c *prop.Case) {
 	clear(m.granted)
 }
 
-// complete passes success to each pending fence acquisition and handler call. It then passes
-// each generation of the scope that the agent has not read, and ends each Timer of a backoff.
-// The controller accepts reports from then on.
+// complete passes success to each pending fence acquisition, handler call and revocation. It
+// then passes each generation of the scope that the agent has not read, and ends each Timer of
+// a backoff. The controller accepts reports from then on.
 func (m *model) complete(c *prop.Case) {
 	m.failing = false
 	for range len(m.h.pending) {
@@ -570,8 +586,8 @@ func (m *model) sync() {
 }
 
 // invariant checks the agent after every step. No step stops the agent with an error, the
-// agent runs one callback of a shard at a time, and Token returns the token that the model
-// expects for each shard.
+// agent runs one callback, cleanup or revocation of a shard at a time, and Token returns the
+// token that the model expects for each shard.
 func (m *model) invariant(c *prop.Case) {
 	assert.Nil(c, m.h.machine.Err(), "no step of the property may stop the agent with an error")
 	running := make(map[shard.ID]int)
@@ -581,10 +597,13 @@ func (m *model) invariant(c *prop.Case) {
 			running[e.Fence.Shard]++
 		case machine.Handle:
 			running[e.Request.Shard]++
+		case machine.Revoke:
+			running[e.Fence.Shard]++
 		}
 	}
 	for _, sid := range allShards {
-		expect.InRange(c, running[sid], 0, 1, "the agent must run one callback of a shard at a time")
+		expect.InRange(c, running[sid], 0, 1,
+			"the agent must run one callback, cleanup or revocation of a shard at a time")
 		got, err := m.h.machine.Token(sid)
 		if want, ok := m.granted[sid]; ok {
 			expect.NoError(c, err, "Token must return the token of a tenure that has acquired its fence")
@@ -598,8 +617,15 @@ func (m *model) invariant(c *prop.Case) {
 // settle checks the agent once the drain has completed every call with success and passed
 // every generation. Every callback has its reply, unless it is an add whose placement on the
 // node the agent has not read at the epoch of the add. Token returns a token only for the
-// placement on the node that the agent has read, at the epoch of that placement.
+// placement on the node that the agent has read, at the epoch of that placement. An agent
+// that runs has revoked the tenure of each token that the end of a session revoked under
+// ownership.Stop.
 func (m *model) settle(c *prop.Case) {
+	if !m.stopped {
+		for _, n := range m.due {
+			expect.Equal(c, n, 0, "the agent must revoke the tenure of each token that the end of its session revoked")
+		}
+	}
 	for _, to := range slices.Sorted(maps.Keys(m.calls)) {
 		r := m.calls[to]
 		if m.replies[to] > 0 || m.cancelled[to] {
@@ -914,7 +940,7 @@ func completeConfig(tb assert.TB) agent.Config {
 //     controller.
 //   - It passes the next generation to the agent.
 //   - It sends a callback, or sends a callback again.
-//   - It passes the result of a pending fence acquisition or handler call.
+//   - It passes the result of a pending fence acquisition, handler call or revocation.
 //   - It ends a Timer, or cancels a call.
 //   - It ends the session of the node, or compacts the watch.
 //   - It reports a fault, or closes or stops the agent.
@@ -923,19 +949,22 @@ func completeConfig(tb assert.TB) agent.Config {
 //   - No step stops the agent with an error. A stopped agent appends no effect.
 //   - The agent replies to each call once. It never replies to a call that the runtime
 //     cancelled.
-//   - It runs one callback of a shard at a time. It calls the handler for a key again only
-//     after a transient error.
+//   - It runs one callback, cleanup or revocation of a shard at a time. It calls the handler
+//     for a key again only after a transient error.
 //   - It starts a tenure only while the node has a session, at the epoch of the placement on
 //     the node that it has read.
 //   - Token returns the token of each tenure from its acquisition until a drop or a cleanup
 //     of the tenure starts, its add fails, the session ends under ownership.Stop, or the
 //     agent stops.
+//   - It revokes a tenure only after the end of a session under ownership.Stop revoked its
+//     token, once for each such end.
 //   - It numbers the reports of each incarnation from one.
 //   - It appends no effect for the result of a Leave.
 //
 // The drain completes every call with success and passes every generation. Every callback then
 // has its reply, unless it is an add whose placement the agent has not read at its epoch, and
-// Token returns a token only for the placement on the node that the agent has read.
+// Token returns a token only for the placement on the node that the agent has read. An agent
+// that runs has then revoked each tenure that it must revoke.
 func exercise(c *prop.Case) {
 	m := newModel(c, c.Draw(prop.Boolean(), "stop at the end of the lease"))
 	watching := func(struct{}) bool {
