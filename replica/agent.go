@@ -231,7 +231,8 @@ func (a *Agent) Start(ctx context.Context) error {
 //
 // Error modes:
 //   - an error of class errs.Transient when the controller epoch of r is above the record of
-//     the controller that the agent has read, and when ctx ends before r runs.
+//     the controller that the agent has read, and when the deadline of ctx passes before r
+//     runs.
 //   - an error of class errs.Denied when md.Caller is not the identity of that record.
 //   - an error of class errs.Conflict for r of another namespace incarnation, another node
 //     or node incarnation, a lower epoch, controller epoch or operation than the highest the
@@ -239,14 +240,17 @@ func (a *Agent) Start(ctx context.Context) error {
 //     and a callback of an operation that the node has seen end.
 //   - an error of class errs.Invalid for a key that the node has seen with another payload,
 //     and for a request on the path protocol.Cleanup, which only the agent builds.
-//   - the error of the handler, or of the acquisition of the fence of an add.
+//   - the error of the handler, or of the acquisition of the fence of an add. Such an error
+//     that wraps context.DeadlineExceeded classifies as errs.Transient. The agent does not
+//     keep it as the result of the key.
 //   - an error that wraps ErrNotServing before the node serves and once the run of the agent
 //     has ended.
 func (a *Agent) Do(ctx context.Context, md protocol.Metadata, r *protocol.Request) error {
 	req := r.CloneKanon()
-	return a.call(ctx, callCallback, func(tok machine.ReplyToken) machine.Event {
+	err := a.call(ctx, callCallback, func(tok machine.ReplyToken) machine.Event {
 		return machine.Do{Request: req, Metadata: md, Reply: tok}
 	})
+	return machine.ClassifyAttempt(err)
 }
 
 // Close moves the replicas of the node away before the process stops. It sends the

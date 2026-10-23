@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
@@ -18,7 +19,12 @@ import (
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/replica"
 	"go.thesmos.sh/sharder/shard"
+	"go.thesmos.sh/sharder/store/memory"
 )
+
+// lostReplies is the number of the renewals of a lease whose replies a test loses. It covers
+// every renewal before the deadline of the lease.
+const lostReplies = 3
 
 // work is the work of one tenure of the tests. It records its start and its end.
 type work struct {
@@ -57,6 +63,9 @@ type opener struct {
 	fail error
 	// err is the error that the work of each tenure returns.
 	err error
+	// gate makes each Open wait until gate is closed, or is nil. The test sets it before the
+	// runner opens a tenure.
+	gate chan struct{}
 	// opens lists a copy of each request of Open, in order.
 	opens []opened
 	// requests lists each request of Open, as the runner passed it.
@@ -73,8 +82,12 @@ type opener struct {
 
 var _ replica.Opener = (*opener)(nil)
 
-// Open keeps a copy of req, and returns the error fail, a tenure without work, or new work.
+// Open waits for gate, keeps a copy of req, and returns the error fail, a tenure without work,
+// or new work.
 func (o *opener) Open(_ context.Context, req *replica.OpenRequest) (replica.OpenResult, error) {
+	if o.gate != nil {
+		<-o.gate
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.opens = append(o.opens, opened{request: req.Request.CloneKanon(), token: req.Token})
@@ -368,6 +381,242 @@ func TestRunner(t *testing.T) {
 				&replica.DropShardRequest{Request: request(protocol.Drop, shardA, 1, 1, 1)},
 			)
 			assert.NoError(t, err, "a drop of a shard without a tenure must succeed")
+		})
+	})
+
+	t.Run("RevokeShard", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("ends the work of the tenure of the token", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				o := &opener{}
+				run := replica.NewRunner(o)
+				token := fence.Token{Shard: shardA, Epoch: 1}
+				_, err := run.AddShard(t.Context(), &replica.AddShardRequest{
+					Request: request(protocol.Add, shardA, 1, 1, 1),
+					Token:   token,
+				})
+				assert.NoError(t, err, "the add must open the tenure")
+				_, err = run.RevokeShard(t.Context(), &replica.RevokeShardRequest{Token: token})
+				assert.NoError(t, err, "the revocation must succeed")
+				select {
+				case <-o.last(t).ended:
+				default:
+					t.Fatal("the revocation must return once the work has returned")
+				}
+			})
+		})
+
+		t.Run("keeps the work of a newer tenure of the shard", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				o := &opener{}
+				run := replica.NewRunner(o)
+				newer := request(protocol.Add, shardA, 2, 2, 1)
+				_, err := run.AddShard(t.Context(), &replica.AddShardRequest{
+					Request: newer,
+					Token:   fence.Token{Shard: shardA, Epoch: 2},
+				})
+				assert.NoError(t, err, "the add must open the newer tenure")
+				_, err = run.RevokeShard(t.Context(), &replica.RevokeShardRequest{
+					Token: fence.Token{Shard: shardA, Epoch: 1},
+				})
+				assert.NoError(t, err, "the revocation of the older tenure must succeed")
+				synctest.Wait()
+				select {
+				case <-o.last(t).ended:
+					t.Error("the revocation of an older tenure must not end the work of the newer tenure")
+				default:
+				}
+				_, err = run.DropShard(t.Context(), &replica.DropShardRequest{Request: newer})
+				assert.NoError(t, err, "the drop must end the work")
+			})
+		})
+
+		t.Run("returns nil for a shard without a tenure", func(t *testing.T) {
+			t.Parallel()
+			run := replica.NewRunner(&opener{})
+			_, err := run.RevokeShard(t.Context(), &replica.RevokeShardRequest{
+				Token: fence.Token{Shard: shardA, Epoch: 1},
+			})
+			assert.NoError(t, err, "a revocation of a shard without a tenure must succeed")
+		})
+
+		t.Run("opens a tenure again after its revocation", func(t *testing.T) {
+			t.Parallel()
+			o := &opener{idle: true}
+			run := replica.NewRunner(o)
+			add := &replica.AddShardRequest{
+				Request: request(protocol.Add, shardA, 1, 1, 1),
+				Token:   fence.Token{Shard: shardA, Epoch: 1},
+			}
+			_, err := run.AddShard(t.Context(), add)
+			assert.NoError(t, err, "the add must open the tenure")
+			_, err = run.RevokeShard(t.Context(), &replica.RevokeShardRequest{Token: add.Token})
+			assert.NoError(t, err, "the revocation must end the tenure")
+			_, err = run.AddShard(t.Context(), add)
+			assert.NoError(t, err, "the add after the revocation must open the tenure")
+			assert.Equal(t, o.calls(), 2, "the runner must forget a tenure that it revoked")
+		})
+
+		t.Run("ends the work of a tenure when the session of the node ends under stop", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.stop(t)
+				o := &opener{}
+				ctx, stop := context.WithCancel(t.Context())
+				a := f.run(t, ctx, replica.NewRunner(o))
+				t.Cleanup(func() {
+					stop()
+					<-a.Done()
+				})
+				f.serve(t, a, shardA, 1)
+				w := o.last(t)
+				<-w.started
+				f.lose(t)
+				_, err := a.Token(t.Context(), &replica.TokenRequest{Shard: shardA})
+				assert.ErrorIs(t, err, epoch.ErrFenced, "the end of the lease must revoke the token of the tenure")
+				select {
+				case <-w.ended:
+				default:
+					t.Fatal("the end of the lease must end the work of the tenure under stop")
+				}
+			})
+		})
+
+		t.Run("keeps the work of a tenure when the session of the node ends under continue-fenced",
+			func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					f := newFixture(t)
+					o := &opener{}
+					ctx, stop := context.WithCancel(t.Context())
+					a := f.run(t, ctx, replica.NewRunner(o))
+					t.Cleanup(func() {
+						stop()
+						<-a.Done()
+					})
+					f.serve(t, a, shardA, 1)
+					w := o.last(t)
+					<-w.started
+					f.lose(t)
+					select {
+					case <-w.ended:
+						t.Error("the end of the lease must keep the work of the tenure under continue-fenced")
+					default:
+					}
+				})
+			})
+
+		t.Run("ends the work of a tenure when the replies to the renewals of its lease are lost under stop",
+			func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					f := newFixture(t)
+					f.stop(t)
+					o := &opener{}
+					ctx, stop := context.WithCancel(t.Context())
+					a := f.run(t, ctx, replica.NewRunner(o))
+					t.Cleanup(func() {
+						stop()
+						<-a.Done()
+					})
+					f.serve(t, a, shardA, 1)
+					w := o.last(t)
+					<-w.started
+					for range lostReplies {
+						f.st.FailAt(memory.PointRenewAck)
+					}
+					f.clock.Advance(leaseTTL + time.Second)
+					synctest.Wait()
+					select {
+					case <-w.ended:
+					default:
+						t.Fatal("the end of a lease whose renewals lost their replies must end the work under stop")
+					}
+				})
+			})
+
+		t.Run("ends the work of a tenure whose open returns after the end of the session under stop",
+			func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					f := newFixture(t)
+					f.stop(t)
+					o := &opener{gate: make(chan struct{})}
+					ctx, stop := context.WithCancel(t.Context())
+					a := f.run(t, ctx, replica.NewRunner(o))
+					t.Cleanup(func() {
+						stop()
+						<-a.Done()
+					})
+					f.place(t, shardA, 1)
+					r := request(protocol.Add, shardA, 1, 1, f.incarnation(t))
+					added := make(chan error, 1)
+					go func() { added <- a.Do(t.Context(), controllerMetadata, r) }()
+					synctest.Wait()
+					f.lose(t)
+					close(o.gate)
+					synctest.Wait()
+					assert.NoError(t, <-added, "the add must succeed once its open returns")
+					select {
+					case <-o.last(t).ended:
+					default:
+						t.Fatal("the work of a tenure whose open returns after the end of the session must end")
+					}
+				})
+			})
+
+		t.Run("ends the work of a tenure when another session of the node replaces its session under stop",
+			func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					f := newFixture(t)
+					f.stop(t)
+					o := &opener{}
+					ctx, stop := context.WithCancel(t.Context())
+					a := f.run(t, ctx, replica.NewRunner(o))
+					t.Cleanup(func() {
+						stop()
+						<-a.Done()
+					})
+					f.serve(t, a, shardA, 1)
+					w := o.last(t)
+					<-w.started
+					f.rejoin(t)
+					select {
+					case <-w.ended:
+					default:
+						t.Fatal("the end of a replaced session must end the work of the tenure under stop")
+					}
+				})
+			})
+
+		t.Run("keeps the work of a newer tenure after the node joins again under stop", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.stop(t)
+				o := &opener{}
+				ctx, stop := context.WithCancel(t.Context())
+				a := f.run(t, ctx, replica.NewRunner(o))
+				t.Cleanup(func() {
+					stop()
+					<-a.Done()
+				})
+				f.serve(t, a, shardA, 1)
+				f.rejoin(t)
+				f.serve(t, a, shardA, 2)
+				synctest.Wait()
+				assert.Equal(t, o.calls(), 2, "the runner must open the newer tenure")
+				select {
+				case <-o.last(t).ended:
+					t.Error("the revocation of the older tenure must not end the work of the newer tenure")
+				default:
+				}
+			})
 		})
 	})
 

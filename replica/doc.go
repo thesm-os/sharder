@@ -16,17 +16,25 @@
 // The application implements [Handler]. The agent calls AddShard to start a replica and
 // DropShard to stop one, one call at a time for each shard. Callbacks arrive at least once.
 // The agent refuses a stale callback, and returns its kept result for a repeated key, before
-// it calls the handler. AddShard receives the fencing token of the tenure that it starts. An
-// application that reports the load of its replicas also implements [LoadReporter].
+// it calls the handler. Each call of the handler has a deadline of its own. A call that
+// returns an error that wraps context.DeadlineExceeded fails its callback with a transient
+// error. The agent does not keep such a result. A repeated callback calls the handler again.
+// AddShard receives the fencing token of the tenure that it starts. An application that
+// reports the load of its replicas also implements [LoadReporter].
+//
+// Under ownership.Stop, the session of the node ends when the deadline of its lease passes,
+// and [Agent.Token] then returns an error for every tenure. A Handler that also implements
+// [Revoker] receives a RevokeShard for each tenure of the node, in the turn of its shard, and
+// ends the work of the tenure.
 //
 // # Runner
 //
 // A [Runner] is a Handler for an application that runs work for each tenure. The application
 // implements [Opener]: Open opens a tenure and returns its work, and the runner runs the work
-// until the drop of the tenure. A replayed add of the tenure that runs leaves the work
-// running, a newer tenure of the shard ends the work of the older one, and the agent ends
-// the work of every tenure before it closes Done. A work that fails makes the runner report
-// a permanent fault of the replica.
+// until the drop or the revocation of the tenure. A replayed add of the tenure that runs
+// leaves the work running, a newer tenure of the shard ends the work of the older one, and
+// the agent ends the work of every tenure before it closes Done. A work that fails makes the
+// runner report a permanent fault of the replica.
 //
 // # Fencing
 //

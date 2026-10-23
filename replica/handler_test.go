@@ -19,6 +19,9 @@ import (
 // cpu is the load metric of the tests.
 const cpu = "cpu"
 
+// logRevocation is the log message of the agent for a revocation that fails.
+const logRevocation = "agent: the revocation of a tenure failed"
+
 // TestHandler checks the calls of the handler of the application by an agent.
 func TestHandler(t *testing.T) {
 	t.Parallel()
@@ -126,6 +129,134 @@ func TestHandler(t *testing.T) {
 				f.app.mu.Unlock()
 				err := a.Do(t.Context(), controllerMetadata, request(protocol.Drop, shardA, 2, 1, f.incarnation(t)))
 				assert.ErrorIs(t, err, errBroken, "the drop must fail with the error of the handler")
+			})
+		})
+	})
+
+	t.Run("RevokeShard", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("receives the token of a tenure when the session of the node ends under stop", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.stop(t)
+				h := &revoking{application: f.app}
+				ctx, stop := context.WithCancel(t.Context())
+				a := f.run(t, ctx, h)
+				t.Cleanup(func() {
+					stop()
+					<-a.Done()
+				})
+				f.serve(t, a, shardA, 1)
+				f.lose(t)
+				h.mu.Lock()
+				defer h.mu.Unlock()
+				assert.Length(t, h.revoked, 1, "the handler must receive one revocation")
+				assert.Equal(t, h.revoked[0], f.guard.acquired[0], "the handler must receive the token of the tenure")
+			})
+		})
+
+		t.Run("receives a request whose token the agent clears once the call returns", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.stop(t)
+				h := &revoking{application: f.app}
+				ctx, stop := context.WithCancel(t.Context())
+				a := f.run(t, ctx, h)
+				t.Cleanup(func() {
+					stop()
+					<-a.Done()
+				})
+				f.serve(t, a, shardA, 1)
+				f.lose(t)
+				h.mu.Lock()
+				defer h.mu.Unlock()
+				assert.Length(t, h.revocations, 1, "the handler must receive one revocation")
+				assert.Equal(t, h.revocations[0].Token, fence.Token{},
+					"the agent must clear the token once the call returns")
+			})
+		})
+
+		t.Run("passes its error to the log of the agent", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.stop(t)
+				h := &revoking{application: f.app, err: errBroken}
+				ctx, stop := context.WithCancel(t.Context())
+				a := f.run(t, ctx, h)
+				t.Cleanup(func() {
+					stop()
+					<-a.Done()
+				})
+				f.serve(t, a, shardA, 1)
+				f.lose(t)
+				failures := f.errorsOf(logRevocation)
+				assert.Length(t, failures, 1, "the agent must log the failed revocation once")
+				assert.ErrorIs(t, failures[0], errBroken, "the log must have the error of RevokeShard")
+			})
+		})
+
+		t.Run("passes no error to the log of the agent when it returns nil", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.stop(t)
+				h := &revoking{application: f.app}
+				ctx, stop := context.WithCancel(t.Context())
+				a := f.run(t, ctx, h)
+				t.Cleanup(func() {
+					stop()
+					<-a.Done()
+				})
+				f.serve(t, a, shardA, 1)
+				f.lose(t)
+				h.mu.Lock()
+				defer h.mu.Unlock()
+				assert.Length(t, h.revoked, 1, "the handler must receive one revocation")
+				assert.Empty(t, f.errorsOf(logRevocation), "the agent must not log a revocation that succeeds")
+			})
+		})
+
+		t.Run("returns nil for a handler without RevokeShard", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				f.stop(t)
+				ctx, stop := context.WithCancel(t.Context())
+				a := f.run(t, ctx, f.app)
+				t.Cleanup(func() {
+					stop()
+					<-a.Done()
+				})
+				f.serve(t, a, shardA, 1)
+				f.lose(t)
+				assert.Empty(
+					t,
+					f.errorsOf(logRevocation),
+					"the revocation of a handler without RevokeShard must succeed",
+				)
+			})
+		})
+
+		t.Run("receives no revocation when the session of the node ends under continue-fenced", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t)
+				h := &revoking{application: f.app}
+				ctx, stop := context.WithCancel(t.Context())
+				a := f.run(t, ctx, h)
+				t.Cleanup(func() {
+					stop()
+					<-a.Done()
+				})
+				f.serve(t, a, shardA, 1)
+				f.lose(t)
+				h.mu.Lock()
+				defer h.mu.Unlock()
+				assert.Empty(t, h.revoked, "the handler must not receive a revocation under continue-fenced")
 			})
 		})
 	})

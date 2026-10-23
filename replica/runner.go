@@ -79,11 +79,13 @@ func (t *running) end() {
 }
 
 // Runner is a Handler that opens each tenure of the node through an Opener, and runs the work
-// of the tenure until the drop of the tenure.
+// of the tenure until the drop or the revocation of the tenure.
 //
 // An add of the tenure that runs returns nil and leaves its work running. An add of a newer
 // tenure of the shard ends the work of the older tenure, waits for it, and then opens the
 // newer tenure. A drop ends the work of the tenure, and returns once the work has returned.
+// Under ownership.Stop, the agent revokes each tenure at the end of the session of the node,
+// and the revocation ends the work of the tenure in the same way.
 // A work that returns an error before its context ends makes the runner report a permanent
 // fault of the replica, and log the error. An error that wraps epoch.ErrFenced means that a
 // newer tenure has acquired the fence, and the runner does not report it.
@@ -114,7 +116,10 @@ type Runner struct {
 	mu sync.Mutex
 }
 
-var _ Handler = (*Runner)(nil)
+var (
+	_ Handler = (*Runner)(nil)
+	_ Revoker = (*Runner)(nil)
+)
 
 // NewRunner returns the runner of o.
 func NewRunner(o Opener) *Runner {
@@ -167,6 +172,24 @@ func (r *Runner) DropShard(_ context.Context, req *DropShardRequest) (DropShardR
 	r.mu.Unlock()
 	t.end()
 	return DropShardResult{}, nil
+}
+
+// RevokeShard ends the work of the tenure of the token of req, and returns once the work has
+// returned. The runner then forgets the tenure. A revocation of a tenure that the runner does
+// not run returns nil, and leaves the work of the shard running. Such a tenure is an older
+// tenure of a shard whose newer tenure runs, or a tenure whose add failed.
+func (r *Runner) RevokeShard(_ context.Context, req *RevokeShardRequest) (RevokeShardResult, error) {
+	sid := req.Token.Shard
+	r.mu.Lock()
+	t := r.tenures[sid]
+	if t == nil || t.epoch != req.Token.Epoch {
+		r.mu.Unlock()
+		return RevokeShardResult{}, nil
+	}
+	delete(r.tenures, sid)
+	r.mu.Unlock()
+	t.end()
+	return RevokeShardResult{}, nil
 }
 
 // run runs work, the work of the tenure t of the shard sid, until ctx ends, and closes t.done

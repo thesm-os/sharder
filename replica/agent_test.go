@@ -541,6 +541,40 @@ func TestAgent(t *testing.T) {
 			})
 		})
 
+		t.Run("runs the handler again for a repeated add after a handler call that ran past its deadline",
+			func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					f := newFixture(t)
+					a := f.start(t)
+					f.place(t, shardA, 1)
+					r := request(protocol.Add, shardA, 1, 1, f.incarnation(t))
+					f.app.fail = func(*protocol.Request) error { return context.DeadlineExceeded }
+					err := a.Do(t.Context(), controllerMetadata, r)
+					assert.Equal(t, errs.Classify(err), errs.Transient,
+						"an add whose handler ran past its deadline must fail with a transient error")
+					f.app.fail = nil
+					assert.NoError(t, a.Do(t.Context(), controllerMetadata, r), "the repeated add must succeed")
+					assert.Equal(t, f.app.called(r), 2, "the handler must run the repeated add")
+				})
+			})
+
+		t.Run("returns an error of class errs.Transient when its context ends before the callback runs",
+			func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					f := newFixture(t)
+					a := f.start(t)
+					r := request(protocol.Add, shardA, 1, 1, f.incarnation(t))
+					ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+					defer cancel()
+					err := a.Do(ctx, controllerMetadata, r)
+					expect.That(t, err).ErrorIs(context.DeadlineExceeded, "the add must wait until its deadline")
+					expect.Equal(t, errs.Classify(err), errs.Transient,
+						"a callback whose wait ends at its deadline must fail with a transient error")
+				})
+			})
+
 		t.Run("returns an error of class errs.Conflict for a callback of an earlier incarnation of the node",
 			func(t *testing.T) {
 				t.Parallel()

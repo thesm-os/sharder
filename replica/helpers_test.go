@@ -17,6 +17,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.thesmos.sh/core/clock/fake"
+	"go.thesmos.sh/core/coretest/telemetrytest"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
@@ -71,6 +72,10 @@ const (
 // fenced exclusive ownership of the spec of the tests.
 const leaseTTL = 10 * time.Second
 
+// stopOnLoss is the configuration of fenced exclusive ownership whose writers stop at the
+// deadline of their lease.
+const stopOnLoss = `{"fenced":true,"lease":{"onLoss":"stop"}}`
+
 // grace is the time between a Close and its deadline.
 const grace = 30 * time.Second
 
@@ -96,6 +101,14 @@ var (
 		Renew:        shard.Duration(leaseTTL / 3),
 		MaxDriftRate: 0.01,
 		OnLoss:       ownership.ContinueFenced,
+	}
+	// firstSpec is the spec of the tests at its first version, whose writers keep their
+	// tenures at the deadline of their lease.
+	firstSpec = config.Spec{
+		Namespace:    namespace,
+		Preset:       builtin.ExclusiveWorker,
+		Partitioning: config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)},
+		Version:      firstVersion,
 	}
 )
 
@@ -285,6 +298,32 @@ func (l *loaded) ShardLoad(shard.ID) shard.Load {
 	return l.load
 }
 
+// revoking is a handler of the tests that also revokes tenures. It keeps every request of
+// RevokeShard and the token of each. The mutex of the application guards its fields.
+type revoking struct {
+	*application
+	// err is the error of every RevokeShard, or nil.
+	err error
+	// revocations lists every request of RevokeShard, as the agent passed it.
+	revocations []*replica.RevokeShardRequest
+	// revoked lists the token of every request of RevokeShard at the call, in order.
+	revoked []fence.Token
+}
+
+var _ replica.Revoker = (*revoking)(nil)
+
+// RevokeShard keeps req and its token, and returns err.
+func (r *revoking) RevokeShard(
+	_ context.Context,
+	req *replica.RevokeShardRequest,
+) (replica.RevokeShardResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.revocations = append(r.revocations, req)
+	r.revoked = append(r.revoked, req.Token)
+	return replica.RevokeShardResult{}, r.err
+}
+
 // fixture is the store, the clock, the registry and the doubles that the agent of a test
 // uses. The test writes the root scope and the scope of the cell in place of the root and of
 // the controller of the cell.
@@ -301,6 +340,8 @@ type fixture struct {
 	guard *guard
 	// app is the handler of the agent.
 	app *application
+	// logs keeps every record that the agent logs.
+	logs *telemetrytest.Records
 	// rootSeq and cellSeq are the Seq of the last commit to the root scope and to the scope
 	// of the cell.
 	rootSeq, cellSeq uint64
@@ -333,28 +374,62 @@ func bare(tb cleaner) *fixture {
 	tb.Cleanup(func() { assert.NoError(tb, st.Close(), "the store closes") })
 	r := config.NewRegistry(builtin.Support())
 	assert.NoError(tb, builtin.Register(r), "the built-ins register")
-	return &fixture{st: st, clock: clk, reg: r, ctrl: &controllerDouble{}, guard: &guard{}, app: newApplication()}
+	return &fixture{
+		st:    st,
+		clock: clk,
+		reg:   r,
+		ctrl:  &controllerDouble{},
+		guard: &guard{},
+		app:   newApplication(),
+		logs:  telemetrytest.NewRecords(slog.LevelDebug),
+	}
 }
 
 // create creates the namespace of the tests in the root scope as the root does. Its commit
 // has the spec of the tests with its mapping, and it puts the cell of the tests.
 func (f *fixture) create(tb assert.TB) {
 	tb.Helper()
-	s := config.Spec{
-		Namespace:    namespace,
-		Preset:       builtin.ExclusiveWorker,
-		Partitioning: config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)},
-		Version:      firstVersion,
-	}
+	s := firstSpec
+	res := f.resolve(tb, &s)
+	raw, err := json.Marshal(&res.Spec)
+	assert.NoError(tb, err, "the resolved spec encodes")
+	f.commitRoot(tb, &store.Mutation{Spec: raw, Mapping: &res.Mapping, Put: []shard.Placement{{Shard: cellKey}}})
+}
+
+// stop records the spec of the tests at its next version in the root scope, with an
+// ownership whose writers stop at the deadline of their lease. An agent that starts after
+// stop applies it.
+func (f *fixture) stop(tb assert.TB) {
+	tb.Helper()
+	s := firstSpec
+	s.Ownership = config.Selection{Config: json.RawMessage(stopOnLoss)}
+	s.Version++
+	raw, err := json.Marshal(&f.resolve(tb, &s).Spec)
+	assert.NoError(tb, err, "the resolved spec encodes")
+	f.commitRoot(tb, &store.Mutation{Spec: raw})
+}
+
+// resolve resolves s with the registry of f and the capabilities of its store, and fails tb
+// when Resolve refuses s.
+func (f *fixture) resolve(tb assert.TB, s *config.Spec) *config.Resolved {
+	tb.Helper()
 	provided := map[config.Axis][]config.Capability{
 		config.Store:      f.st.Provides(),
 		config.Membership: f.st.Membership().Provides(),
 	}
-	res, err := config.Resolve(f.reg, &s, provided)
+	res, err := config.Resolve(f.reg, s, provided)
 	assert.NoError(tb, err, "the spec of the tests resolves")
-	raw, err := json.Marshal(&res.Spec)
-	assert.NoError(tb, err, "the resolved spec encodes")
-	f.commitRoot(tb, &store.Mutation{Spec: raw, Mapping: &res.Mapping, Put: []shard.Placement{{Shard: cellKey}}})
+	return res
+}
+
+// lose ends the session of the node of the tests at the deadline of its lease: the store has
+// an outage, and the clock passes the TTL of the lease. It waits until the agent has taken
+// the end. The outage lasts until the test ends it.
+func (f *fixture) lose(tb assert.TB) {
+	tb.Helper()
+	f.st.StartOutage()
+	f.clock.Advance(leaseTTL + time.Second)
+	synctest.Wait()
 }
 
 // config returns the Config of the agent of the node of the tests over f.
@@ -368,10 +443,28 @@ func (f *fixture) config() *replica.Config {
 		Rand:       seeded.New(1),
 		Reporter:   noop.New(),
 		Registry:   f.reg,
-		Logger:     slog.New(slog.DiscardHandler),
+		Logger:     slog.New(f.logs),
 		Namespace:  namespace,
 		Node:       node,
 	}
+}
+
+// errorsOf returns the error of each record that the agent logged with the message msg, in
+// order.
+func (f *fixture) errorsOf(msg string) []error {
+	var errs []error
+	for _, r := range f.logs.All() {
+		if r.Message != msg {
+			continue
+		}
+		r.Attrs(func(a slog.Attr) bool {
+			if err, ok := a.Value.Any().(error); ok {
+				errs = append(errs, err)
+			}
+			return true
+		})
+	}
+	return errs
 }
 
 // start starts the agent of the node of the tests with the handler of f, after each option

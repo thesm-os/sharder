@@ -72,6 +72,32 @@ type DropShardResult struct {
 	_ incomparable
 }
 
+// Revoker is a Handler that ends the work of a tenure whose session has ended. When the
+// Handler of an agent implements Revoker, the agent calls RevokeShard at the end of the
+// session of the node under ownership.Stop, once for each tenure whose token Agent.Token
+// returned until the end. The agent calls RevokeShard in the turn of the shard, one call at a
+// time for each shard, as it calls AddShard and DropShard. A Handler without RevokeShard
+// learns of the end of the session from Agent.Token alone.
+type Revoker interface {
+	// RevokeShard ends the work of the tenure of the token of req, and returns once the work
+	// has ended. The fence admits the writes of the tenure until a newer tenure acquires it.
+	// The agent also revokes a tenure whose AddShard failed, so RevokeShard returns nil for a
+	// tenure that the handler does not run.
+	RevokeShard(ctx context.Context, req *RevokeShardRequest) (RevokeShardResult, error)
+}
+
+// RevokeShardRequest is the request of Revoker.RevokeShard.
+type RevokeShardRequest struct {
+	_ incomparable
+	// Token is the fencing token of the tenure whose session has ended.
+	Token fence.Token
+}
+
+// RevokeShardResult is the result of Revoker.RevokeShard.
+type RevokeShardResult struct {
+	_ incomparable
+}
+
 // LoadReporter reports the load of the replicas of an application. When the Handler that
 // Start receives implements LoadReporter, the agent sends each report with the loads that it
 // returns. Without it, each replica reports only the count metric.
@@ -100,9 +126,14 @@ type application struct {
 	adds *pool.Pool[*AddShardRequest]
 	// drops keeps the requests of DropShard.
 	drops *pool.Pool[*DropShardRequest]
+	// revokes keeps the requests of RevokeShard.
+	revokes *pool.Pool[*RevokeShardRequest]
 }
 
-var _ driver.Handler = (*application)(nil)
+var (
+	_ driver.Handler = (*application)(nil)
+	_ driver.Revoker = (*application)(nil)
+)
 
 // newApplication returns the handler of the driver of an agent, which passes each callback to
 // h.
@@ -111,6 +142,7 @@ func newApplication(h Handler) *application {
 		handler: h,
 		adds:    pool.NewPool(func() *AddShardRequest { return new(AddShardRequest) }),
 		drops:   pool.NewPool(func() *DropShardRequest { return new(DropShardRequest) }),
+		revokes: pool.NewPool(func() *RevokeShardRequest { return new(RevokeShardRequest) }),
 	}
 }
 
@@ -141,6 +173,26 @@ func (a *application) DropShard(ctx context.Context, r *protocol.Request) error 
 	a.drops.Put(req)
 	if err != nil {
 		return fmt.Errorf("replica: the drop of shard %v: %w", r.Shard, err)
+	}
+	return nil
+}
+
+// RevokeShard passes the fencing token t of a tenure whose session has ended to
+// Revoker.RevokeShard, and returns an error that wraps its error. It returns nil for a Handler
+// without RevokeShard. It clears the request before it returns the request to its pool.
+func (a *application) RevokeShard(ctx context.Context, t *fence.Token) error {
+	rv, ok := a.handler.(Revoker)
+	if !ok {
+		return nil
+	}
+	req := a.revokes.Get()
+	req.Token = *t
+	_, err := rv.RevokeShard(ctx, req)
+	req.Token = fence.Token{}
+	//dokimi:mutate-skip sbr-delete: a request that the pool does not get back costs one allocation of a later revocation, which no test observes
+	a.revokes.Put(req)
+	if err != nil {
+		return fmt.Errorf("replica: the revocation of shard %v: %w", t.Shard, err)
 	}
 	return nil
 }
