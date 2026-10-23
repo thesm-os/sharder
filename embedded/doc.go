@@ -45,4 +45,6 @@
 // embedded imports the standard library, the packages clock, errs, rand, task and telemetry of
 // go.thesmos.sh/core, and the packages config, controller, fence, membership, protocol,
 // replica, router, shard and store of go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package embedded
