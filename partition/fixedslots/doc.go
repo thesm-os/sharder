@@ -40,4 +40,6 @@
 //
 // fixedslots imports the standard library, the package errs of go.thesmos.sh/core, and
 // the packages partition and shard of sharder.
+//
+//dokimi:sentinel
 package fixedslots

@@ -43,4 +43,6 @@
 //
 // partition imports the standard library, the packages errs and tag of
 // go.thesmos.sh/core, and go.thesmos.sh/sharder/shard.
+//
+//dokimi:sentinel
 package partition
