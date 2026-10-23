@@ -27,4 +27,6 @@
 //
 // breakbeforemake imports the standard library, the package errs of
 // go.thesmos.sh/core, and the packages handoff and shard of sharder.
+//
+//dokimi:sentinel
 package breakbeforemake

@@ -10,7 +10,6 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
-	"go.dokimi.dev/assert/prop"
 	"go.thesmos.sh/core/errs"
 
 	"go.thesmos.sh/sharder/handoff"
@@ -40,56 +39,9 @@ var (
 	commitWithoutWriter = handoff.Step{Action: handoff.Commit}
 )
 
-// TestScript checks the actions of a step and the validation of a script.
+// TestScript checks the validation of a script.
 func TestScript(t *testing.T) {
 	t.Parallel()
-
-	t.Run("Action", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("Valid", func(t *testing.T) {
-			t.Parallel()
-
-			t.Run("reports true for Add, Drop and Commit", func(t *testing.T) {
-				t.Parallel()
-				prop.True(t, handoff.Action.Valid, "every constant of Action must be Valid",
-					prop.Using(prop.SampledFrom(handoff.Add, handoff.Drop, handoff.Commit)))
-			})
-
-			t.Run("reports false for the zero Action", func(t *testing.T) {
-				t.Parallel()
-				assert.False(t, handoff.Action(0).Valid(), "the zero Action must not be Valid")
-			})
-
-			t.Run("reports false for a value above Commit", func(t *testing.T) {
-				t.Parallel()
-				prop.False(t, handoff.Action.Valid, "a value above the last constant must not be Valid",
-					prop.Using(prop.Integer[handoff.Action](handoff.Commit+1, 255)))
-			})
-		})
-
-		t.Run("String", func(t *testing.T) {
-			t.Parallel()
-
-			tests := []struct {
-				name string
-				give handoff.Action
-				want string
-			}{
-				{name: "returns add for Add", give: handoff.Add, want: "add"},
-				{name: "returns drop for Drop", give: handoff.Drop, want: "drop"},
-				{name: "returns commit for Commit", give: handoff.Commit, want: "commit"},
-				{name: "returns the number of the zero Action", give: 0, want: "Action(0)"},
-				{name: "returns the number of a value above Commit", give: handoff.Commit + 1, want: "Action(4)"},
-			}
-			for _, tt := range tests {
-				t.Run(tt.name, func(t *testing.T) {
-					t.Parallel()
-					assert.Equal(t, tt.give.String(), tt.want, "String must return the spelling of the action")
-				})
-			}
-		})
-	})
 
 	t.Run("Validate", func(t *testing.T) {
 		t.Parallel()
@@ -294,25 +246,9 @@ func TestScript(t *testing.T) {
 	})
 }
 
-// TestScriptAllocs checks the allocation contracts of Action and Script. MaxAllocs
-// counts the allocations of the whole process, so the test does not run in parallel.
+// TestScriptAllocs checks the allocation contract of Script. MaxAllocs counts the
+// allocations of the whole process, so the test does not run in parallel.
 func TestScriptAllocs(t *testing.T) {
-	action := handoff.Commit
-
-	t.Run("Action", func(t *testing.T) {
-		t.Run("Valid", func(t *testing.T) {
-			var got bool
-			expect.MaxAllocs(t, func() { got = action.Valid() }, 0, "Valid must not allocate")
-			assert.True(t, got, "the test must measure a Valid action")
-		})
-
-		t.Run("String", func(t *testing.T) {
-			var got string
-			expect.MaxAllocs(t, func() { got = action.String() }, 0, "String of a Valid action must not allocate")
-			assert.Equal(t, got, "commit", "the test must measure the spelling of a Valid action")
-		})
-	})
-
 	t.Run("Validate", func(t *testing.T) {
 		script := handoff.Script{
 			Steps: []handoff.Step{dropFrom, commitTo, addTo},

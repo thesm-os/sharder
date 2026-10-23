@@ -3,8 +3,6 @@
 
 package handoff
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=Side -linecomment -output=protocol.string_gen.go
-
 import "go.thesmos.sh/sharder/shard"
 
 // Side is one side of a transfer, such as [Fallback]. A step of a script runs on the
@@ -23,7 +21,7 @@ import "go.thesmos.sh/sharder/shard"
 // # Encoding
 //
 // [Side.String] returns the spelling of a Side, such as "fallback", and the form
-// "Side(n)" for a value that is not Valid.
+// "Side(n)" for any other value. [ParseSide] returns the side of a spelling.
 //
 // # Concurrency
 //
@@ -31,8 +29,10 @@ import "go.thesmos.sh/sharder/shard"
 //
 // # Allocation contract
 //
-// [Side.Valid], and [Side.String] of a Valid Side, do not allocate. String allocates the
-// form of a value that is not Valid.
+// [Side.IsValid], and [Side.String] of From, To or Fallback, do not allocate. String
+// allocates the form of any other value.
+//
+//dokimi:enum text=comment
 type Side uint8
 
 const (
@@ -43,15 +43,6 @@ const (
 	// Fallback is the side of the node that becomes the writer on the abort path.
 	Fallback Side = 3 // fallback
 )
-
-// Valid reports whether s is From, To or Fallback. The zero Side is not.
-//
-// # Allocation contract
-//
-// Zero alloc.
-func (s Side) Valid() bool {
-	return s >= From && s <= Fallback
-}
 
 // Transfer is one move of a replica, as the core passes it to a protocol. It contains
 // the node of each side of the move. An empty node is a side that the move does not
@@ -75,7 +66,7 @@ type Transfer struct {
 }
 
 // Node returns the node of the side s of t. It returns the empty node for a side that t
-// does not have, and for a Side that is not Valid.
+// does not have, and for a Side other than From, To and Fallback.
 //
 // # Allocation contract
 //

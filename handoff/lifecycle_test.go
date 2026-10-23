@@ -14,57 +14,9 @@ import (
 	"go.thesmos.sh/sharder/shard"
 )
 
-// TestLifecycle checks the events of a transition and the table of its phases.
+// TestLifecycle checks the table of the phases of a transition.
 func TestLifecycle(t *testing.T) {
 	t.Parallel()
-
-	t.Run("Event", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("Valid", func(t *testing.T) {
-			t.Parallel()
-
-			t.Run("reports true for Advance, Finish, Fail and Abandon", func(t *testing.T) {
-				t.Parallel()
-				prop.True(t, handoff.Event.Valid, "every constant of Event must be Valid",
-					prop.Using(prop.SampledFrom(handoff.Advance, handoff.Finish, handoff.Fail, handoff.Abandon)))
-			})
-
-			t.Run("reports false for the zero Event", func(t *testing.T) {
-				t.Parallel()
-				assert.False(t, handoff.Event(0).Valid(), "the zero Event must not be Valid")
-			})
-
-			t.Run("reports false for a value above Abandon", func(t *testing.T) {
-				t.Parallel()
-				prop.False(t, handoff.Event.Valid, "a value above the last constant must not be Valid",
-					prop.Using(prop.Integer[handoff.Event](handoff.Abandon+1, 255)))
-			})
-		})
-
-		t.Run("String", func(t *testing.T) {
-			t.Parallel()
-
-			tests := []struct {
-				name string
-				give handoff.Event
-				want string
-			}{
-				{name: "returns advance for Advance", give: handoff.Advance, want: "advance"},
-				{name: "returns finish for Finish", give: handoff.Finish, want: "finish"},
-				{name: "returns fail for Fail", give: handoff.Fail, want: "fail"},
-				{name: "returns abandon for Abandon", give: handoff.Abandon, want: "abandon"},
-				{name: "returns the number of the zero Event", give: 0, want: "Event(0)"},
-				{name: "returns the number of a value above Abandon", give: handoff.Abandon + 1, want: "Event(5)"},
-			}
-			for _, tt := range tests {
-				t.Run(tt.name, func(t *testing.T) {
-					t.Parallel()
-					assert.Equal(t, tt.give.String(), tt.want, "String must return the spelling of the event")
-				})
-			}
-		})
-	})
 
 	t.Run("Lifecycle", func(t *testing.T) {
 		t.Parallel()
@@ -75,9 +27,9 @@ func TestLifecycle(t *testing.T) {
 				"every transition must start in the running phase")
 		})
 
-		// The rows cover the 16 pairs of a Valid phase and a Valid event, and two events
-		// that are not Valid. A row with ok false is an event that the phase rejects, and
-		// want is then the same phase.
+		// The rows cover the 16 pairs of one of the four phases and one of the four events,
+		// and two values outside the events. A row with ok false is an event that the phase
+		// rejects, and want is then the same phase.
 		tests := []struct {
 			name string
 			from shard.Phase
@@ -177,26 +129,6 @@ func TestLifecycle(t *testing.T) {
 			t.Parallel()
 			prop.False(t, handoff.Lifecycle.Terminal, "running and aborting must not be terminal",
 				prop.Using(prop.SampledFrom(shard.PhaseRunning, shard.PhaseAborting)))
-		})
-	})
-}
-
-// TestLifecycleAllocs checks the allocation contract of Event. MaxAllocs counts the
-// allocations of the whole process, so the test does not run in parallel.
-func TestLifecycleAllocs(t *testing.T) {
-	event := handoff.Abandon
-
-	t.Run("Event", func(t *testing.T) {
-		t.Run("Valid", func(t *testing.T) {
-			var got bool
-			expect.MaxAllocs(t, func() { got = event.Valid() }, 0, "Valid must not allocate")
-			assert.True(t, got, "the test must measure a Valid event")
-		})
-
-		t.Run("String", func(t *testing.T) {
-			var got string
-			expect.MaxAllocs(t, func() { got = event.String() }, 0, "String of a Valid event must not allocate")
-			assert.Equal(t, got, "abandon", "the test must measure the spelling of a Valid event")
 		})
 	})
 }

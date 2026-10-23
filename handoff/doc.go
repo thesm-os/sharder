@@ -16,7 +16,8 @@
 //
 // # Errors
 //
-// [ErrScript] and [ErrTransfer] classify as errs.Invalid.
+// [ErrScript], [ErrTransfer], [ErrUnknownSide], [ErrUnknownEvent] and [ErrUnknownAction]
+// classify as errs.Invalid.
 //
 // # Concurrency
 //
@@ -26,11 +27,13 @@
 //
 // # Allocation contract
 //
-// [Script.Validate] of a valid script and [Transfer.Node] do not allocate. Valid, and
-// String of a Valid value, do not allocate for a [Side], an [Action] or an [Event].
+// [Script.Validate] of a valid script and [Transfer.Node] do not allocate. IsValid, and
+// String of a declared value, do not allocate for a [Side], an [Action] or an [Event].
 //
 // # Dependency position
 //
 // handoff imports the standard library, the packages errs and fsm of
 // go.thesmos.sh/core, and go.thesmos.sh/sharder/shard.
+//
+//dokimi:sentinel
 package handoff

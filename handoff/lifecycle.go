@@ -3,8 +3,6 @@
 
 package handoff
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=Event -linecomment -output=lifecycle.string_gen.go
-
 import (
 	"go.thesmos.sh/core/fsm"
 
@@ -14,12 +12,12 @@ import (
 // Event is the outcome of the current step of a transition, such as [Fail]. On each
 // event, the engine looks up the next phase of the transition in [Lifecycle].
 //
-// The zero Event is not Valid.
+// [Event.IsValid] refuses the zero Event.
 //
 // # Encoding
 //
 // [Event.String] returns the spelling of an Event, such as "abandon", and the form
-// "Event(n)" for a value that is not Valid.
+// "Event(n)" for any other value. [ParseEvent] returns the event of a spelling.
 //
 // # Concurrency
 //
@@ -27,8 +25,10 @@ import (
 //
 // # Allocation contract
 //
-// [Event.Valid], and [Event.String] of a Valid Event, do not allocate. String allocates
-// the form of a value that is not Valid.
+// [Event.IsValid], and [Event.String] of one of the four events, do not allocate. String
+// allocates the form of any other value.
+//
+//dokimi:enum text=comment
 type Event uint8
 
 const (
@@ -47,15 +47,6 @@ const (
 	// an error that is not transient.
 	Abandon Event = 4 // abandon
 )
-
-// Valid reports whether e is Advance, Finish, Fail or Abandon. The zero Event is not.
-//
-// # Allocation contract
-//
-// Zero alloc.
-func (e Event) Valid() bool {
-	return e >= Advance && e <= Abandon
-}
 
 // Lifecycle is the table of the phases of a transition. A transition starts in
 // shard.PhaseRunning, and these edges lead from one phase to the next:

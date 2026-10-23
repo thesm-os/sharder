@@ -3,8 +3,6 @@
 
 package handoff
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=Action -linecomment -output=script.string_gen.go
-
 import (
 	"errors"
 	"fmt"
@@ -14,12 +12,12 @@ import (
 // Action is the kind of a step of a script, such as [Commit]. A step completes when the
 // condition of its action holds, and the engine then starts the next step.
 //
-// The zero Action is not Valid.
+// [Action.IsValid] refuses the zero Action.
 //
 // # Encoding
 //
 // [Action.String] returns the spelling of an Action, such as "commit", and the form
-// "Action(n)" for a value that is not Valid.
+// "Action(n)" for any other value. [ParseAction] returns the action of a spelling.
 //
 // # Concurrency
 //
@@ -27,8 +25,10 @@ import (
 //
 // # Allocation contract
 //
-// [Action.Valid], and [Action.String] of a Valid Action, do not allocate. String
-// allocates the form of a value that is not Valid.
+// [Action.IsValid], and [Action.String] of Add, Drop or Commit, do not allocate. String
+// allocates the form of any other value.
+//
+//dokimi:enum text=comment
 type Action uint8
 
 const (
@@ -51,19 +51,10 @@ const (
 	Commit Action = 3 // commit
 )
 
-// Valid reports whether a is Add, Drop or Commit. The zero Action is not.
-//
-// # Allocation contract
-//
-// Zero alloc.
-func (a Action) Valid() bool {
-	return a >= Add && a <= Commit
-}
-
 // Step is one step of a script. It is a callback on the node of one side of a transfer,
 // or a commit of the placement of the shard.
 //
-// The zero Step is not valid, because its Action is not.
+// The zero Step is not valid, because IsValid refuses its Action.
 //
 // # Concurrency
 //
@@ -82,10 +73,10 @@ type Step struct {
 
 // problems returns one error per rule of a step that s breaks for the transfer t, or nil
 // when s keeps every rule. The rules are in the docblock of Script.Validate. For an
-// Action that is not Valid, problems returns that problem alone, because the other
+// Action that IsValid refuses, problems returns that problem alone, because the other
 // rules depend on the action.
 func (s Step) problems(t Transfer) []error {
-	if !s.Action.Valid() {
+	if !s.Action.IsValid() {
 		return []error{fmt.Errorf("the action %v is not valid", s.Action)}
 	}
 	var problems []error
@@ -129,7 +120,7 @@ type Script struct {
 //
 //   - The script has at least one step.
 //   - The script has one abort path per step.
-//   - Each step has an Action that is Valid.
+//   - IsValid accepts the Action of each step.
 //   - The side of each step other than a Commit with the zero Side has a node in t.
 //   - An Add and a Drop have a Timeout above zero, and a Commit has no Timeout.
 //
