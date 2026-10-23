@@ -56,4 +56,6 @@
 // placement imports the standard library, the packages clock, epoch, errs, idmap, rand
 // and tag of go.thesmos.sh/core, and the packages partition, replication and shard of
 // sharder.
+//
+//dokimi:sentinel
 package placement

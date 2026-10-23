@@ -13,6 +13,11 @@ import (
 // headroom of capacity outside 0 to 1. It classifies as errs.Invalid.
 var ErrConfig = errs.WithClass(errors.New("constraint: invalid configuration"), errs.Invalid)
 
+// ErrUnknownOperator reports text that is not the spelling of an operator.
+// ParseOperator and Operator.UnmarshalText return an error that wraps it, so the decode
+// of a configuration with such text fails with it. It classifies as errs.Invalid.
+var ErrUnknownOperator = errs.WithClass(errors.New("constraint: unknown operator"), errs.Invalid)
+
 // ErrCapacity reports a move that puts a node above its capacity on a metric. It
 // classifies as errs.Conflict.
 var ErrCapacity = errs.WithClass(errors.New("constraint: the node is above its capacity"), errs.Conflict)

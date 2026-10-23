@@ -67,4 +67,6 @@
 //
 // planner imports the standard library, the packages errs, idmap, rand and task of
 // go.thesmos.sh/core, and the packages placement and shard of sharder.
+//
+//dokimi:sentinel
 package planner

@@ -12,10 +12,7 @@ import (
 	"go.thesmos.sh/sharder/placement/planner"
 )
 
-// errorPrefix starts the text of every error of package planner.
-const errorPrefix = "planner: "
-
-// TestErrors checks the class and the text of the sentinel error of package planner.
+// TestErrors checks the class of the sentinel error of package planner.
 func TestErrors(t *testing.T) {
 	t.Parallel()
 
@@ -25,12 +22,6 @@ func TestErrors(t *testing.T) {
 		t.Run("classifies as Invalid", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, errs.Classify(planner.ErrConfig), errs.Invalid, "ErrConfig must classify as Invalid")
-		})
-
-		t.Run("starts its text with the package's name", func(t *testing.T) {
-			t.Parallel()
-			assert.HasPrefix(t, planner.ErrConfig.Error(), errorPrefix,
-				"the text of ErrConfig must start with the name of the package")
 		})
 	})
 }

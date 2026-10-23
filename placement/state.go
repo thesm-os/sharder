@@ -358,7 +358,7 @@ func (st *State) Desired() int {
 //
 // Zero alloc.
 func (st *State) Max(r shard.Role) int {
-	if !r.Valid() {
+	if !r.IsValid() {
 		return 0
 	}
 	return st.max[r]
@@ -417,7 +417,7 @@ func (st *State) OnNode(n shard.NodeID) []shard.ID {
 // Zero alloc.
 func (st *State) RoleCount(n shard.NodeID, r shard.Role) int {
 	x, ok := st.nodeIndex[n]
-	if !ok || !r.Valid() {
+	if !ok || !r.IsValid() {
 		return 0
 	}
 	return int(st.nodes[x].roles[r])
@@ -429,7 +429,7 @@ func (st *State) RoleCount(n shard.NodeID, r shard.Role) int {
 //
 // Zero alloc.
 func (st *State) RoleTotal(r shard.Role) int {
-	if !r.Valid() {
+	if !r.IsValid() {
 		return 0
 	}
 	return st.total[r]
@@ -518,7 +518,7 @@ func (st *State) PeakCount(n shard.NodeID) int {
 // Zero alloc.
 func (st *State) PeakRoleCount(n shard.NodeID, r shard.Role) int {
 	x, ok := st.nodeIndex[n]
-	if !ok || !r.Valid() {
+	if !ok || !r.IsValid() {
 		return 0
 	}
 	return int(st.nodes[x].peakRoles[r])
@@ -693,7 +693,7 @@ func (st *State) Apply(m Move) error {
 	if m.From == m.To {
 		return fmt.Errorf("%w: the move of shard %v has the From %q and the same To", ErrMove, m.Shard, m.From)
 	}
-	if !m.Role.Valid() {
+	if !m.Role.IsValid() {
 		return fmt.Errorf("%w: the role %v is not valid", ErrMove, m.Role)
 	}
 	from := -1
@@ -931,7 +931,7 @@ func (st *State) checkReplicas(id shard.ID, replicas []shard.Replica) error {
 		if r.Node == "" {
 			return fmt.Errorf("%w: a replica of shard %v has no node", ErrInput, id)
 		}
-		if !r.Role.Valid() {
+		if !r.Role.IsValid() {
 			return fmt.Errorf("%w: a replica of shard %v has the role %v, which is not valid", ErrInput, id, r.Role)
 		}
 		if slices.ContainsFunc(replicas[:i], func(o shard.Replica) bool { return o.Node == r.Node }) {
@@ -1011,7 +1011,7 @@ func (st *State) indexTransitions() error {
 		}
 		st.shards[i].frozen = true
 		//dokimi:mutate-skip ror-boundary: the keys of a map differ, so two IDs never compare equal
-		if !f.Role.Valid() && (invalid.IsZero() || id.Compare(invalid) < 0) {
+		if !f.Role.IsValid() && (invalid.IsZero() || id.Compare(invalid) < 0) {
 			invalid = id
 		}
 	}

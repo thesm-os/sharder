@@ -3,8 +3,6 @@
 
 package constraint
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=Operator -linecomment -output=labels.string_gen.go
-
 import (
 	"errors"
 	"fmt"
@@ -20,17 +18,20 @@ const LabelsName shard.StrategyName = "labels"
 // Operator is the comparison of a Rule between the value of a label of a node and the
 // values of the rule.
 //
-// The zero Operator is not Valid.
+// [Operator.IsValid] refuses the zero Operator.
 //
 // # Encoding
 //
-// [Operator.String] returns the spelling of an operator, such as "notIn", and the
-// form "Operator(n)" for a value that is not Valid. The text methods write and read
-// the spelling, so encoding/json writes an Operator as a string.
+// [Operator.String] returns the spelling of an operator, such as "notIn", and the form
+// "Operator(n)" for any other value. [ParseOperator] returns the operator of a spelling.
+// The text methods write and read the spelling, so encoding/json writes an Operator as a
+// string.
 //
 // # Concurrency
 //
 // An Operator is a comparable value.
+//
+//dokimi:enum text=comment
 type Operator uint8
 
 const (
@@ -44,37 +45,6 @@ const (
 	// NotExists admits a node without the label.
 	NotExists Operator = 4 // notExists
 )
-
-// Valid reports whether o is one of the four operators.
-func (o Operator) Valid() bool {
-	return o >= In && o <= NotExists
-}
-
-// MarshalText returns the spelling of o, such as "notIn".
-//
-// Error modes:
-//   - an error that wraps ErrConfig when o is not Valid.
-func (o Operator) MarshalText() ([]byte, error) {
-	if !o.Valid() {
-		return nil, fmt.Errorf("%w: operator %d", ErrConfig, uint8(o))
-	}
-	return []byte(o.String()), nil
-}
-
-// UnmarshalText sets o to the operator whose spelling is text. It leaves o unchanged
-// when it returns an error.
-//
-// Error modes:
-//   - an error that wraps ErrConfig when text is not the spelling of an operator.
-func (o *Operator) UnmarshalText(text []byte) error {
-	for v := In; v <= NotExists; v++ {
-		if string(text) == v.String() {
-			*o = v
-			return nil
-		}
-	}
-	return fmt.Errorf("%w: operator %q", ErrConfig, text)
-}
 
 // Rule is one rule of the constraint labels. A replica in Role may be on a node only
 // when the label Key of the node satisfies Operator with Values.
@@ -114,17 +84,17 @@ type LabelsConfig struct {
 //
 // Error modes:
 //   - an error that wraps ErrConfig for a rule without a key.
-//   - an error that wraps ErrConfig for a rule whose Operator is not Valid.
+//   - an error that wraps ErrConfig for a rule whose Operator IsValid refuses.
 //   - an error that wraps ErrConfig for a rule of In or NotIn without values, and for
 //     a rule of Exists or NotExists with values.
-//   - an error that wraps ErrConfig for a rule whose Role is not Valid.
+//   - an error that wraps ErrConfig for a rule whose Role IsValid refuses.
 func (c LabelsConfig) Validate() error {
 	var problems []error
 	for i, r := range c.Rules {
 		if r.Key == "" {
 			problems = append(problems, fmt.Errorf("%w: rule %d has no key", ErrConfig, i))
 		}
-		if !r.Operator.Valid() {
+		if !r.Operator.IsValid() {
 			problems = append(problems, fmt.Errorf("%w: rule %d has the operator %v", ErrConfig, i, r.Operator))
 		}
 		if (r.Operator == In || r.Operator == NotIn) && len(r.Values) == 0 {
@@ -133,7 +103,7 @@ func (c LabelsConfig) Validate() error {
 		if (r.Operator == Exists || r.Operator == NotExists) && len(r.Values) > 0 {
 			problems = append(problems, fmt.Errorf("%w: rule %d of %v has values", ErrConfig, i, r.Operator))
 		}
-		if !r.Role.Valid() {
+		if !r.Role.IsValid() {
 			problems = append(problems, fmt.Errorf("%w: rule %d has the role %v", ErrConfig, i, r.Role))
 		}
 	}

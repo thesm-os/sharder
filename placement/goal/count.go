@@ -40,12 +40,12 @@ type CountConfig struct {
 //
 // Error modes:
 //   - an error that wraps ErrConfig for a weight of shard.RoleNone, and for a weight
-//     of a role that is not Valid.
+//     of a role that is not valid.
 //   - an error that wraps ErrConfig for a weight that is negative or not finite.
 func (c CountConfig) Validate() error {
 	var problems []error
 	for _, r := range slices.Sorted(maps.Keys(c.RoleWeights)) {
-		if r == shard.RoleNone || !r.Valid() {
+		if r == shard.RoleNone || !r.IsValid() {
 			problems = append(problems, fmt.Errorf("%w: a weight of the role %v", ErrConfig, r))
 		}
 		if w := c.RoleWeights[r]; !(w >= 0) || math.IsInf(w, 1) {
@@ -124,14 +124,14 @@ func (g *Count) Cost(st *placement.State) float64 {
 }
 
 // Delta returns the change of the variance that m makes, without applying m. It
-// returns 0 for a role that is not Valid.
+// returns 0 for a role that is not valid.
 //
 // # Allocation contract
 //
 // Zero alloc.
 func (g *Count) Delta(st *placement.State, m placement.Move) float64 {
 	nodes := float64(len(st.Nodes()))
-	if m.From == m.To || nodes == 0 || !m.Role.Valid() {
+	if m.From == m.To || nodes == 0 || !m.Role.IsValid() {
 		return 0
 	}
 	w := g.weights[m.Role]

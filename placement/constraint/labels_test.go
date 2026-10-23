@@ -18,108 +18,14 @@ import (
 	"go.thesmos.sh/sharder/shard"
 )
 
-// The spellings of the operators, which configurations and telemetry contain.
-const (
-	spellIn        = "in"
-	spellNotIn     = "notIn"
-	spellExists    = "exists"
-	spellNotExists = "notExists"
-)
-
 // recordedRuleJSON pins the encoding of a rule of In for secondaries in the JSON of a
 // configuration.
 const recordedRuleJSON = `{"key":"region","values":["eu"],"operator":"in","role":"secondary"}`
 
-// TestLabels checks the operators, the validation of a LabelsConfig, NewLabels and the
-// moves that a Labels rejects.
+// TestLabels checks the JSON of a rule, the validation of a LabelsConfig, NewLabels and
+// the moves that a Labels rejects.
 func TestLabels(t *testing.T) {
 	t.Parallel()
-
-	t.Run("Operator", func(t *testing.T) {
-		t.Parallel()
-
-		spellings := []struct {
-			give constraint.Operator
-			want string
-		}{
-			{give: constraint.In, want: spellIn},
-			{give: constraint.NotIn, want: spellNotIn},
-			{give: constraint.Exists, want: spellExists},
-			{give: constraint.NotExists, want: spellNotExists},
-		}
-
-		t.Run("String", func(t *testing.T) {
-			t.Parallel()
-
-			for _, tt := range spellings {
-				t.Run("returns "+tt.want, func(t *testing.T) {
-					t.Parallel()
-					assert.Equal(t, tt.give.String(), tt.want, "String must return the spelling of the operator")
-				})
-			}
-		})
-
-		t.Run("Valid", func(t *testing.T) {
-			t.Parallel()
-
-			tests := []struct {
-				name string
-				give constraint.Operator
-				want bool
-			}{
-				{name: "reports false for the zero Operator", give: 0},
-				{name: "reports true for In", give: constraint.In, want: true},
-				{name: "reports true for NotExists", give: constraint.NotExists, want: true},
-				{name: "reports false for the operator after NotExists", give: constraint.NotExists + 1},
-			}
-			for _, tt := range tests {
-				t.Run(tt.name, func(t *testing.T) {
-					t.Parallel()
-					assert.Equal(t, tt.give.Valid(), tt.want, "Valid must report whether the operator is one of four")
-				})
-			}
-		})
-
-		t.Run("MarshalText", func(t *testing.T) {
-			t.Parallel()
-
-			for _, tt := range spellings {
-				t.Run("returns "+tt.want, func(t *testing.T) {
-					t.Parallel()
-					got, err := tt.give.MarshalText()
-					assert.NoError(t, err, "MarshalText must encode a valid operator")
-					assert.Equal(t, string(got), tt.want, "MarshalText must return the spelling")
-				})
-			}
-
-			t.Run("returns ErrConfig for an operator that is not valid", func(t *testing.T) {
-				t.Parallel()
-				_, err := constraint.Operator(0).MarshalText()
-				assert.ErrorIs(t, err, constraint.ErrConfig, "MarshalText must refuse the zero Operator")
-			})
-		})
-
-		t.Run("UnmarshalText", func(t *testing.T) {
-			t.Parallel()
-
-			for _, tt := range spellings {
-				t.Run("returns the operator of "+tt.want, func(t *testing.T) {
-					t.Parallel()
-					var got constraint.Operator
-					assert.NoError(t, got.UnmarshalText([]byte(tt.want)), "UnmarshalText must decode a spelling")
-					assert.Equal(t, got, tt.give, "UnmarshalText must return the operator of the spelling")
-				})
-			}
-
-			t.Run("returns ErrConfig for text that no operator has", func(t *testing.T) {
-				t.Parallel()
-				got := constraint.Exists
-				expect.ErrorIs(t, got.UnmarshalText([]byte("In")), constraint.ErrConfig,
-					"UnmarshalText must refuse a spelling in another case")
-				expect.Equal(t, got, constraint.Exists, "UnmarshalText must leave the operator unchanged")
-			})
-		})
-	})
 
 	t.Run("Rule", func(t *testing.T) {
 		t.Parallel()

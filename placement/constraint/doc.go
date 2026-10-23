@@ -38,9 +38,9 @@
 //
 // # Errors
 //
-// [ErrConfig] classifies as errs.Invalid. [ErrCapacity], [ErrLabels], [ErrIsolation],
-// [ErrDrain], [ErrMaxPerNode] and [ErrMatchLabel] classify as errs.Conflict, because a
-// later state can admit the move.
+// [ErrConfig] and [ErrUnknownOperator] classify as errs.Invalid. [ErrCapacity],
+// [ErrLabels], [ErrIsolation], [ErrDrain], [ErrMaxPerNode] and [ErrMatchLabel] classify
+// as errs.Conflict, because a later state can admit the move.
 //
 // # Concurrency
 //
@@ -55,4 +55,6 @@
 //
 // constraint imports the standard library, the package errs of go.thesmos.sh/core,
 // and the packages placement and shard of sharder.
+//
+//dokimi:sentinel
 package constraint

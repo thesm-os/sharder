@@ -31,13 +31,13 @@ type MaxPerNodeConfig struct {
 //
 // Error modes:
 //   - an error that wraps ErrConfig when Max is below 1.
-//   - an error that wraps ErrConfig when Role is not Valid.
+//   - an error that wraps ErrConfig when Role is not valid.
 func (c MaxPerNodeConfig) Validate() error {
 	var problems []error
 	if c.Max < 1 {
 		problems = append(problems, fmt.Errorf("%w: max %d is below 1", ErrConfig, c.Max))
 	}
-	if !c.Role.Valid() {
+	if !c.Role.IsValid() {
 		problems = append(problems, fmt.Errorf("%w: the role %v is not valid", ErrConfig, c.Role))
 	}
 	return errors.Join(problems...)
