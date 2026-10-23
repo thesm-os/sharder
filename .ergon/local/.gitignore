@@ -12,3 +12,6 @@ vendor/
 
 # Agents
 superpowers/
+
+# The state directory of a dokimi run, whose manifest is not committed
+.dokimi/

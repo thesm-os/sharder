@@ -236,7 +236,7 @@ go:
   paths: [./...]
   # The steps that check-go runs, in order: lint, test, race, fuzz, bench, mutate, generate or
   # audit.
-  check: [lint, test, race, audit]
+  check: [lint, test, race, generate, audit]
   # The steps that nightly.yml runs on its schedule, fuzz, bench or mutate, each in a job of its own
   # on Linux, mapped to the limit of that job in minutes.
   nightly:
@@ -289,7 +289,7 @@ go:
   # generate of check, runs the same and fails when the run changes a tracked file or writes a file
   # that git does not track. An empty command removes both targets.
   generate:
-    command: [go, generate]
+    command: [go, run, go.dokimi.dev/dokimi/cmd/dokimi@main, run]
     args: []
   # audit-go runs govulncheck with args in every module.
   audit:

@@ -94,8 +94,8 @@
     {
       "path": ".gitignore",
       "producer": "common",
-      "local": "b43073beff5346f5b5ce10aceabff9a014d8a747a99e978186232f133d5a076c",
-      "sha256": "bc1f0f9d02d0f20a8bcf69a2d8d275c38e2d780169087d9d0fa4d5b83ef3d4a3"
+      "local": "aee79607bfd258b973e4944ec08d2becb2403bd59d431f1b4788815cd5f7b807",
+      "sha256": "704066ffaa629d7ffcb7feeda138c5904a111ba78cf77527320f838c497c69b7"
     },
     {
       "path": ".golangci.yml",
@@ -131,7 +131,7 @@
     {
       "path": "Makefile",
       "producer": "common",
-      "sha256": "df09dec4c3ed2e4f321a560ea5ef40becf5244242ee2ca5b7e8a6cca4784318e"
+      "sha256": "9b7693037ee8a07a1d6945483c939179e259475f6b3242a4f4ffac920ce76fb0"
     }
   ],
   "settings": {

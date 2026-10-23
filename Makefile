@@ -93,7 +93,7 @@ GO_BENCH_ARGS ?= -benchmem -cpu=1,4
 GO_MUTATE_WORKERS ?= 1
 GO_MUTATE_TIMEOUT ?= 0s
 GO_MUTATE_ARGS ?= -confirm
-GO_GENERATE_COMMAND ?= go generate
+GO_GENERATE_COMMAND ?= go run go.dokimi.dev/dokimi/cmd/dokimi@main run
 GO_GENERATE_ARGS ?=
 GO_AUDIT_ARGS ?=
 
@@ -154,4 +154,4 @@ verify-generate-go: ## Fail when the generators of a module change a file of the
 audit-go: ## Scan every Go module for known vulnerabilities that its code reaches
 	@$(GO) list -m -f '{{.Dir}}' | { status=0; while IFS= read -r dir; do echo "govulncheck $$dir"; \
 		$(GOVULNCHECK) -C "$$dir" $(GO_AUDIT_ARGS) $(GO_PATHS) || status=1; done; exit $$status; }
-check-go: lint-go test-go race-go audit-go ## Run the gate of Go
+check-go: lint-go test-go race-go verify-generate-go audit-go ## Run the gate of Go

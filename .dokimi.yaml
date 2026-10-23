@@ -1,0 +1,9 @@
+# Copyright ThesmOS B.V. 2026
+# SPDX-License-Identifier: BUSL-1.1
+
+version: 1
+# A run reports every warning as an error, so generate-go and verify-generate-go fail on a warning.
+strict: true
+# The Go backend wraps each line of code at the width of golines in the lint of the repository.
+policies:
+  golang.width: "120"
