@@ -52,4 +52,6 @@
 // packages config, shard, partition, placement, replication, ownership and handoff of
 // sharder. It also imports the built-in strategies in the subpackages of partition,
 // placement and handoff.
+//
+//dokimi:sentinel
 package builtin
