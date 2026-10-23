@@ -27,8 +27,8 @@ import (
 // Fallback is field 7, OldEpoch is field 8, NewEpoch is field 9, AbortEpoch is field
 // 10, Phase is field 11, Step is field 12, Failed is field 13, and Started is field 14.
 // The codec returns an error that wraps shard.ErrUnknownPhase for a Phase other than
-// zero that is not Valid, and one that wraps shard.ErrUnknownRole for an endpoint whose
-// Role is not Valid.
+// zero that is not valid, and one that wraps shard.ErrUnknownRole for an endpoint whose
+// Role is not valid.
 //
 // # Concurrency
 //

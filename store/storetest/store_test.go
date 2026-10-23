@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/prop"
 	"go.thesmos.sh/core/clock/fake"
 
 	"go.thesmos.sh/sharder/shard"
@@ -31,8 +30,7 @@ var points = map[storetest.Loss]memory.Point{
 	storetest.LoseReply:   memory.PointCommitAck,
 }
 
-// TestStore runs the suite against the memory store with every option, and checks Valid
-// and String of every Loss.
+// TestStore runs the suite against the memory store with every option.
 func TestStore(t *testing.T) {
 	t.Parallel()
 
@@ -52,52 +50,6 @@ func TestStore(t *testing.T) {
 				storetest.WithDelete(func(tb assert.TB, s store.Store, sc shard.Scope) { memoryOf(tb, s).Delete(sc) }),
 				storetest.WithCompact(func(tb assert.TB, s store.Store) { memoryOf(tb, s).Compact() }),
 			)
-		})
-	})
-
-	t.Run("Loss", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("Valid", func(t *testing.T) {
-			t.Parallel()
-
-			t.Run("reports true for LoseRequest and LoseReply", func(t *testing.T) {
-				t.Parallel()
-				prop.True(t, storetest.Loss.Valid, "every constant of Loss must be Valid",
-					prop.Using(prop.SampledFrom(storetest.LoseRequest, storetest.LoseReply)))
-			})
-
-			t.Run("reports false for the zero Loss", func(t *testing.T) {
-				t.Parallel()
-				assert.False(t, storetest.Loss(0).Valid(), "the zero Loss must not be Valid")
-			})
-
-			t.Run("reports false for a value above LoseReply", func(t *testing.T) {
-				t.Parallel()
-				prop.False(t, storetest.Loss.Valid, "a value above the last constant must not be Valid",
-					prop.Using(prop.Integer[storetest.Loss](storetest.LoseReply+1, 255)))
-			})
-		})
-
-		t.Run("String", func(t *testing.T) {
-			t.Parallel()
-
-			tests := []struct {
-				name string
-				give storetest.Loss
-				want string
-			}{
-				{name: "returns request for LoseRequest", give: storetest.LoseRequest, want: "request"},
-				{name: "returns reply for LoseReply", give: storetest.LoseReply, want: "reply"},
-				{name: "returns the number of the zero Loss", give: 0, want: "Loss(0)"},
-				{name: "returns the number of a value above LoseReply", give: storetest.LoseReply + 1, want: "Loss(3)"},
-			}
-			for _, tt := range tests {
-				t.Run(tt.name, func(t *testing.T) {
-					t.Parallel()
-					assert.Equal(t, tt.give.String(), tt.want, "String must return the spelling of the loss")
-				})
-			}
 		})
 	})
 }

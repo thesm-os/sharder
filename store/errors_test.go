@@ -12,10 +12,7 @@ import (
 	"go.thesmos.sh/sharder/store"
 )
 
-// errorPrefix is the prefix of the text of every error of package store.
-const errorPrefix = "store: "
-
-// TestErrors checks the class and the text of each sentinel error of package store.
+// TestErrors checks the class of each sentinel error of package store.
 func TestErrors(t *testing.T) {
 	t.Parallel()
 
@@ -35,12 +32,6 @@ func TestErrors(t *testing.T) {
 			t.Run("classifies as "+tt.want.String(), func(t *testing.T) {
 				t.Parallel()
 				assert.Equal(t, errs.Classify(tt.give), tt.want, "the sentinel must classify as its documented class")
-			})
-
-			t.Run("starts its text with the package's name", func(t *testing.T) {
-				t.Parallel()
-				assert.HasPrefix(t, tt.give.Error(), errorPrefix,
-					"the text of the sentinel must start with the name of the package")
 			})
 		})
 	}

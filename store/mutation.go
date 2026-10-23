@@ -28,7 +28,7 @@ import (
 // Applied is field 8, Forget is field 9, Reserve is field 10, Release is field 11,
 // Drain is field 12, Undrain is field 13, and Confirm is field 14. The codec returns the
 // error of the codec of a field whose value fails to encode, such as a placement with a
-// replica whose role is not Valid.
+// replica whose role is not valid.
 //
 // # Concurrency
 //

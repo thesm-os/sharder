@@ -20,6 +20,10 @@
 // goroutine of the case. They receive an assert.TB. Inside a property, that assert.TB is
 // the case, so a failure that they report fails the case.
 //
+// # Errors
+//
+// [ErrUnknownLoss] classifies as errs.Invalid.
+//
 // # Concurrency
 //
 // AssertStore runs its subtests in parallel, and each case opens its own store, so no
@@ -29,6 +33,8 @@
 //
 // storetest imports the standard library, go.dokimi.dev/assert and its packages expect,
 // history, prop and stateful, the packages coretest/epochtest, crypto, crypto/sha256,
-// epoch, id, page and version of go.thesmos.sh/core, and the packages budget,
+// epoch, errs, id, page and version of go.thesmos.sh/core, and the packages budget,
 // internal/streamtest, proposal, shard and store of go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package storetest

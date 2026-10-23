@@ -3,8 +3,6 @@
 
 package storetest
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=Loss -linecomment -output=store.string_gen.go
-
 import (
 	"bytes"
 	"cmp"
@@ -194,7 +192,7 @@ const (
 	lawTerm epoch.Epoch = 1
 	// highTerm is the term of the commit that raises the watermark of the law of terms.
 	highTerm epoch.Epoch = 7
-	// invalidPhase is a phase that is not Valid, so a transition with it does not encode.
+	// invalidPhase is a phase that is not valid, so a transition with it does not encode.
 	invalidPhase = shard.PhaseAborted + 1
 )
 
@@ -275,11 +273,13 @@ var (
 
 // Loss is the point at which a fault that [WithLostCommits] injects interrupts a commit.
 //
-// The zero Loss is not Valid.
+// [Loss.IsValid] refuses the zero Loss.
 //
 // # Concurrency
 //
 // A Loss is a comparable value.
+//
+//dokimi:enum text=comment
 type Loss uint8
 
 // The points at which a fault interrupts a commit.
@@ -290,15 +290,6 @@ const (
 	// its receipt remain.
 	LoseReply Loss = 2 // reply
 )
-
-// Valid reports whether l is LoseRequest or LoseReply.
-//
-// # Allocation contract
-//
-// Zero alloc.
-func (l Loss) Valid() bool {
-	return l >= LoseRequest && l <= LoseReply
-}
 
 // config is the result of the Options of one run of AssertStore.
 type config struct {

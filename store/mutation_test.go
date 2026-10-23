@@ -173,7 +173,7 @@ func TestMutation(t *testing.T) {
 				"Digest must return the SHA-256 digest of the recorded encoding")
 		})
 
-		t.Run("returns ErrUnknownRole for a placement with a replica whose Role is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownRole for a placement with a replica whose Role is not valid", func(t *testing.T) {
 			t.Parallel()
 			m := store.Mutation{Put: []shard.Placement{{Replicas: []shard.Replica{{Role: shard.RoleLearner + 1}}}}}
 			_, err := m.Digest()

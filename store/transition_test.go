@@ -82,7 +82,7 @@ var (
 )
 
 // TestTransition checks the recorded encodings of a Transition and an Endpoint, and the
-// refusal of a phase or a role that is not Valid.
+// refusal of a phase or a role that is not valid.
 func TestTransition(t *testing.T) {
 	t.Parallel()
 
@@ -98,14 +98,14 @@ func TestTransition(t *testing.T) {
 				"AppendBinary must write fields 1 to 14 as recorded")
 		})
 
-		t.Run("returns ErrUnknownPhase for a Phase that is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownPhase for a Phase that is not valid", func(t *testing.T) {
 			t.Parallel()
 			tr := store.Transition{Phase: shard.PhaseAborted + 1}
 			_, err := tr.AppendBinary(nil)
 			assert.ErrorIs(t, err, shard.ErrUnknownPhase, "AppendBinary must refuse a phase outside the enumeration")
 		})
 
-		t.Run("returns ErrUnknownRole for an endpoint whose Role is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownRole for an endpoint whose Role is not valid", func(t *testing.T) {
 			t.Parallel()
 			tr := store.Transition{To: store.Endpoint{Role: shard.RoleLearner + 1}}
 			_, err := tr.AppendBinary(nil)
@@ -125,7 +125,7 @@ func TestTransition(t *testing.T) {
 			assert.Equal(t, got, recordedTransition, "UnmarshalBinary must return the recorded Transition")
 		})
 
-		t.Run("returns ErrUnknownPhase for an encoded Phase that is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownPhase for an encoded Phase that is not valid", func(t *testing.T) {
 			t.Parallel()
 			data, err := hex.DecodeString(unknownPhaseHex)
 			assert.NoError(t, err, "the encoding must be hexadecimal")
