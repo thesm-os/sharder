@@ -1,0 +1,70 @@
+{
+  "store": 1,
+  "definition": "8.0.0",
+  "property": "a controller keeps the safety rules of the core under every sequence of events",
+  "identity": {
+    "assertion": "in-range",
+    "file": "controller_test.go",
+    "line": 801
+  },
+  "choices": "prop1:AAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAABAAEAAAAAAAAAAQAAAAAAAAAA",
+  "counterexample": [
+    {
+      "label": "present",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "present",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "present",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "present",
+      "value": {
+        "type": "bool",
+        "value": true
+      }
+    },
+    {
+      "label": "present",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "present",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "label": "present",
+      "value": {
+        "type": "bool",
+        "value": true
+      }
+    },
+    {
+      "label": "present",
+      "value": {
+        "type": "bool",
+        "value": false
+      }
+    }
+  ],
+  "found": "2026-10-13"
+}

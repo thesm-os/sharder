@@ -16,6 +16,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/epoch"
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
 
 	"go.thesmos.sh/sharder/budget"
@@ -329,6 +330,85 @@ func TestProposal(t *testing.T) {
 				ErrorIs(constraint.ErrMaxPerNode, "the error must wrap the error of the constraint")
 			expect.Equal(t, h.placements(t)[sid].Replicas, []shard.Replica{{Node: nodeA.ID, Role: shard.RolePrimary}},
 				"the controller must not move a shard for a move that it refuses")
+		})
+
+		t.Run("returns ErrBudget for a move of an available writer at maxUnavailable zero", func(t *testing.T) {
+			t.Parallel()
+			h := served(t, unavailable)
+			sid := h.shardOn(t, nodeA.ID)
+			p := proposalOf(t, 1, proposal.Move, h.placements(t)[sid].Epoch,
+				proposal.MoveArgs{Node: nodeB.ID, Shard: sid})
+			got := h.submit(t, &p, operator)
+			expect.That(t, got.Err).ErrorIs(control.ErrBudget, "the budget must refuse the move of an available writer")
+			expect.Equal(
+				t,
+				errs.Classify(got.Err),
+				errs.Conflict,
+				"the refusal of the budget must classify as Conflict",
+			)
+			expect.Equal(t, h.placements(t)[sid].Replicas, []shard.Replica{{Node: nodeA.ID, Role: shard.RolePrimary}},
+				"the controller must not move a shard for a move that the budget refuses")
+		})
+
+		t.Run("returns ErrStale for a move to a node that the moves of concurrent passes fill", func(t *testing.T) {
+			t.Parallel()
+			h := served(t, paired)
+			h.view(t, nodeA, nodeB, nodeC)
+			h.paused = true
+			start := len(h.plans)
+			calls := make([]machine.ReplyToken, 0, 3)
+			for i, sid := range h.shardIDs(t)[:3] {
+				p := proposalOf(t, byte(i+1), proposal.Move, h.placements(t)[sid].Epoch,
+					proposal.MoveArgs{Node: nodeC.ID, Shard: sid})
+				call := h.submitCall(&p, operator)
+				h.step(t, call)
+				calls = append(calls, call.Reply)
+			}
+			for _, plan := range slices.Clone(h.plans[start:]) {
+				h.pass(t, plan.Token)
+			}
+			expect.Nil(t, replyTo[protocol.Receipt](t, h, calls[0]).Err, "the first move must fit node C")
+			expect.Nil(t, replyTo[protocol.Receipt](t, h, calls[1]).Err, "the second move must fit node C")
+			expect.That(t, replyTo[protocol.Receipt](t, h, calls[2]).Err).
+				ErrorIs(control.ErrStale, "the controller must refuse a move that the earlier moves made infeasible").
+				ErrorIs(constraint.ErrMaxPerNode, "the error must wrap the error of the constraint")
+			expect.Equal(t, h.writers(t)[nodeC.ID], 2, "node C must host two writers at most")
+		})
+
+		t.Run("returns ErrCall for a move to a node that the transitions in flight fill", func(t *testing.T) {
+			t.Parallel()
+			h := served(t, paired)
+			h.view(t, nodeA, nodeB, nodeC)
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Callback); return ok }
+			got := make([]error, 0, 3)
+			for i, sid := range h.shardIDs(t)[:3] {
+				p := proposalOf(t, byte(i+1), proposal.Move, h.placements(t)[sid].Epoch,
+					proposal.MoveArgs{Node: nodeC.ID, Shard: sid})
+				got = append(got, h.submit(t, &p, operator).Err)
+			}
+			expect.Nil(t, got[0], "the first move must fit node C")
+			expect.Nil(t, got[1], "the second move must fit node C")
+			expect.That(t, got[2]).
+				ErrorIs(control.ErrCall, "the pass of the third move must count the transitions to node C").
+				ErrorIs(constraint.ErrMaxPerNode, "the error must wrap the error of the constraint")
+			expect.Length(t, h.state(t).Transitions, 2, "the third move must not start a transition")
+		})
+
+		t.Run("returns ErrCall for a move whose admission does not build", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			sid := h.shardOn(t, nodeA.ID)
+			h.paused = true
+			p := proposalOf(t, 1, proposal.Move, h.placements(t)[sid].Epoch,
+				proposal.MoveArgs{Node: nodeB.ID, Shard: sid})
+			call := h.submitCall(&p, operator)
+			h.step(t, call)
+			pass := h.plans[len(h.plans)-1].Token
+			h.view(t, nodeA, nodeB, nameless)
+			h.pass(t, pass)
+			expect.That(t, replyTo[protocol.Receipt](t, h, call.Reply).Err).
+				ErrorIs(control.ErrCall, "the controller must refuse a move whose admission does not build").
+				ErrorIs(placement.ErrInput, "the error must wrap the error of the state")
 		})
 
 		t.Run("takes a proposal with the ID of a move that it refused", func(t *testing.T) {

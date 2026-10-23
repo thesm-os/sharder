@@ -50,4 +50,10 @@ var (
 	// proposal later. It classifies as errs.Transient.
 	ErrBusy = errs.WithClass(errors.New("control: the bounds of the controller refuse the move now"),
 		errs.Transient)
+
+	// ErrBudget reports a move proposal that the budget of the spec does not admit, such as
+	// the move of an available writer under a maxUnavailable of zero. The caller raises the
+	// budget with a spec proposal, or waits until the writer is unavailable. It classifies
+	// as errs.Conflict.
+	ErrBudget = errs.WithClass(errors.New("control: the budget does not admit the move"), errs.Conflict)
 )

@@ -56,7 +56,12 @@
 //
 // The Controller seeds the source of randomness of each pass from its placement.Snapshot,
 // so a recorded pass replays. It starts the move of each shard of a plan in the order of
-// the IDs of the shards. The source of a move has the incarnation that its placement
+// the IDs of the shards. It admits each move first, against one placement.State of the step
+// that takes the plan: the committed assignment, every transition of the engine, and the
+// moves that the step has admitted. A transition counts on its destination and on its
+// fallback there, so the constraints of the spec apply to every outcome of the transitions.
+// A move that the admission refuses waits for a later pass. The source of a move has the
+// incarnation that its placement
 // records for its writer. The destination has the incarnation of its node in the view. The
 // fallback of a move is its source when the view has the node of the source at that
 // incarnation, the node does not drain, and its replica of the shard has no fault. The
@@ -100,10 +105,12 @@
 //
 // The drain roles of the support matrix are every role of its model, so an admitted
 // negotiable disruption does not make a replica unavailable. maxUnavailable bounds the
-// moves instead. A move makes the one replica of its shard unavailable, so maxUnavailable
-// admits it above zero. A move of a writer that the view does not have at the incarnation
-// of its placement makes nothing unavailable. Neither does a move off a node that an
-// admitted reservation covers. The budget admits both.
+// moves instead, the moves of the passes and the move proposals alike. A move makes the one
+// replica of its shard unavailable, so maxUnavailable admits it above zero. A move of a
+// writer that has failed makes nothing unavailable: the view does not have its node at the
+// incarnation of its placement, or that node incarnation reports its tenure with a permanent
+// fault. Neither does a move off a node that an admitted reservation covers. The budget
+// admits both.
 //
 // # Proposals
 //
@@ -111,7 +118,9 @@
 // a proposal whose Expires has passed, whose ID the scope has applied, or whose Base the
 // state has moved past. A drain and an undrain commit the manual drain of their node with
 // the record of the proposal. For a move, the Controller runs a pass that checks the target
-// against the constraints of the spec, and the batch with the first record of the
+// against the constraints of the spec, and then admits the move as it admits the moves of
+// a pass. A move that the budget refuses fails with [ErrBudget], and a move that the
+// admission refuses fails with [ErrStale]. The batch with the first record of the
 // transition records the proposal. The pass of an explain returns the cost of each tier of
 // the goals and the violations of the replicas of its shard, and the Controller commits
 // nothing for it. A spec proposal must propose the version after the accepted spec of the
@@ -136,8 +145,8 @@
 //
 // # Errors
 //
-// [ErrConfig], [ErrSpec] and [ErrCall] classify as errs.Invalid. [ErrStale] and
-// [ErrApplied] classify as errs.Conflict. [ErrNotServing] and [ErrBusy] classify as
+// [ErrConfig], [ErrSpec] and [ErrCall] classify as errs.Invalid. [ErrStale], [ErrApplied]
+// and [ErrBudget] classify as errs.Conflict. [ErrNotServing] and [ErrBusy] classify as
 // errs.Transient, and [ErrDenied] classifies as errs.Denied.
 //
 // # Concurrency

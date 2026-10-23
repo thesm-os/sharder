@@ -165,6 +165,58 @@ func (*explainer) Schedule() placement.Schedule {
 	return placement.Schedule{}
 }
 
+// admission is the state against which the controller admits the moves of one step: the
+// committed assignment, every transition of the engine, and the moves that the step has
+// admitted. A transition counts on its destination and on its fallback, and an admitted move
+// counts on its source and on its destination. Each constraint is then true for every
+// outcome of the transitions.
+type admission struct {
+	// in is the input of the state. Its Transitions are the transitions of the engine.
+	in *placement.Input
+	// st is the state of in, with the moves that the step has admitted applied.
+	st *placement.State
+}
+
+// admit checks the move of the writer from of the placement cur to the replica to against
+// a, and returns nil when the constraints cs admit it. An admitted move counts in a for the
+// moves after it. admit returns nil for a shard with a transition in flight and leaves a
+// unchanged, because the engine refuses the move of such a shard.
+//
+// Error modes:
+//   - an error that wraps ErrStale for a destination that does not accept replicas, and
+//     for a destination with a fault of the shard.
+//   - an error that wraps ErrStale and the error of the constraint of cs that refuses the
+//     move.
+func (a *admission) admit(cs []placement.Constraint, cur *shard.Placement, from, to shard.Replica) error {
+	sid := cur.Shard
+	if _, ok := a.st.InFlight(sid); ok {
+		return nil
+	}
+	if slices.Contains(a.in.Faults[sid], to.Node) {
+		return fmt.Errorf("%w: node %s has a fault of shard %v", ErrStale, to.Node, sid)
+	}
+	m := placement.Move{Shard: sid, To: to.Node, Role: to.Role}
+	if slices.Contains(a.st.Replicas(sid), from) {
+		m.From = from.Node
+	}
+	for _, c := range cs {
+		if err := c.Check(a.st, m); err != nil {
+			return fmt.Errorf(
+				"%w: constraint %s refuses shard %v on node %s: %w",
+				ErrStale,
+				c.Name(),
+				sid,
+				to.Node,
+				err,
+			)
+		}
+	}
+	if err := a.st.Apply(m); err != nil {
+		return fmt.Errorf("%w: %w", ErrStale, err)
+	}
+	return nil
+}
+
 // seedDomain is the domain of the hash that derives the seed of a pass from its snapshot.
 const seedDomain = "sharder.pass.seed"
 
@@ -265,7 +317,7 @@ func (c *Controller) input() *placement.Input {
 	}
 	in.Rand = seed(&in.Snapshot)
 	for sid, t := range a.transitions.All() {
-		in.Transitions[sid] = placement.InFlight{To: t.To.Node, Fallback: t.Fallback.Node}
+		in.Transitions[sid] = placement.InFlight{To: t.To.Node, Fallback: t.Fallback.Node, Role: t.To.Role}
 	}
 	for _, n := range c.members.view.Nodes {
 		if c.budget.draining(n.ID) {
@@ -350,9 +402,21 @@ func (c *Controller) placed(p *plan, ev *machine.Planned, out []machine.Effect) 
 // the shards, and commits the next batch of the engine. It skips a target on a node that
 // drains, because the drain started after the input of the pass. The commit of the drain
 // starts the next pass. The budget defers a move that makes more replicas of its shard
-// unavailable than maxUnavailable allows. The bounds of the engine refuse a move above
-// them, and the end of a transition then starts a pass.
+// unavailable than maxUnavailable allows. The admission defers a move that the current
+// state refuses, such as a move that the constraints of the spec refuse once the moves and
+// the transitions after the input of the pass count. The bounds of the engine refuse a
+// move above them, and the end of a transition then starts a pass.
 func (c *Controller) moves(pl *placement.Plan, out []machine.Effect) ([]machine.Effect, error) {
+	var adm *admission
+	if len(pl.Targets) > 0 {
+		var err error
+		if adm, err = c.admission(); err != nil {
+			c.logger.LogAttrs(context.Background(), slog.LevelError, "control: the admission of a plan failed",
+				slog.Any(attrError, err))
+			// A plan without targets does not start a move.
+			pl = &placement.Plan{}
+		}
+	}
 	var fault error
 	refused := false
 	for _, sid := range slices.SortedFunc(maps.Keys(pl.Targets), shard.ID.Compare) {
@@ -366,6 +430,12 @@ func (c *Controller) moves(pl *placement.Plan, out []machine.Effect) ([]machine.
 			continue
 		}
 		if !c.admits(&cur, from) {
+			c.metrics.deferred.Add(context.Background(), 1)
+			continue
+		}
+		if err := adm.admit(c.spec.constraints, &cur, from, to); err != nil {
+			c.logger.LogAttrs(context.Background(), slog.LevelWarn, "control: the admission refuses a move",
+				slog.String(attrShard, sid.String()), slog.Any(attrError, err))
 			c.metrics.deferred.Add(context.Background(), 1)
 			continue
 		}
@@ -387,6 +457,34 @@ func (c *Controller) moves(pl *placement.Plan, out []machine.Effect) ([]machine.
 	}
 	c.passes.refused = refused
 	return c.batchAfter(out, fault)
+}
+
+// admission returns the state against which the controller admits the moves of one step:
+// the input of a pass over the committed state, with every transition of the engine in
+// place of the committed transitions. A transition that the engine has started and not
+// committed counts too. The input of a pass keeps the committed transitions alone, so a
+// recorded input replays its plan.
+//
+// Error modes:
+//   - an error that wraps the error of placement.NewState.
+func (c *Controller) admission() (*admission, error) {
+	in := c.input()
+	//dokimi:mutate-skip sbr-delete: the engine has every committed transition from its start until the commit of its end, so its records replace each committed one
+	clear(in.Transitions)
+	recs := c.engine.Records(nil)
+	for i := range recs {
+		rec := &recs[i]
+		in.Transitions[rec.Operation.Shard] = placement.InFlight{
+			To:       rec.To.Node,
+			Fallback: rec.Fallback.Node,
+			Role:     rec.To.Role,
+		}
+	}
+	st, err := placement.NewState(in)
+	if err != nil {
+		return nil, fmt.Errorf("control: the state of an admission: %w", err)
+	}
+	return &admission{in: in, st: st}, nil
 }
 
 // move returns the move of the writer from of the placement cur to the replica to. The
@@ -413,14 +511,12 @@ func (c *Controller) move(cur *shard.Placement, from, to shard.Replica) engine.M
 }
 
 // count adds a started move of the writer from of the placement cur to the counter of its
-// reason. The reason is a failure for a missing writer, a writer whose incarnation the view
-// does not have and a faulted replica. It is a drain for a draining node, and a rebalance
-// otherwise.
+// reason. The reason is a failure for a missing writer and a writer that failed. It is a
+// drain for a draining node, and a rebalance otherwise.
 func (c *Controller) count(cur *shard.Placement, from shard.Replica) {
 	ctx := context.Background()
-	mb, live := c.members.at(from.Node, cur.Incarnation)
 	switch {
-	case !live || mb.faulted(cur.Shard):
+	case c.failed(cur, from):
 		c.metrics.failure.Add(ctx, 1)
 	case c.budget.draining(from.Node):
 		c.metrics.drain.Add(ctx, 1)
@@ -445,7 +541,12 @@ func (c *Controller) moved(s *submitted, ev *machine.Planned, out []machine.Effe
 		err = fmt.Errorf("%w: shard %v moved during the pass of the proposal", ErrStale, s.shard)
 	case c.budget.draining(to.Node):
 		err = fmt.Errorf("%w: node %s started to drain during the pass of the proposal", ErrStale, to.Node)
+	case !c.admits(&cur, from):
+		err = fmt.Errorf("%w: the move of shard %v makes its available writer unavailable", ErrBudget, s.shard)
 	default:
+		if err = c.admitted(&cur, from, to); err != nil {
+			break
+		}
 		mv := c.move(&cur, from, to)
 		var started bool
 		started, fault = c.engine.Start(&mv)
@@ -466,6 +567,20 @@ func (c *Controller) moved(s *submitted, ev *machine.Planned, out []machine.Effe
 		followup: followup{proposal: s.proposal.ID, to: s.to},
 	})
 	return c.batchAfter(out, fault)
+}
+
+// admitted returns nil when the admission of the step admits the move of a proposal: the
+// move of the writer from of the placement cur to the replica to.
+//
+// Error modes:
+//   - an error that wraps ErrCall and the error of the state of the admission.
+//   - the error of admission.admit.
+func (c *Controller) admitted(cur *shard.Placement, from, to shard.Replica) error {
+	adm, err := c.admission()
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrCall, err)
+	}
+	return adm.admit(c.spec.constraints, cur, from, to)
 }
 
 // explained takes the plan of the pass of an explain proposal, and replies with the

@@ -476,15 +476,20 @@ func (c *Controller) coveredNodes() int {
 // The move makes the writer unavailable until the transition ends. The model of the support
 // matrix has one replica per shard, so the move makes its shard unavailable, and
 // maxUnavailable admits it above zero. A move of a writer that is unavailable already does
-// not count: the view does not have its node at the incarnation of cur, or an admitted
-// reservation covers its node. A move that adds a replica has no source in the view, so it
-// does not count either.
+// not count: a writer that failed, or a writer on a node that an admitted reservation
+// covers. A move that adds a replica has no source in the view, so it does not count
+// either. The controller asks admits for the moves of its passes and for move proposals.
 func (c *Controller) admits(cur *shard.Placement, from shard.Replica) bool {
-	if *c.spec.budget.MaxUnavailable > 0 {
-		return true
-	}
-	_, live := c.members.at(from.Node, cur.Incarnation)
-	return !live || c.budget.covered(from.Node)
+	return *c.spec.budget.MaxUnavailable > 0 || c.failed(cur, from) || c.budget.covered(from.Node)
+}
+
+// failed reports whether the writer from of the placement cur has failed: the view does not
+// have its node at the incarnation of cur, or the last report of that node incarnation lists
+// its replica of the shard at the epoch of cur with a permanent fault. A report of another
+// tenure of the shard does not count.
+func (c *Controller) failed(cur *shard.Placement, from shard.Replica) bool {
+	mb, live := c.members.at(from.Node, cur.Incarnation)
+	return !live || mb.failed(cur.Shard, cur.Epoch)
 }
 
 // done ends a reservation for its owner or an operator. The controller replies once the

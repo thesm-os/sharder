@@ -32,6 +32,7 @@ func TestErrors(t *testing.T) {
 		{name: "ErrStale", err: control.ErrStale, class: errs.Conflict},
 		{name: "ErrApplied", err: control.ErrApplied, class: errs.Conflict},
 		{name: "ErrBusy", err: control.ErrBusy, class: errs.Transient},
+		{name: "ErrBudget", err: control.ErrBudget, class: errs.Conflict},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

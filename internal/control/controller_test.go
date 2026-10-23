@@ -143,6 +143,8 @@ const (
 	logPass      = "control: a pass failed"
 	logViolation = "control: a replica breaks a constraint"
 	logMove      = "control: the engine does not start a move"
+	logAdmission = "control: the admission of a plan failed"
+	logRefusal   = "control: the admission refuses a move"
 )
 
 // The nodes of the tests, each at its first incarnation.
@@ -430,11 +432,12 @@ type model struct {
 }
 
 // newModel returns the model of a controller that serves with a view of the nodes A and B,
-// whose first pass has placed every shard.
+// whose first pass has placed every shard. Its spec bounds each node to pairedMax
+// replicas.
 func newModel(c *prop.Case) *model {
 	m := &model{
 		c:         c,
-		h:         newHarness(c),
+		h:         newHarness(c, bounded),
 		reserved:  make(map[shard.ID]epoch.Epoch),
 		owners:    make(map[shard.ID]map[epoch.Epoch]shard.OperationID),
 		refusals:  make(map[shard.ID]map[shard.NodeID]epoch.Epoch),
@@ -664,19 +667,21 @@ func (m *model) outages(c *prop.Case) {
 // resumes the passes, undrains each drained node and ends the reservation of each
 // disruption. A node has a fault of a shard when its live incarnation refused an add of the
 // shard or reported the shard with a permanent fault. complete restarts every node for a
-// shard without a writer while every node has a fault of the shard, because a pass does not
-// place such a shard. It then passes success as the result of each pending callback and
-// ends each Timer of a retry, until neither remains, so the retries use up every lost commit
-// that a step armed. It ends each Timer of the interval of the passes last.
+// shard without a writer while every node has a fault of the shard or hosts pairedMax
+// shards, because a pass does not place such a shard, and an emergency pass does not move a
+// healthy replica to make room for it. It then passes success as the result of each pending
+// callback and ends each Timer of a retry, until neither remains, so the retries use up every
+// lost commit that a step armed. It ends each Timer of the interval of the passes last.
 func (m *model) complete(c *prop.Case) {
 	if m.outage {
 		m.h.st.EndOutage()
 		m.outage = false
 	}
 	restart := false
+	occupied := m.occupancy(c)
 	for sid, p := range m.h.placements(c) {
 		blocked := !slices.ContainsFunc(m.nodes, func(n shard.Node) bool {
-			return m.refusals[sid][n.ID] != n.Incarnation && !m.faulted[n.ID][sid]
+			return m.refusals[sid][n.ID] != n.Incarnation && !m.faulted[n.ID][sid] && len(occupied[n.ID]) < pairedMax
 		})
 		restart = restart || len(p.Replicas) == 0 && blocked
 	}
@@ -758,6 +763,9 @@ func (m *model) incomplete() bool {
 //   - The reserved epoch of a shard never falls.
 //   - A transition does not reserve an epoch of another transition.
 //   - A node of an admitted disruption hosts no replica.
+//   - A node hosts pairedMax shards at most. A shard counts on the node of its writer while
+//     the node has the incarnation of the placement, and on the destination and the
+//     fallback of its transition.
 //
 // The store cannot be read during an outage, so the checks of the scope wait for its end.
 func (m *model) invariant(c *prop.Case) {
@@ -771,6 +779,10 @@ func (m *model) invariant(c *prop.Case) {
 		expect.True(c, p.Epoch <= p.Reserved, "a placement must have reserved its epoch")
 		expect.True(c, p.Reserved >= m.reserved[sid], "the reserved epoch of a shard must never fall")
 		m.reserved[sid] = p.Reserved
+	}
+	for _, sids := range m.occupancy(c) {
+		expect.InRange(c, len(sids), 0, pairedMax,
+			"a node must host max-per-node shards at most, with the transitions that can end on it")
 	}
 	st := m.h.state(c)
 	for _, t := range st.Transitions {
@@ -800,6 +812,37 @@ func (m *model) invariant(c *prop.Case) {
 			}
 		}
 	}
+}
+
+// occupancy returns the shards that count on each node: the shard of each writer while its
+// node has the incarnation of the placement, and the shard of each transition on its
+// destination and on its fallback.
+func (m *model) occupancy(c *prop.Case) map[shard.NodeID]map[shard.ID]bool {
+	occupied := make(map[shard.NodeID]map[shard.ID]bool)
+	occupy := func(n shard.NodeID, sid shard.ID) {
+		if n == "" {
+			return
+		}
+		if occupied[n] == nil {
+			occupied[n] = make(map[shard.ID]bool)
+		}
+		occupied[n][sid] = true
+	}
+	for sid, p := range m.h.placements(c) {
+		for _, r := range p.Replicas {
+			live := slices.ContainsFunc(m.nodes, func(n shard.Node) bool {
+				return n.ID == r.Node && n.Incarnation == p.Incarnation
+			})
+			if live {
+				occupy(r.Node, sid)
+			}
+		}
+	}
+	for _, t := range m.h.state(c).Transitions {
+		occupy(t.To.Node, t.Operation.Shard)
+		occupy(t.Fallback.Node, t.Operation.Shard)
+	}
+	return occupied
 }
 
 // settle checks the controller once the drain has ended the faults: every transition has
@@ -1777,6 +1820,7 @@ func (h *harness) shardIDs(tb assert.TB) []shard.ID {
 //     reserves each epoch of a shard for one transition. The reserved epoch never falls.
 //   - A placement has one writer at most, at an epoch that it has reserved.
 //   - A node of an admitted disruption hosts no replica.
+//   - A node hosts pairedMax shards at most, with the transitions that can end on it.
 //   - The controller replies to each call once.
 //
 // The drain ends the faults, the drains and the disruptions, and replies to every callback

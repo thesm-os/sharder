@@ -54,6 +54,13 @@ func (mb *member) faulted(sid shard.ID) bool {
 	return ok && o.Fault == shard.FaultPermanent
 }
 
+// failed reports whether the last accepted report of mb lists its replica of the shard sid
+// at the epoch e with a permanent fault: the tenure of the shard at e has failed.
+func (mb *member) failed(sid shard.ID, e epoch.Epoch) bool {
+	o, ok := mb.replicas.Get(sid)
+	return ok && o.Fault == shard.FaultPermanent && o.Epoch == e
+}
+
 // take makes the report r the last accepted report of mb, and reports whether r adds a
 // permanent fault to the faults that the last report had.
 func (mb *member) take(r *protocol.Report) bool {

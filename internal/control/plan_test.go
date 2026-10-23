@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -46,6 +47,20 @@ const interval = 30 * time.Second
 // replica per node, and the goal count.
 const strictConfig = `{"constraints":[{"name":"max-per-node","config":{"max":1}}],` +
 	`"goals":[{"name":"count","tier":0,"weight":1}],"triggers":{"onMembership":false}}`
+
+// pairedMax is the most replicas of a node under pairedConfig and boundedConfig.
+const pairedMax = 2
+
+// The configurations of the planner of the tests that bound the replicas of a node to
+// pairedMax, with the goal count.
+var (
+	// pairedConfig does not start a pass for a change of the membership.
+	pairedConfig = `{"constraints":[{"name":"max-per-node","config":{"max":` + strconv.Itoa(pairedMax) + `}}],` +
+		`"goals":[{"name":"count","tier":0,"weight":1}],"triggers":{"onMembership":false}}`
+	// boundedConfig keeps the triggers of the planner.
+	boundedConfig = `{"constraints":[{"name":"max-per-node","config":{"max":` + strconv.Itoa(pairedMax) + `}}],` +
+		`"goals":[{"name":"count","tier":0,"weight":1}]}`
+)
 
 // tagShard is the first byte of the IDs of the shards that a prior controller placed.
 const tagShard byte = 0x5d
@@ -112,6 +127,25 @@ func TestPlan(t *testing.T) {
 			assert.True(t, h.plans[1].Input.Emergency, "a pass with a faulted replica must restore it first")
 		})
 
+		t.Run("finishes a drain while a shard without a writer has a fault on every node", func(t *testing.T) {
+			t.Parallel()
+			h := served(t, quiet)
+			broken := h.shardOn(t, nodeA.ID)
+			h.answer = func(r *protocol.Request) error {
+				if r.Shard == broken && r.Call == protocol.Add {
+					return errRefused
+				}
+				return nil
+			}
+			h.step(t, h.report(&nodeA, 1, faulty(broken)))
+			h.run(t)
+			assert.Empty(t, h.placements(t)[broken].Replicas, "the refused shard must remain without a writer")
+			assert.NotEqual(t, h.writers(t)[nodeB.ID], 0, "node B must host writers before its drain")
+			h.disrupt(t, disruption(1, nodeB.ID), operator)
+			h.elapse(t, interval)
+			assert.Equal(t, h.writers(t)[nodeB.ID], 0, "the drain must move every writer off node B")
+		})
+
 		t.Run("records the duration of each pass by its mode", func(t *testing.T) {
 			t.Parallel()
 			h := served(t)
@@ -139,8 +173,11 @@ func TestPlan(t *testing.T) {
 			h.answer = func(*protocol.Request) error { return protocol.ErrUnreachable }
 			h.disrupt(t, disruption(1, nodeA.ID), operator)
 			h.elapse(t, interval)
-			assert.Length(t, h.plans[len(h.plans)-1].Input.Transitions, 2,
-				"the pass must have both moves off the draining node")
+			got := h.plans[len(h.plans)-1].Input.Transitions
+			assert.Length(t, got, 2, "the pass must have both moves off the draining node")
+			for _, f := range got {
+				expect.Equal(t, f.Role, shard.RolePrimary, "each transition must place the writer role")
+			}
 		})
 
 		t.Run("passes the draining nodes to each pass", func(t *testing.T) {
@@ -288,7 +325,7 @@ func TestPlan(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, strict, crowded(t, nodeA))
 			h.start(t)
-			h.view(t, nodeA)
+			h.view(t, nodeA, nodeB)
 			got := h.logged(logViolation)
 			assert.NotEmpty(t, got, "the controller must log the replicas that break a constraint")
 			expect.Equal(t, got[0][attrConstraintKey], string(constraint.MaxPerNodeName),
@@ -430,7 +467,10 @@ func TestPlan(t *testing.T) {
 			t.Parallel()
 			h := served(t, quiet)
 			before, failures := len(h.commits), h.metrics.value(movesInstrument, reasonFailure)
-			h.step(t, h.report(&nodeA, 1, faulty(h.shardOn(t, nodeA.ID))))
+			sid := h.shardOn(t, nodeA.ID)
+			fault := faulty(sid)
+			fault.Epoch = h.placements(t)[sid].Epoch
+			h.step(t, h.report(&nodeA, 1, fault))
 			h.run(t)
 			got := records(h.commits[before:])
 			assert.Length(t, got, 1, "the fault must start one repair")
@@ -458,6 +498,141 @@ func TestPlan(t *testing.T) {
 			h.view(t, nodeA, nodeB, nodeC)
 			expect.Empty(t, records(h.commits[before:]), "the budget must defer the rebalance")
 			expect.Equal(t, h.metrics.value(deferredInstrument), 1.0, "the controller must count the deferred move")
+		})
+
+		t.Run("admits the repair of a writer with a permanent fault at maxUnavailable zero", func(t *testing.T) {
+			t.Parallel()
+			h := served(t, unavailable, quiet)
+			sid := h.shardOn(t, nodeA.ID)
+			fault := faulty(sid)
+			fault.Epoch = h.placements(t)[sid].Epoch
+			h.step(t, h.report(&nodeA, 1, fault))
+			h.run(t)
+			assert.Equal(t, h.placements(t)[sid].Replicas, []shard.Replica{{Node: nodeB.ID, Role: shard.RolePrimary}},
+				"the budget must admit the repair of a writer that is unavailable already")
+		})
+
+		t.Run("defers the repair of a writer whose fault is of another tenure at maxUnavailable zero",
+			func(t *testing.T) {
+				t.Parallel()
+				h := served(t, unavailable, quiet)
+				sid := h.shardOn(t, nodeA.ID)
+				fault := faulty(sid)
+				fault.Epoch = h.placements(t)[sid].Epoch - 1
+				h.step(t, h.report(&nodeA, 1, fault))
+				h.run(t)
+				expect.Equal(
+					t,
+					h.placements(t)[sid].Replicas,
+					[]shard.Replica{{Node: nodeA.ID, Role: shard.RolePrimary}},
+					"the budget must defer the move of a writer whose tenure has no fault",
+				)
+				expect.Equal(t, h.metrics.value(deferredInstrument), 1.0, "the controller must count the deferred move")
+			})
+
+		t.Run("defers a move of a pass that a constraint refuses at its admission", func(t *testing.T) {
+			t.Parallel()
+			h := served(t, paired)
+			h.view(t, nodeA, nodeB, nodeC)
+			h.paused = true
+			moved := h.shardOn(t, nodeB.ID)
+			p := proposalOf(t, 1, proposal.Move, h.placements(t)[moved].Epoch,
+				proposal.MoveArgs{Node: nodeC.ID, Shard: moved})
+			h.step(t, h.submitCall(&p, operator))
+			proposed := h.plans[len(h.plans)-1].Token
+			h.disrupt(t, disruption(1, nodeA.ID), operator)
+			drain := h.plans[len(h.plans)-1].Token
+			h.pass(t, proposed)
+			before := h.metrics.value(deferredInstrument)
+			h.pass(t, drain)
+			expect.Equal(t, h.writers(t)[nodeC.ID], 2, "node C must host two writers at most")
+			expect.Equal(t, h.writers(t)[nodeA.ID], 1, "the refused move must leave its shard on the draining node")
+			expect.Equal(t, h.metrics.value(deferredInstrument)-before, 1.0,
+				"the controller must count the move that the constraint refuses")
+		})
+
+		t.Run("defers a move of a pass to a node that refused an add of its shard during the pass", func(t *testing.T) {
+			t.Parallel()
+			h := spare(t)
+			h.paused = true
+			h.elapse(t, interval)
+			periodic := h.plans[len(h.plans)-1].Token
+			h.answer = func(r *protocol.Request) error {
+				if r.Call == protocol.Add && r.Node == nodeC.ID {
+					return errRefused
+				}
+				return nil
+			}
+			for i, sid := range h.shardIDs(t) {
+				p := proposalOf(t, byte(i+1), proposal.Move, h.placements(t)[sid].Epoch,
+					proposal.MoveArgs{Node: nodeC.ID, Shard: sid})
+				h.step(t, h.submitCall(&p, operator))
+				h.pass(t, h.plans[len(h.plans)-1].Token)
+			}
+			before := h.metrics.value(deferredInstrument)
+			h.pass(t, periodic)
+			expect.Equal(t, h.writers(t)[nodeC.ID], 0, "the pass must not move a shard to a node that refused it")
+			expect.Equal(t, h.metrics.value(deferredInstrument)-before, 1.0,
+				"the controller must count the move that the admission refuses")
+			got := h.logged(logRefusal)
+			assert.NotEmpty(t, got, "the controller must log the move that the admission refuses")
+			expect.Contains(t, got[len(got)-1][attrErrorKey], "has a fault of shard", "the log must state the fault")
+		})
+
+		t.Run("defers a move of a pass to a node that has left the view during the pass", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			h.paused = true
+			h.view(t, nodeA, nodeB, nodeC)
+			joined := h.plans[len(h.plans)-1].Token
+			h.view(t, nodeA, nodeB)
+			before, deferred := len(h.commits), h.metrics.value(deferredInstrument)
+			h.pass(t, joined)
+			expect.Empty(t, destinations(h.commits[before:]), "the pass must not move a shard to a node that has left")
+			expect.Equal(t, h.metrics.value(deferredInstrument)-deferred, 1.0,
+				"the controller must count the move that the admission refuses")
+		})
+
+		t.Run("defers a move of a writer whose tenure reports no fault at maxUnavailable zero", func(t *testing.T) {
+			t.Parallel()
+			h := served(t, unavailable)
+			sid := h.shardOn(t, nodeA.ID)
+			replica := healthy(sid)
+			replica.Epoch = h.placements(t)[sid].Epoch
+			h.step(t, h.report(&nodeA, 1, replica))
+			before := len(h.commits)
+			h.view(t, nodeA, nodeB, nodeC)
+			expect.Empty(t, records(h.commits[before:]), "the budget must defer the rebalance of a healthy writer")
+			expect.Equal(t, h.metrics.value(deferredInstrument), 1.0, "the controller must count the deferred move")
+		})
+
+		t.Run("builds no admission for a pass without targets", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			h.paused = true
+			h.elapse(t, interval)
+			periodic := h.plans[len(h.plans)-1].Token
+			h.view(t, nodeA, nodeB, nameless)
+			h.pass(t, periodic)
+			assert.Empty(
+				t,
+				h.planned[len(h.planned)-1].Targets,
+				"the periodic pass of a balanced cell must have no target",
+			)
+			expect.Empty(t, h.logged(logAdmission), "a pass without targets must not build the state of an admission")
+		})
+
+		t.Run("starts no move of a pass whose admission does not build", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			h.paused = true
+			h.view(t, nodeA, nodeB, nodeC)
+			joined := h.plans[len(h.plans)-1].Token
+			h.view(t, nodeA, nodeB, nodeC, nameless)
+			before := len(h.commits)
+			h.pass(t, joined)
+			expect.Empty(t, records(h.commits[before:]), "a pass whose admission does not build must start no move")
+			expect.NotEmpty(t, h.logged(logAdmission), "the controller must log the admission that does not build")
 		})
 
 		t.Run("admits a move off a node that has left at maxUnavailable zero", func(t *testing.T) {
@@ -665,6 +840,7 @@ const (
 	attrCellKey       = "cell"
 	attrNodeKey       = "node"
 	attrShardKey      = "shard"
+	attrErrorKey      = "error"
 	attrConstraintKey = "constraint"
 )
 
@@ -680,6 +856,16 @@ const lockDelay = 2 * time.Second
 // strict sets the planner of the spec to at most one replica per node.
 func strict(s *setup) {
 	s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(strictConfig)}
+}
+
+// paired sets the planner of the spec to pairedConfig.
+func paired(s *setup) {
+	s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(pairedConfig)}
+}
+
+// bounded sets the planner of the spec to boundedConfig.
+func bounded(s *setup) {
+	s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(boundedConfig)}
 }
 
 // unavailable sets maxUnavailable of the spec to zero.
