@@ -17,9 +17,11 @@ func TestApplication(t *testing.T) {
 	effects(t, []member{
 		{name: "Handle", give: machine.Handle{}},
 		{name: "Acquire", give: machine.Acquire{}},
+		{name: "Revoke", give: machine.Revoke{}},
 	})
 	events(t, []member{
 		{name: "Handled", give: machine.Handled{}},
 		{name: "Acquired", give: machine.Acquired{}},
+		{name: "Revoked", give: machine.Revoked{}},
 	})
 }

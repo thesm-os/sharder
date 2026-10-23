@@ -22,7 +22,8 @@
 //   - For [Callback], it calls protocol.AgentClient. For [SendReport], [SendDisrupt] and
 //     [SendDone], it calls protocol.ControllerClient.
 //   - For [Handle], it calls the handler of the application. For [Acquire], it calls the
-//     fence.Acquirer of the application.
+//     fence.Acquirer of the application. For [Revoke], it calls the RevokeShard of a
+//     handler that has one.
 //   - For [Plan], it runs placement.Placer.Place and then placement.Validate.
 //   - For [Timer], it waits on the clock of the process.
 //   - For [Unwatch], [Resign] and [Leave], it ends the watch, the term or the session of an
@@ -65,6 +66,13 @@
 //     does not pass a later event.
 //   - It stops the run in the same way once Machine.Err returns an error after a step.
 //
+// # Attempts
+//
+// The runtime bounds each attempt of a [Callback], an [Acquire] or a [Handle] by the Timeout
+// of its effect. Each retry is a new effect with a deadline of its own, so an attempt that
+// ended at its deadline can succeed on a retry. The controller and the agent classify the
+// error of each attempt with [ClassifyAttempt] before they act on its class.
+//
 // # Concurrency
 //
 // The events and the effects are value types. A copy of one shares its slices, its maps
@@ -81,7 +89,7 @@
 //
 // # Dependency position
 //
-// machine imports the standard library, the packages epoch and page of
+// machine imports the standard library, the packages epoch, errs and page of
 // go.thesmos.sh/core, and the packages budget, fence, membership, ownership, placement,
 // proposal, protocol, shard and store of go.thesmos.sh/sharder.
 package machine

@@ -76,3 +76,34 @@ var _ Event = Acquired{}
 
 // event marks Acquired as an Event.
 func (Acquired) event() {}
+
+// Revoke is the revocation of a tenure whose session has ended. The runtime calls the
+// RevokeShard of a handler that has one, so the handler ends the work of the tenure. A
+// handler without RevokeShard has no call to make. The runtime passes the result as a
+// [Revoked].
+type Revoke struct {
+	// Fence is the fencing token of the tenure.
+	Fence fence.Token
+	// Token is the token of the effect.
+	Token Token
+	// Timeout is the longest time that the call can take.
+	Timeout time.Duration
+}
+
+var _ Effect = Revoke{}
+
+// effect marks Revoke as an Effect.
+func (Revoke) effect() {}
+
+// Revoked is the result of a [Revoke].
+type Revoked struct {
+	// Err is the error of RevokeShard, or nil.
+	Err error
+	// Token is the token of the Revoke.
+	Token Token
+}
+
+var _ Event = Revoked{}
+
+// event marks Revoked as an Event.
+func (Revoked) event() {}
