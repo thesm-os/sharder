@@ -16,6 +16,7 @@ import (
 	"go.thesmos.sh/sharder/controller"
 	"go.thesmos.sh/sharder/internal/driver"
 	"go.thesmos.sh/sharder/internal/follow"
+	"go.thesmos.sh/sharder/internal/machine/agent"
 	"go.thesmos.sh/sharder/internal/streamtest"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/store"
@@ -98,14 +99,22 @@ func TestHost(t *testing.T) {
 					synctest.Wait()
 					f.st.block()
 					assert.NoError(t, r.host(t, p, procA.ID, firstEpoch, 1), "the first add starts a controller")
+					r.place(t, procA.ID, secondEpoch)
+					add := r.request(t, protocol.Add, procA.ID, secondEpoch, 2)
+					ctx, cancel := context.WithTimeout(t.Context(), callFor)
+					defer cancel()
 					assert.ErrorIs(
 						t,
-						r.host(t, p, procA.ID, secondEpoch, 2),
+						p.ctrl.Do(ctx, rootMetadata, add),
 						context.DeadlineExceeded,
 						"the add of the newer term must return the error of its context while the older controller runs",
 					)
 					f.st.unblock()
 					synctest.Wait()
+					f.clock.Advance(agent.RetryMax)
+					synctest.Wait()
+					assert.NoError(t, p.ctrl.Do(t.Context(), rootMetadata, add),
+						"a repeated add of the newer term must return once the older controller has stopped")
 					assert.Equal(t, record(t, f, cellScope).Epoch, secondEpoch,
 						"the controller of the newer term must acquire the scope once the older controller has stopped")
 					assert.Equal(t, p.cells.controllers(cellID), 1, "the process must run one controller of the cell")

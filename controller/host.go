@@ -92,10 +92,11 @@ func (h *host) DropShard(ctx context.Context, r *protocol.Request) error {
 }
 
 // start returns the driver of the controller of the cell id at the term r.Epoch. A controller
-// of the cell at that term whose run has not returned keeps serving. Otherwise start stops
-// the controller of the cell, if one runs, and starts the controller of the term as a task of
-// the run of the process. The new controller runs once the run of the stopped controller has
-// returned.
+// of the cell at that term whose run has not returned keeps serving. Otherwise start starts
+// the controller of the term as a task of the run of the process. The agent of the root
+// cleans up the tenure of an older term before it runs the add of a newer term. The cleanup
+// returns once the controller of the older term has stopped, so no other controller of the
+// cell runs.
 //
 // Error modes:
 //   - the errors of cell.New and driver.New, which New and the agent of the root rule out.
@@ -125,12 +126,7 @@ func (h *host) start(id shard.CellID, r *protocol.Request) (*driver.Driver, erro
 		life, stop := context.WithCancel(h.ctx)
 		c := &hosted{driver: d, stop: stop, done: make(chan struct{}), term: r.Epoch}
 		h.cells[id] = c
-		//dokimi:mutate-skip sbr-delete,ror-false: the agent of the root drops the controller of an older term before it adds a newer one, so old has stopped already
-		if old != nil {
-			//dokimi:mutate-skip sbr-delete: the agent of the root drops the controller of an older term before it adds a newer one, so old has stopped already
-			old.stop()
-		}
-		gerr = h.group.Go(func(ctx context.Context) error { return c.run(ctx, life, id, old) })
+		gerr = h.group.Go(func(ctx context.Context) error { return c.run(ctx, life, id) })
 	}
 	return d, errors.Join(err, gerr)
 }
@@ -163,22 +159,15 @@ type hosted struct {
 	term epoch.Epoch
 }
 
-// run runs the controller c of the cell id under life, once the run of the stopped
-// controller old has returned. ctx is the context of the run of the process, from which life
-// derives. run returns nil in these cases:
+// run runs the controller c of the cell id under life. ctx is the context of the run of the
+// process, from which life derives. run returns nil in these cases:
 //   - The host or the process ends life.
 //   - The controller ends before it serves. AddShard returns its error to the root.
 //   - A newer controller of the cell fences the controller. The root moves the cell.
 //
 // run returns the error of any other end, which stops the process.
-func (c *hosted) run(ctx, life context.Context, id shard.CellID, old *hosted) error {
+func (c *hosted) run(ctx, life context.Context, id shard.CellID) error {
 	defer close(c.done)
-	if old != nil {
-		select {
-		case <-old.done:
-		case <-life.Done():
-		}
-	}
 	err := c.driver.Run(life)
 	if life.Err() != nil || c.driver.Ready(ctx) != nil || errors.Is(err, epoch.ErrFenced) {
 		return nil

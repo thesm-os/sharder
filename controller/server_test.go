@@ -15,6 +15,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.thesmos.sh/core/epoch"
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/page"
 	"go.thesmos.sh/core/telemetry/noop"
@@ -136,6 +137,25 @@ func TestServer(t *testing.T) {
 					"Do must return the error of the agent of the root")
 			})
 		})
+
+		t.Run("returns an error of class errs.Transient when its context ends before the callback runs",
+			func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					f := newFixture(t)
+					r := f.newRoot(t)
+					p := f.start(t, procA, spec(namespace))
+					synctest.Wait()
+					req := r.request(t, protocol.Add, procA.ID, firstEpoch, 1)
+					ctx, cancel := context.WithTimeout(t.Context(), callFor)
+					defer cancel()
+					err := p.ctrl.Do(ctx, rootMetadata, req)
+					expect.That(t, err).
+						ErrorIs(context.DeadlineExceeded, "the add must wait for its placement until its deadline")
+					expect.Equal(t, errs.Classify(err), errs.Transient,
+						"a callback whose wait ends at its deadline must fail with a transient error")
+				})
+			})
 	})
 
 	t.Run("Report", func(t *testing.T) {

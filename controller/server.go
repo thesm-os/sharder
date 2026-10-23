@@ -47,6 +47,9 @@ const (
 //     error of class errs.Denied for a caller other than the root.
 //   - an error that wraps the error of the acquisition of the cell, such as an error that
 //     wraps epoch.ErrFenced.
+//   - an error of class errs.Transient that wraps context.DeadlineExceeded when the deadline
+//     of ctx passes before r runs, and when the acquisition of the cell or the stop of its
+//     controller runs past its deadline.
 func (c *Controller) Do(ctx context.Context, md protocol.Metadata, r *protocol.Request) error {
 	if err := md.Check(); err != nil {
 		return fmt.Errorf("controller: the metadata of %s: %w", callCallback, err)
@@ -62,7 +65,7 @@ func (c *Controller) Do(ctx context.Context, md protocol.Metadata, r *protocol.R
 	_, err = call[struct{}](ctx, n.agent, callCallback, func(tok machine.ReplyToken) machine.Event {
 		return machine.Do{Request: req, Metadata: md, Reply: tok}
 	})
-	return err
+	return machine.ClassifyAttempt(err)
 }
 
 // Report passes the report r of an agent to the controller of its cell, and returns the ack

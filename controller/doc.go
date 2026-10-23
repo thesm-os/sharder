@@ -31,8 +31,9 @@
 // An add of the root starts the controller of its cell at the epoch of the add, and returns
 // once the acquisition of the scope of the cell has applied. That acquisition fences every
 // controller of the cell at an older term. A controller of the cell at the same term serves
-// a repeated add, and a controller at another term stops before the new one runs. A drop
-// returns once the controller of the cell has stopped.
+// a repeated add. The agent of the root cleans up the tenure of an older term before it runs
+// the add of a newer term. A drop and a cleanup return once the controller of the cell has
+// stopped, and a cleanup that runs past its deadline runs again after a backoff.
 //
 // A controller of a cell that ends before it serves, such as one whose acquisition a newer
 // controller fences, ends without the run, and the add returns its error. A controller that
@@ -60,6 +61,8 @@
 //
 // [ErrConfig], [ErrRun] and [ErrScope] classify as errs.Invalid. [ErrNotServing] classifies as
 // errs.Transient. A call returns the error of the machine that serves it, wrapped.
+// [Controller.Do] gives an error that wraps context.DeadlineExceeded the class
+// errs.Transient, so the root retries the callback.
 //
 // # Concurrency
 //
@@ -68,8 +71,8 @@
 //
 // # Dependency position
 //
-// controller imports the standard library, the packages clock, epoch, id/ulid, rand, task
-// and telemetry of go.thesmos.sh/core, and the packages budget, config, fence,
+// controller imports the standard library, the packages clock, epoch, errs, id/ulid, rand,
+// task and telemetry of go.thesmos.sh/core, and the packages budget, config, fence,
 // internal/driver, internal/machine, internal/machine/agent, internal/machine/cell,
 // internal/machine/root, membership, proposal, protocol, shard and store of
 // go.thesmos.sh/sharder.
