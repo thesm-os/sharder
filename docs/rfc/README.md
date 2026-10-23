@@ -24,3 +24,4 @@ Each RFC proposes one part of the design of `sharder` and records the alternativ
 | [0013](0013-observed-generation-of-a-node.md) | The generation that the agent of a node has observed, for the refusal of a request | Accepted |
 | [0014](0014-filesystem-store.md) | A filesystem store for the scopes of one process | Draft |
 | [0015](0015-consensus-only-for-the-root.md) | Consensus only for the root, and cell scopes that the root replicates | Draft |
+| [0016](0016-test-code-that-dokimi-generates.md) | Enumerations, error checks, conformance kits, budgets and doubles that dokimi generates | Draft |
