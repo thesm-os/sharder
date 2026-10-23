@@ -54,4 +54,6 @@
 // telemetry of go.thesmos.sh/core, and the packages config, internal/driver,
 // internal/machine, internal/machine/routes, membership, shard and store of
 // go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package router
