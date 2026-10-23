@@ -95,7 +95,7 @@ var PrimaryOnly = Model{
 //
 //   - The model has no name.
 //   - A role is shard.RoleNone, shard.RoleOffline, shard.RoleDropped or a role that is
-//     not Valid, because no replica serves in it.
+//     not valid, because no replica serves in it.
 //   - A role is declared twice.
 //   - A role has a Max below one, or a writer role has a Max other than one.
 //   - The model has more than one writer role.
@@ -111,7 +111,7 @@ func (m Model) Compile() (*Compiled, error) {
 	served := make(map[shard.Role]bool, len(m.Roles))
 	writers := 0
 	for _, r := range m.Roles {
-		if !r.Name.Valid() || r.Name == shard.RoleNone || r.Name == shard.RoleOffline || r.Name == shard.RoleDropped {
+		if !r.Name.IsValid() || r.Name == shard.RoleNone || r.Name == shard.RoleOffline || r.Name == shard.RoleDropped {
 			problems = append(problems, fmt.Errorf("%w: no replica serves in the role %v", ErrInvalidModel, r.Name))
 			continue
 		}

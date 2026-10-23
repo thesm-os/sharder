@@ -30,4 +30,6 @@
 //
 // replication imports the standard library, the packages errs and fsm of
 // go.thesmos.sh/core, and go.thesmos.sh/sharder/shard.
+//
+//dokimi:sentinel
 package replication

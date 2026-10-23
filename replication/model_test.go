@@ -115,7 +115,7 @@ func TestModel(t *testing.T) {
 				roles: []replication.Role{{Name: shard.RoleDropped, Max: 1}},
 			},
 			{
-				name:  "returns ErrInvalidModel for a role that is not Valid",
+				name:  "returns ErrInvalidModel for a role that is not valid",
 				roles: []replication.Role{{Name: shard.RoleLearner + 1, Max: 1}},
 				transitions: []replication.Transition{
 					{From: shard.RoleOffline, To: shard.RoleLearner + 1},
