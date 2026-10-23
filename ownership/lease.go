@@ -3,8 +3,6 @@
 
 package ownership
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=OnLeaseLoss -linecomment -output=lease.string_gen.go
-
 import (
 	"fmt"
 	"time"
@@ -20,9 +18,11 @@ import (
 //
 // # Encoding
 //
-// [OnLeaseLoss.String] returns the spelling of an OnLeaseLoss, such as "stop". The
-// text methods write and read the spelling, so encoding/json writes an OnLeaseLoss
-// as a string.
+// [OnLeaseLoss.String] returns the spelling of an OnLeaseLoss, such as "stop", and
+// [ParseOnLeaseLoss] returns the action of a spelling. The text methods write and read
+// the spelling, so encoding/json writes an OnLeaseLoss as a string.
+//
+//dokimi:enum text=comment
 type OnLeaseLoss uint8
 
 const (
@@ -35,41 +35,10 @@ const (
 	ContinueFenced OnLeaseLoss = 2 // continue-fenced
 )
 
-// Valid reports whether o is Stop or ContinueFenced. The zero OnLeaseLoss is not.
-func (o OnLeaseLoss) Valid() bool {
-	return o >= Stop && o <= ContinueFenced
-}
-
-// MarshalText returns the spelling of o, such as "continue-fenced".
-//
-// Error modes:
-//   - an error that wraps ErrConfig when o is not Valid.
-func (o OnLeaseLoss) MarshalText() ([]byte, error) {
-	if err := o.valid(); err != nil {
-		return nil, err
-	}
-	return []byte(o.String()), nil
-}
-
-// UnmarshalText sets o to the action whose spelling is text. It leaves o unchanged
-// when it returns an error.
-//
-// Error modes:
-//   - an error that wraps ErrConfig when text is the spelling of no action.
-func (o *OnLeaseLoss) UnmarshalText(text []byte) error {
-	for v := Stop; v <= ContinueFenced; v++ {
-		if string(text) == v.String() {
-			*o = v
-			return nil
-		}
-	}
-	return fmt.Errorf("%w: unknown action on lease loss %q", ErrConfig, text)
-}
-
-// valid returns nil for a Valid action, and an error that wraps ErrConfig and states
-// the number of o for any other. MarshalText and Config.Validate call it.
+// valid returns nil for Stop and ContinueFenced, and an error that wraps ErrConfig and
+// states the number of o for any other. Config.Validate calls it.
 func (o OnLeaseLoss) valid() error {
-	if !o.Valid() {
+	if !o.IsValid() {
 		return fmt.Errorf("%w: unknown action on lease loss %d", ErrConfig, uint8(o))
 	}
 	return nil

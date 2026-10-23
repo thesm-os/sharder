@@ -29,7 +29,7 @@ type Config struct {
 //   - an error that wraps ErrConfig when Renew is not above zero.
 //   - an error that wraps ErrConfig when Renew is not below the validity of the lease.
 //   - an error that wraps ErrConfig when LockDelay is below zero.
-//   - an error that wraps ErrConfig when OnLoss is not Valid.
+//   - an error that wraps ErrConfig when OnLoss is not valid.
 //   - an error that wraps ErrConfig when OnLoss is ContinueFenced and Fenced is false.
 func (c Config) Validate() error {
 	l := c.Lease
@@ -55,7 +55,7 @@ func (c Config) Validate() error {
 		problems = append(problems,
 			fmt.Errorf("%w: the lock delay %v is below zero", ErrConfig, time.Duration(l.LockDelay)))
 	}
-	// errors.Join discards the nil error of a Valid action.
+	// errors.Join discards the nil error of a valid action.
 	problems = append(problems, l.OnLoss.valid())
 	if l.OnLoss == ContinueFenced && !c.Fenced {
 		problems = append(problems, fmt.Errorf("%w: %v without a fence", ErrConfig, l.OnLoss))

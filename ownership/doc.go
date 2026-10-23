@@ -20,7 +20,7 @@
 //
 // # Errors
 //
-// [ErrConfig] classifies as errs.Invalid.
+// [ErrConfig] and [ErrUnknownOnLeaseLoss] classify as errs.Invalid.
 //
 // # Concurrency
 //
@@ -30,4 +30,6 @@
 //
 // ownership imports the standard library, the package errs of go.thesmos.sh/core, and
 // go.thesmos.sh/sharder/shard.
+//
+//dokimi:sentinel
 package ownership
