@@ -38,8 +38,8 @@ type ID struct{ id.ID }
 //
 // kanon generates the codec of Proposal. Scope is field 1, Incarnation is field 2, ID
 // is field 3, Kind is field 4, Base is field 5, Body is field 6, and Expires is field
-// 7. The codec returns an error that wraps [ErrUnknownKind] for a Kind other than zero
-// that is not Valid.
+// 7. The codec returns an error that wraps [ErrUnknownOperationKind] for a Kind other than zero
+// that is not valid.
 //
 // # Concurrency
 //

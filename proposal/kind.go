@@ -4,26 +4,28 @@
 package proposal
 
 //go:generate go tool kanon -type=OperationKind -validate=valid
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=OperationKind -linecomment -output=kind.string_gen.go
 
 import "fmt"
 
 // OperationKind is the kind of change that a proposal requests, such as [Move].
 //
-// The zero OperationKind is not Valid. An encoding leaves out a field of the zero
-// kind, so a codec does not check it, and the controller that receives a proposal
-// checks [OperationKind.Valid].
+// [OperationKind.IsValid] refuses the zero OperationKind. An encoding leaves out a field
+// of the zero kind, so a codec does not check it, and the controller that receives a
+// proposal checks [OperationKind.IsValid].
 //
 // # Encoding
 //
-// kanon encodes an OperationKind as an unsigned varint of its number. A codec returns
-// an error that wraps [ErrUnknownKind] for a kind other than zero that is not Valid,
-// on encode and on decode. [OperationKind.String] returns the spelling of a kind, such
-// as "move", and the form "OperationKind(n)" for a value that is not Valid.
+// kanon encodes an OperationKind as an unsigned varint of its number. A codec returns an
+// error that wraps [ErrUnknownOperationKind] for a kind other than zero outside the five
+// kinds, on encode and on decode. [OperationKind.String] returns the spelling of a kind,
+// such as "move", and the form "OperationKind(n)" for any other value.
+// [ParseOperationKind] returns the kind of a spelling.
 //
 // # Concurrency
 //
 // An OperationKind is a comparable value.
+//
+//dokimi:enum text=comment
 type OperationKind uint8
 
 const (
@@ -45,17 +47,12 @@ const (
 	Explain OperationKind = 5 // explain
 )
 
-// Valid reports whether k is one of the five kinds. The zero OperationKind is not.
-func (k OperationKind) Valid() bool {
-	return k >= SpecChange && k <= Explain
-}
-
-// valid returns nil for a Valid kind, and an error that wraps [ErrUnknownKind] and
-// states the number of k for any other. The generated ValidateKanon calls it, so a
-// codec refuses a kind outside the five.
+// valid returns nil for one of the five kinds, and an error that wraps
+// [ErrUnknownOperationKind] and states the number of k for any other. The generated
+// ValidateKanon calls it, so a codec refuses a kind outside the five.
 func (k OperationKind) valid() error {
-	if !k.Valid() {
-		return fmt.Errorf("%w: %d", ErrUnknownKind, uint8(k))
+	if !k.IsValid() {
+		return fmt.Errorf("%w: %d", ErrUnknownOperationKind, uint8(k))
 	}
 	return nil
 }

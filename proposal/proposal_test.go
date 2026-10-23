@@ -68,7 +68,7 @@ var recordedProposal = proposal.Proposal{
 }
 
 // TestProposal checks the recorded encoding of a Proposal, the refusal of a kind that
-// is not Valid, and the guarantees of the exact type ID.
+// is not valid, and the guarantees of the exact type ID.
 func TestProposal(t *testing.T) {
 	t.Parallel()
 
@@ -84,11 +84,12 @@ func TestProposal(t *testing.T) {
 				"AppendBinary must write fields 1 to 7 as recorded")
 		})
 
-		t.Run("returns ErrUnknownKind for a Kind that is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownOperationKind for a Kind outside the five kinds", func(t *testing.T) {
 			t.Parallel()
 			p := proposal.Proposal{Kind: proposal.Explain + 1}
 			_, err := p.AppendBinary(nil)
-			assert.ErrorIs(t, err, proposal.ErrUnknownKind, "AppendBinary must refuse a kind outside the enumeration")
+			assert.ErrorIs(t, err, proposal.ErrUnknownOperationKind,
+				"AppendBinary must refuse a kind outside the enumeration")
 		})
 	})
 
@@ -104,12 +105,12 @@ func TestProposal(t *testing.T) {
 			assert.Equal(t, got, recordedProposal, "UnmarshalBinary must return the recorded Proposal")
 		})
 
-		t.Run("returns ErrUnknownKind for an encoded Kind that is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownOperationKind for an encoded Kind outside the five kinds", func(t *testing.T) {
 			t.Parallel()
 			data, err := hex.DecodeString(unknownKindHex)
 			assert.NoError(t, err, "the encoding must be hexadecimal")
 			var got proposal.Proposal
-			assert.ErrorIs(t, got.UnmarshalBinary(data), proposal.ErrUnknownKind,
+			assert.ErrorIs(t, got.UnmarshalBinary(data), proposal.ErrUnknownOperationKind,
 				"UnmarshalBinary must refuse a kind outside the enumeration")
 		})
 	})

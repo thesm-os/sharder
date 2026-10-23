@@ -39,7 +39,7 @@
 //
 // # Errors
 //
-// [ErrUnknownKind] classifies as errs.Invalid.
+// [ErrUnknownOperationKind] classifies as errs.Invalid.
 //
 // # Concurrency
 //
@@ -51,4 +51,6 @@
 // proposal imports the standard library, the packages epoch, errs and id of
 // go.thesmos.sh/core, and go.thesmos.sh/sharder/shard. Its generated codecs also
 // import go.thesmos.sh/kanon and go.thesmos.sh/kanon/wire.
+//
+//dokimi:sentinel
 package proposal
