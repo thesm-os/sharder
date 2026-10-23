@@ -7,7 +7,7 @@ released-in: unscheduled
 deadline: none
 deadline-source: none
 prd: none
-rfc: RFC-0001, RFC-0002, RFC-0003, RFC-0004, RFC-0005, RFC-0006, RFC-0007, RFC-0008, RFC-0009
+rfc: RFC-0001, RFC-0002, RFC-0003, RFC-0004, RFC-0005, RFC-0006, RFC-0007, RFC-0008, RFC-0009, RFC-0014, RFC-0015
 ---
 
 <!--
@@ -22,6 +22,13 @@ rfc: RFC-0001, RFC-0002, RFC-0003, RFC-0004, RFC-0005, RFC-0006, RFC-0007, RFC-0
 An application can embed sharder to spread exclusive shards over its processes, in one cell per namespace, so that its shards move on deploys, failures and rebalances within a disruption budget, and every transaction of a stale writer fails at the application's own fence.
 
 ## Done when
+
+### Authority decision before implementation
+
+- [ ] Record the accepted control-store architecture. The direction of Draft RFC-0015 is an external consensus root plus replicated cell scopes, with Draft RFC-0014's file-store format as a prerequisite. Neither draft is accepted by this checklist, and no release claims them as implemented.
+- [ ] Select and pin the root-quorum library, its durable-state and lease assumptions, membership replacement, backup/recovery and supported failure model. The library supplies the required root `store.Store` and `membership.Membership` laws.
+- [ ] Reconcile RFC-0007 and the support matrix with the accepted architecture. Remove the obsolete assumption that etcd is the release backend. A single-process `store/file` is tested and documented as such; it does not satisfy cross-process control-plane availability by itself.
+- [ ] Specify and test the root/cell protocol boundary, configuration activation, committed versus prepared state, read authority, session renewal across failover and crash recovery before enabling the cross-process deployment.
 
 ### The boundary
 
@@ -40,7 +47,7 @@ An application can embed sharder to spread exclusive shards over its processes, 
 
 ### The public composition
 
-- [ ] An external-package example that uses only exported API starts two processes against an empty etcd cluster, with different initial specs. Exactly one spec is committed, and both processes resolve it. The example hosts the cell through a root `add`, serves an application shard, replaces the cell's host, replaces the root's leader, and closes every component.
+- [ ] An external-package example that uses only exported API starts two processes against an empty deployment of the accepted root and cell backend, with different initial specs. Exactly one spec is committed, and both processes resolve it. The example hosts the cell through a root `add`, serves an application shard, replaces the cell's host, replaces the root's leader, and closes every component.
 - [ ] A root `add` replayed across lost replies starts one cell controller per term.
 - [ ] A router that `router.New` builds refuses a namespace whose recorded mapping differs from its partitioner's, and its `Close` returns after its watches have stopped.
 
@@ -89,18 +96,18 @@ CI runs each trace over every supported preset from fixed seeds, at `GOMAXPROCS`
 - [ ] Under `stop`, a node that keeps sending renewals while every reply is lost ends its session at the deadline of its last accepted renewal, and a late success reply neither extends nor reopens the session.
 - [ ] The simulator checks a predicate for every safety property of the core after every event. It checks convergence within the bound that it derives from the spec, from the moment the last fault has ended. A pause that lasts into the last quarter of a run does not cause a false convergence failure. When a pause ends, the process handles the timers that expired during the pause.
 
-### The etcd adapter
+### The accepted authority backend
 
-- [ ] `store/storetest` passes on `store/memory` and on the etcd adapter, with commits lost before and after they apply, the order of `Commit`'s checks, and a scope deleted and created again.
-- [ ] The feasibility check documents how the adapter maps a scope's generation to etcd revisions, and a fresh adapter resumes a watch at the right revision while other scopes commit.
-- [ ] `Fits` computes the deletion of every old per-node index key from the mutation alone, for moves, aborts and removals.
-- [ ] The state that `Read` returns for the largest supported cell, with its transitions, reservations, drains and applied proposals, fits the supported limits.
-- [ ] The adapter's membership sessions renew at the spec's interval and expire at the spec's TTL.
-- [ ] On a real etcd cluster, a commit whose reply is lost after it applies is settled by a retry or by `Outcome`, with one durable effect.
-- [ ] On a real etcd cluster, two controllers that race to acquire one scope end with one acquisition, and the other controller is fenced. The winner reads the scope only after its acquisition applied.
-- [ ] On a real etcd cluster, a watch whose history is compacted during a paged snapshot starts a new snapshot, and the reader keeps its last complete state until the new snapshot is complete. An agent whose watch is compacted past the removal of one of its tenures drops the tenure after the new snapshot.
-- [ ] On a real etcd cluster, a node-filtered watch lists in `Event.Removed` each shard whose placement stops naming the node, also after compaction has discarded the previous value of the node's index key.
-- [ ] `Fits` agrees with the encoded transaction of every supported shape at the cluster's configured limits, and a mutation that does not fit fails before it is sent.
+- [ ] `store/storetest` and `membership/membershiptest` pass on memory, the local file adapter and the accepted replicated backend. Tests lose commits before and after application and check incarnation, fence, receipt and generation precedence.
+- [ ] The backend maps scope generations to durable log positions and resume tokens across other scopes' commits, restarts and primary changes. Watches expose only committed state.
+- [ ] `Fits` includes old per-node index cleanup, receipts and variable-size drain records. Every supported encoded transaction shape fits the published limits, or fails before any effect.
+- [ ] The largest supported cell state includes transitions, reservations, drains and applied proposals within bounded read and transport sizes.
+- [ ] Membership sessions use the configured renewal interval and TTL. A changed primary preserves every acknowledged renewal for the stated grace, and delayed old-primary replies cannot revive an ended session.
+- [ ] Against the actual replicated backend, lost commit replies settle by a retry or `Outcome`, competing acquisitions produce one winner, and recovery exposes no prepared suffix as committed state.
+- [ ] A paged snapshot whose history is compacted restarts without installing a partial state. A replacement snapshot after a missed removal stops an obsolete agent tenure; filtered watches either name the required removal or force resnapshot.
+- [ ] Configuration changes distinguish counted members from learners. Crash every add, remove and primary-change boundary; an acknowledged scope mutation and every reserved epoch survive each allowed activation.
+- [ ] The control backend's read-authority assumptions are tested during pauses, partitions, primary changes and process restarts. A root outage has the documented effect on cell reconfiguration and ongoing cell service.
+- [ ] Real-process feasibility results include root quorum traffic, cell replication and recovery. A local file-store result is never reported as evidence for replicated availability.
 
 ### The transport
 
@@ -114,8 +121,8 @@ CI runs each trace over every supported preset from fixed seeds, at `GOMAXPROCS`
 - [ ] The operator documentation describes recovery with a new namespace incarnation, over a fresh application-data namespace or behind an administrative barrier, and states that restoring a store from a backup is not supported.
 - [ ] The operator documentation lists the store credentials of every process role, and states that the processes of a namespace that can run a controller trust each other.
 - [ ] The operator documentation gives the drain time of a planned stop: the writer gap times the rounds in which `maxNodeTransitions` and `maxTransitions` let the replicas of its node move. It gives the termination grace period and the scale-down rate of an autoscaler that a deployment needs for that time.
-- [ ] The release notes publish the writer gap of planned moves on etcd at p50, p95 and p99, against its target of 2 seconds at p99. They publish the delay of the watch delivery that each `add` waits for at the same percentiles, and the planner's six benchmark cases at increasing cell sizes.
-- [ ] The release notes publish the supported limits of a cell, from the etcd feasibility measurements.
+- [ ] The release notes publish the writer gap of planned moves on the accepted backend at p50, p95 and p99, against its target of 2 seconds at p99. They publish the delay of the watch delivery that each `add` waits for at the same percentiles, and the planner's six benchmark cases at increasing cell sizes.
+- [ ] The release notes publish the supported limits of a cell, from the accepted-backend feasibility measurements.
 - [ ] The feasibility workload and the published limits count the root's membership sessions, election candidates and watches as well as the cells' sessions, and state any lease that sessions share.
 
 ### Dispositions of the first review's findings
@@ -139,12 +146,12 @@ The first design review of 2026-09-28 raised 35 findings against the RFCs. The R
 | A spec edit can change the mapping | PLC-04 | Fixed: the mapping is fixed for the namespace incarnation | `Change`'s rejection table, and the hash vectors |
 | Constraints cannot read shard labels or moves per node | PLC-06 | Contract clarified | The external constraint in the conformance suite, and the drain-repair trace |
 | The planner's bounds and determinism have no contract | PLC-07 | Contract clarified, and verified during implementation | Determinism under shuffled inputs, termination under the work limits, and the benchmarks |
-| A commit that returns an error may have applied | STO-01 | Fixed | The lost-commit-reply trace, and the same case on etcd |
+| A commit that returns an error may have applied | STO-01 | Fixed | The lost-commit-reply trace, and the same case on the accepted backend |
 | A disruption grant does not survive a failover, and `Close` releases budget early | STO-03, API-08 | Fixed | The grant-then-crash, racing-disruptions and `Close`-timeout traces |
 | A cell split has no durable protocol | STO-04 | Outside the matrix, and rejected | Milestone 0005 |
-| A new controller cannot form its first conditional commit | STO-05 | Fixed: `Head`, then a conditional acquisition | The acquisition race on etcd |
-| Commit limits do not follow from the physical schema | STO-06 | Contract clarified: five transaction shapes, and `Limits` and `Fits` per scope | The transaction-shape check on etcd |
-| Snapshots, filtered watches and compaction do not compose | STO-07 | Contract clarified, and verified during implementation | The compaction-during-snapshot case on etcd |
+| A new controller cannot form its first conditional commit | STO-05 | Fixed: `Head`, then a conditional acquisition | The acquisition race on the accepted backend |
+| Commit limits do not follow from the physical schema | STO-06 | Contract clarified: five transaction shapes, and `Limits` and `Fits` per scope | The transaction-shape check on the accepted backend |
+| Snapshots, filtered watches and compaction do not compose | STO-07 | Contract clarified, and verified during implementation | The compaction-during-snapshot case on the accepted backend |
 | Calls do not name their namespace | API-01 | Fixed: every message names its scope and its namespace incarnation | The two-namespace trace |
 | A computed route cannot know an election's epoch | API-02 | Outside the matrix, and rejected | A rejection test |
 | Route updates can regress | API-03 | Contract clarified: a generation per slot | The reversed-report trace |
@@ -209,7 +216,7 @@ The verification of the third revision, on 2026-09-28, closed six of the third r
 
 | Finding | Review | Disposition | Covered by |
 |---|---|---|---|
-| A replacement snapshot reports no removal, and a delayed `add` can start a tenure that no later event removes | C4-01 | Fixed: an agent starts a tenure only while its watched placements list it, compares each replacement snapshot with its tenures, and builds a cleanup's key from the callback that started the tenure | The compacted-watch and obsolete-`add` traces, and the removal checks on etcd |
+| A replacement snapshot reports no removal, and a delayed `add` can start a tenure that no later event removes | C4-01 | Fixed: an agent starts a tenure only while its watched placements list it, compares each replacement snapshot with its tenures, and builds a cleanup's key from the callback that started the tenure | The compacted-watch and obsolete-`add` traces, and the removal checks on the accepted backend |
 
 ## Why now
 
@@ -230,7 +237,7 @@ Milestones 0002 to 0005 wait for this one.
 
 ## Scope
 
-The scope is the support matrix of the first release and its enforcement: `Resolve`, the built-in presets, the examples and the documentation all read `builtin.Support`. The root module, the etcd adapter, `httptransport` and `sharderctl` are in scope. The RFCs contain the design.
+The scope is the support matrix of the first release and its enforcement: `Resolve`, the built-in presets, the examples and the documentation all read `builtin.Support`. The root module, the accepted authority backend, `httptransport` and `sharderctl` are in scope. Backend implementation starts only after the authority decision gates above; the local file store and replicated control backend have distinct deployment claims. The RFCs contain the design.
 
 ## Not in this milestone
 
@@ -248,12 +255,14 @@ The scope is the support matrix of the first release and its enforcement: `Resol
 
 | Risk | What it delays | What we would do |
 |---|---|---|
-| The etcd feasibility check shows that a supported transaction shape does not fit etcd's default limits | This milestone, and milestones 0002 to 0005 | Split the shape into smaller commits, or publish lower limits for a cell |
+| RFC-0014, RFC-0015 or the external root-quorum dependency remains unresolved | Cross-process support and every dependent milestone | Keep that capability disabled; complete the protocol decision and real-process gates before advertising it |
+| The selected backend cannot durably encode a supported transaction shape within its limits | This milestone, and milestones 0002 to 0005 | Split the shape into smaller commits, or publish lower limits for a cell |
 
 ## Changes
 
 | Date | What changed | Why |
 |---|---|---|
+| 2026-10-20 | Distinguished draft control-store decisions, delegated consensus and the primary-backup application adapter | The theke v2 integration needs explicit authority and configuration gates; no draft protocol or implementation is accepted by this update |
 | 2026-10-13 | Named `controller.New` with the `Volatile` field of its `Config`, and `replica.New` in place of `replica.Start`, in the check of the refused configurations. Added the randomness source to the required fields of `replica.New` and `router.New` | ADR-0031 gives each constructor a pointer to its configuration. ADR-0034 makes `Guard` and `Rand` required fields of an agent, ADR-0035 makes `Rand` a required field of a router, and ADR-0037 constructs an agent with `New` |
 | 2026-10-11 | Named `builtin.Register` in place of `builtin.Registry`. Changed the class of the refusal of an approvals section, `hold`, `scale` and a replica count to `errs.Invalid` | ADR-0019 registers the built-ins with `Register` and a constructor per factory, and refuses a field outside the support matrix as an unknown field, as ADR-0012 does for approvals |
 | 2026-10-11 | Added core's `id.ID128` to the prerequisites, and named core v0.12.0 as the release that contains every core item | ADR-0018 stores a shard ID as an `id.ID128`. Core v0.12.0 was published on 2026-10-11 |

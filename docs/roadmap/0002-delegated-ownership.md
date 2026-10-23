@@ -21,6 +21,8 @@ rfc: RFC-0001, RFC-0002, RFC-0003, RFC-0005, RFC-0006, RFC-0008
 
 A consensus application can let its own election choose the writers of its shards. sharder then records the replicas and writers that the application's authority reports, routes clients to them, asks the authority to move a writer, and admits planned disruptions against the authority's effective quorum. It follows the shards that the authority splits, and a planned restart ends only when the member has returned or the authority has replaced it.
 
+This milestone covers an application's own consensus authority. Theke's default all-counted primary-backup adapter is a separate capability in milestone 0003; its local k-acknowledgement wait is not a consensus election or majority proof.
+
 ## Done when
 
 - [ ] `builtin.Support` admits `delegated` ownership with the `elect` handoff, and `Resolve` rejects `delegated` with any other handoff.
@@ -28,6 +30,7 @@ A consensus application can let its own election choose the writers of its shard
 - [ ] A move that the core requests runs through `elect` or `abdicate`. The budget keeps a disruption deferred while the authority has not moved a writer off the disrupted node.
 - [ ] Reports of `Hosted`, `Elected`, `Deposed` and `Released` that arrive twice and in reverse order never bring back a released replica or a deposed writer.
 - [ ] Every report of a replica is a versioned observation. It carries the authority's epoch, and the agent's sequence per node incarnation orders the observations that one epoch contains. A removal leaves a tombstone, so a delayed `Hosted` for a removed replica restores nothing. Two observations with the same epoch and sequence and different payloads are refused. After a reconnect, the agent reports the node's complete current state, and the core reconciles it with the tombstones. An authority can coalesce the roles that it reports to a slow reader, so the contract states which changes of state an observation exposes.
+- [ ] The adapter identifies the authoritative configuration version, counted voters, learners, commit rule and any transition. Local storage registrations cannot silently change acknowledgement eligibility.
 - [ ] The availability rule counts only voters. With voters A, B and C and learners D and E, where A has failed, the budget refuses a planned disruption of B.
 - [ ] During a joint configuration, the budget requires a majority of each of the two voter sets. Without a current report of a shard's effective configuration, it defers every planned disruption of the shard.
 - [ ] An `Elect` whose target already leads at an epoch at or above the request's completes without another election, and returns that epoch. A retry after a lost reply, and a new controller that resumes the transition, receive the same outcome under the operation's identity. A request that a newer operation of the shard superseded is refused, so it cannot restore an obsolete placement.
@@ -58,12 +61,13 @@ The scope also covers versioned observations with removal tombstones, a repeat-s
 
 | Risk | What it delays | What we would do |
 |---|---|---|
-| The authority's assessment of effective configurations and disruptions is not available when this milestone starts | Admission of planned disruptions in a delegated namespace | The budget defers every planned disruption of the namespace, and the authority's members restart one at a time outside sharder |
+| The authority's assessment of effective configurations and disruptions is not available when this milestone starts | Admission of planned disruptions in a delegated namespace | The budget defers every planned disruption of the namespace, and no automated disruption is admitted until the authority can assess it; an external operator must establish the same safety preconditions |
 
 ## Changes
 
 | Date | What changed | Why |
 |---|---|---|
+| 2026-10-20 | Distinguished draft control-store decisions, delegated consensus and the primary-backup application adapter | The theke v2 integration needs explicit authority and configuration gates; no draft protocol or implementation is accepted by this update |
 | 2026-10-10 | Removed the thesmos ledger as this milestone's consumer and example, and the ledger contracts that only its withdrawn cluster design stated | Ledger ADR-0006 grants writer leases on ranges of ledger IDs apart from shard leadership, and ledger RFC-0011 is withdrawn, so the ledger's storage roles do not choose sharder's writers |
 | 2026-09-29 | Added versioned observations, a repeat-safe `Elect`, the authority's splits, admission against the authority's assessment, and the completion of delegated restarts, with their acceptance cases. Moved splits by the authority from milestone 0004 into this one, as the risk of 2026-09-28 foresaw, and replaced that risk | The thesmos kernel follows the ledger's leadership and uses this milestone for load-aware leadership and maintenance (kernel RFC-0010). Its integration review of 2026-09-29 found these contracts missing from the milestone |
 | 2026-09-29 | Removed the risk that the ledger reports leadership in a form that `Elected` and `Deposed` do not fit | The ledger's `Member.Replicas` yields each role with the epoch in which it took effect, and `Hosted`, `Elected`, `Deposed` and `Released` report every role that it yields |
