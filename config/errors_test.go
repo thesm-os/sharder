@@ -13,10 +13,7 @@ import (
 	"go.thesmos.sh/sharder/config"
 )
 
-// errorPrefix is the prefix of the text of every error of package config.
-const errorPrefix = "config: "
-
-// TestErrors checks the class and the text of each sentinel error of package config.
+// TestErrors checks the class of each sentinel error of package config.
 func TestErrors(t *testing.T) {
 	t.Parallel()
 
@@ -31,6 +28,9 @@ func TestErrors(t *testing.T) {
 		{name: "ErrSpec", err: config.ErrSpec, class: errs.Invalid},
 		{name: "ErrRegistration", err: config.ErrRegistration, class: errs.Invalid},
 		{name: "ErrChange", err: config.ErrChange, class: errs.Invalid},
+		{name: "ErrUnknownAxis", err: config.ErrUnknownAxis, class: errs.Invalid},
+		{name: "ErrUnknownCapability", err: config.ErrUnknownCapability, class: errs.Invalid},
+		{name: "ErrUnknownInterruption", err: config.ErrUnknownInterruption, class: errs.Invalid},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -39,12 +39,6 @@ func TestErrors(t *testing.T) {
 			t.Run("classifies as its class", func(t *testing.T) {
 				t.Parallel()
 				assert.Equal(t, errs.Classify(tt.err), tt.class, "the sentinel must classify as its class")
-			})
-
-			t.Run("starts its text with the package's name", func(t *testing.T) {
-				t.Parallel()
-				assert.HasPrefix(t, tt.err.Error(), errorPrefix,
-					"the text of the sentinel must start with the name of the package")
 			})
 		})
 	}

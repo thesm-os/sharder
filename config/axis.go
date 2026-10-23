@@ -3,8 +3,6 @@
 
 package config
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=Axis -linecomment -output=axis.string_gen.go
-
 // Axis is a kind of registered strategy, or the role of an adapter of the process.
 //
 //   - [Partitioning], [Placement], [Replication], [Ownership], [Handoff], [Topology]
@@ -14,17 +12,19 @@ package config
 //   - [Store] and [Membership] are the roles of the adapters of the process. An
 //     adapter provides capabilities in its role and does not register a strategy.
 //
-// The zero Axis is not Valid.
+// [Axis.IsValid] refuses the zero Axis.
 //
 // # Encoding
 //
 // [Axis.String] returns the spelling of an axis, such as "placement", and the form
-// "Axis(n)" for a value that is not Valid. The JSON name of the field of an axis in a
-// [Spec] is the spelling of the axis.
+// "Axis(n)" for any other value. [ParseAxis] returns the axis of a spelling. The JSON name
+// of the field of an axis in a [Spec] is the spelling of the axis.
 //
 // # Concurrency
 //
 // An Axis is a comparable value.
+//
+//dokimi:enum text=comment
 type Axis uint8
 
 const (
@@ -61,8 +61,3 @@ const (
 // specAxes lists the axes of a spec in the order of the fields of a Spec. Resolve and
 // RegisterPreset check the selections in this order.
 var specAxes = [...]Axis{Partitioning, Placement, Replication, Ownership, Handoff, Topology, Routing}
-
-// Valid reports whether a is one of the twelve axes. The zero Axis is not.
-func (a Axis) Valid() bool {
-	return a >= Partitioning && a <= Membership
-}

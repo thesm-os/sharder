@@ -31,10 +31,23 @@ var (
 
 	// ErrSpec reports a spec or a strategy configuration that breaks a rule, such as a
 	// value out of range or a requirement that the namespace does not meet. Resolve,
-	// Build, BuildNamed and the text methods of Interruption return an error that
-	// wraps it. When a factory fails, that error also wraps the error of the factory.
-	// It classifies as errs.Invalid.
+	// Build and BuildNamed return an error that wraps it. When a factory fails, that
+	// error also wraps the error of the factory. It classifies as errs.Invalid.
 	ErrSpec = errs.WithClass(errors.New("config: invalid spec"), errs.Invalid)
+
+	// ErrUnknownAxis reports text that is not the spelling of an axis. ParseAxis and
+	// Axis.UnmarshalText return an error that wraps it. It classifies as errs.Invalid.
+	ErrUnknownAxis = errs.WithClass(errors.New("config: unknown axis"), errs.Invalid)
+
+	// ErrUnknownCapability reports text that is not the spelling of a capability.
+	// ParseCapability and Capability.UnmarshalText return an error that wraps it. It
+	// classifies as errs.Invalid.
+	ErrUnknownCapability = errs.WithClass(errors.New("config: unknown capability"), errs.Invalid)
+
+	// ErrUnknownInterruption reports text that is not the spelling of an interruption.
+	// ParseInterruption and Interruption.UnmarshalText return an error that wraps it, so
+	// the decode of a spec with such text fails with it. It classifies as errs.Invalid.
+	ErrUnknownInterruption = errs.WithClass(errors.New("config: unknown interruption"), errs.Invalid)
 
 	// ErrRegistration reports a registration or a build that the registry cannot
 	// perform, such as a factory with an empty name or a factory of another type.

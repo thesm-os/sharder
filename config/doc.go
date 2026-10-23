@@ -38,8 +38,9 @@
 //
 // # Errors
 //
-//   - [ErrDuplicate], [ErrUnknown], [ErrSpec], [ErrRegistration] and [ErrChange]
-//     classify as errs.Invalid.
+//   - [ErrDuplicate], [ErrUnknown], [ErrSpec], [ErrRegistration], [ErrChange],
+//     [ErrUnknownAxis], [ErrUnknownCapability] and [ErrUnknownInterruption] classify as
+//     errs.Invalid.
 //   - [ErrUnsupported] classifies as errs.Unsupported, and errors.Is matches it with
 //     errors.ErrUnsupported.
 //
@@ -57,4 +58,6 @@
 // config imports the standard library, the packages epoch and errs of
 // go.thesmos.sh/core, and the packages shard, partition and replication of
 // go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package config

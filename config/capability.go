@@ -3,21 +3,22 @@
 
 package config
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=Capability -linecomment -output=capability.string_gen.go
-
 // Capability is a property that a strategy or an adapter provides to the other axes
 // of a namespace, such as [Fenced].
 //
-// The zero Capability is not Valid.
+// [Capability.IsValid] refuses the zero Capability.
 //
 // # Encoding
 //
 // [Capability.String] returns the spelling of a capability, such as "single-writer",
-// and the form "Capability(n)" for a value that is not Valid.
+// and the form "Capability(n)" for any other value. [ParseCapability] returns the
+// capability of a spelling.
 //
 // # Concurrency
 //
 // A Capability is a comparable value.
+//
+//dokimi:enum text=comment
 type Capability uint8
 
 const (
@@ -42,11 +43,6 @@ const (
 	// Durable is the capability of a store adapter that persists every commit.
 	Durable Capability = 6 // durable
 )
-
-// Valid reports whether c is one of the six capabilities. The zero Capability is not.
-func (c Capability) Valid() bool {
-	return c >= Controller && c <= Durable
-}
 
 // Requirement is a capability that a strategy requires from the strategy of another
 // axis or from the adapter of a role.

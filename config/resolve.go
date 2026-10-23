@@ -212,7 +212,7 @@ func (z *resolution) budget(spec, pre *Budget) {
 	b.NodeCallbacks = z.count("budget.nodeCallbacks", spec.NodeCallbacks, pre.NodeCallbacks,
 		*b.MaxNodeTransitions, 1)
 	b.Interruption = cmp.Or(spec.Interruption, pre.Interruption)
-	if !b.Interruption.Valid() {
+	if !b.Interruption.IsValid() {
 		z.invalid = append(z.invalid, fmt.Errorf(
 			"%w: budget.interruption: %v is not %v, which every handoff of the support matrix needs",
 			ErrSpec, b.Interruption, PlannedInterruption))
