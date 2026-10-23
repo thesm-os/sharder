@@ -28,11 +28,11 @@
 // # Enumerations
 //
 // [Role], [Status], [Fault] and [Phase] are closed enumerations of uint8. Each has a String
-// method that returns the spelling of a value in configurations and telemetry, and a
-// Valid method that reports whether a value is one of its constants. The numbers of
-// the constants are persisted: a constant keeps its number, and a new constant takes
-// the next number. [RoleCount] is the number of roles, so an array with one element
-// per role has RoleCount elements.
+// method that returns the spelling of a value in configurations and telemetry, a parse
+// function such as [ParseRole] for the reverse, and an IsValid method that reports whether
+// a value is one of its constants. The numbers of the constants are persisted: a constant
+// keeps its number, and a new constant takes the next number. [RoleCount] is the number of
+// roles, so an array with one element per role has RoleCount elements.
 //
 // # Encoding
 //
@@ -44,9 +44,9 @@
 // newer one, because a decode skips the fields that it does not know.
 //
 // The codecs return an error for a [Role], a [Status], a [Fault] or a [Phase] that is
-// not Valid, on encode and on decode. An encoding leaves out every field of a zero
+// not valid, on encode and on decode. An encoding leaves out every field of a zero
 // value, so a codec does not check the zero [Status] or the zero [Phase], which are not
-// Valid. [NamespaceIncarnation] encodes through the binary methods of the identifier
+// valid. [NamespaceIncarnation] encodes through the binary methods of the identifier
 // that it embeds. [ID] encodes as the bytes that those methods write for its ULID.
 //
 // # Errors
@@ -63,7 +63,7 @@
 //
 // # Allocation contract
 //
-// [Range.Contains], [CellMap.Locate], and the Valid and String methods of the
+// [Range.Contains], [CellMap.Locate], and the IsValid and String methods of the
 // enumerations do not allocate for a valid value. The methods of the codecs follow
 // the allocation contract of [go.thesmos.sh/kanon.Message].
 //
@@ -72,4 +72,6 @@
 // shard imports the standard library and the packages epoch, errs, id, id/ulid and tag
 // of go.thesmos.sh/core. Its generated codecs also import go.thesmos.sh/kanon and
 // go.thesmos.sh/kanon/wire.
+//
+//dokimi:sentinel
 package shard

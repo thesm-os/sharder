@@ -17,7 +17,7 @@ import "go.thesmos.sh/core/epoch"
 // kanon generates the codec of Placement. Shard is field 1, Range is field 2, Epoch is
 // field 3, Reserved is field 4, Sequence is field 5, Replicas is field 6, and
 // Incarnation is field 7. The codec returns an error that wraps [ErrUnknownRole] for a
-// replica whose Role is not Valid.
+// replica whose Role is not valid.
 //
 // # Concurrency
 //

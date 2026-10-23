@@ -37,7 +37,7 @@ var recordedPlacement = shard.Placement{
 }
 
 // TestPlacement checks the recorded encoding of a Placement, and the refusal of a
-// replica whose Role is not Valid.
+// replica whose Role is not valid.
 func TestPlacement(t *testing.T) {
 	t.Parallel()
 
@@ -57,7 +57,7 @@ func TestPlacement(t *testing.T) {
 			)
 		})
 
-		t.Run("returns ErrUnknownRole for a replica whose Role is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownRole for a replica whose Role is not valid", func(t *testing.T) {
 			t.Parallel()
 			p := shard.Placement{
 				Shard:    recordedID,

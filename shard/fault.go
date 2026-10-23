@@ -4,7 +4,6 @@
 package shard
 
 //go:generate go tool kanon -type=Fault -validate=valid
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=Fault -linecomment -output=fault.string_gen.go
 
 import "fmt"
 
@@ -15,9 +14,9 @@ import "fmt"
 // # Encoding
 //
 // kanon encodes a Fault as an unsigned varint of its number. A codec returns an error
-// that wraps [ErrUnknownFault] for a Fault that is not Valid, on encode and on
-// decode. [Fault.String] returns the spelling of a Fault, such as "transient", and
-// the form "Fault(n)" for a value that is not Valid.
+// that wraps [ErrUnknownFault] for a Fault outside the three faults, on encode and on
+// decode. [Fault.String] returns the spelling of a Fault, such as "transient", and the
+// form "Fault(n)" for any other value. [ParseFault] returns the Fault of a spelling.
 //
 // # Concurrency
 //
@@ -25,8 +24,10 @@ import "fmt"
 //
 // # Allocation contract
 //
-// [Fault.Valid], and [Fault.String] of a Valid Fault, do not allocate. String
-// allocates the form of a value that is not Valid.
+// [Fault.IsValid], and [Fault.String] of one of the three faults, do not allocate. String
+// allocates the form of any other value.
+//
+//dokimi:enum text=comment
 type Fault uint8
 
 const (
@@ -43,20 +44,11 @@ const (
 	FaultPermanent Fault = 2 // permanent
 )
 
-// Valid reports whether f is one of the three faults, [FaultNone] included.
-//
-// # Allocation contract
-//
-// Zero alloc.
-func (f Fault) Valid() bool {
-	return f <= FaultPermanent
-}
-
-// valid returns nil for a Valid fault, and an error that wraps [ErrUnknownFault] and
-// states the number of f for any other. The generated ValidateKanon calls it, so a
-// codec refuses a fault outside the three.
+// valid returns nil for one of the three faults, and an error that wraps
+// [ErrUnknownFault] and states the number of f for any other. The generated
+// ValidateKanon calls it, so a codec refuses a fault outside the three.
 func (f Fault) valid() error {
-	if !f.Valid() {
+	if !f.IsValid() {
 		return fmt.Errorf("%w: %d", ErrUnknownFault, uint8(f))
 	}
 	return nil

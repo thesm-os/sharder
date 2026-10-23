@@ -4,7 +4,6 @@
 package shard
 
 //go:generate go tool kanon -type=Role -validate=valid
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=Role -linecomment -output=role.string_gen.go
 
 import "fmt"
 
@@ -19,11 +18,12 @@ import "fmt"
 // # Encoding
 //
 // kanon encodes a Role as an unsigned varint of its number. A codec returns an error
-// that wraps [ErrUnknownRole] for a Role that is not Valid, on encode and on decode.
-// [Role.String] returns the spelling of a Role, such as "primary", and the form
-// "Role(n)" for a value that is not Valid. The text methods write and read the
-// spelling, so encoding/json writes a Role as a string. kanon checks for ValidateKanon
-// before it checks for text methods, so a codec still writes a Role as its number.
+// that wraps [ErrUnknownRole] for a Role outside the eight roles, on encode and on
+// decode. [Role.String] returns the spelling of a Role, such as "primary", and the form
+// "Role(n)" for any other value. [ParseRole] returns the Role of a spelling. The text
+// methods write and read the spelling, so encoding/json writes a Role as a string. kanon
+// checks for ValidateKanon before it checks for text methods, so a codec still writes a
+// Role as its number.
 //
 // # Concurrency
 //
@@ -31,8 +31,10 @@ import "fmt"
 //
 // # Allocation contract
 //
-// [Role.Valid], and [Role.String] of a Valid Role, do not allocate. String allocates
-// the form of a value that is not Valid.
+// [Role.IsValid], and [Role.String] of one of the eight roles, do not allocate. String
+// allocates the form of any other value.
+//
+//dokimi:enum text=comment
 type Role uint8
 
 const (
@@ -61,49 +63,14 @@ const (
 )
 
 // RoleCount is the number of roles, from RoleNone to RoleLearner. An array with one
-// element per role has this length, and a Valid Role indexes it.
+// element per role has this length, and each Role that IsValid accepts indexes it.
 const RoleCount = 8
 
-// Valid reports whether r is one of the eight roles, [RoleNone] included.
-//
-// # Allocation contract
-//
-// Zero alloc.
-func (r Role) Valid() bool {
-	return r <= RoleLearner
-}
-
-// MarshalText returns the spelling of r, such as "primary".
-//
-// Error modes:
-//   - an error that wraps [ErrUnknownRole] when r is not Valid.
-func (r Role) MarshalText() ([]byte, error) {
-	if err := r.valid(); err != nil {
-		return nil, err
-	}
-	return []byte(r.String()), nil
-}
-
-// UnmarshalText sets r to the role whose spelling is text. It leaves r unchanged when
-// it returns an error.
-//
-// Error modes:
-//   - an error that wraps [ErrUnknownRole] when text is not the spelling of a role.
-func (r *Role) UnmarshalText(text []byte) error {
-	for v := RoleNone; v <= RoleLearner; v++ {
-		if string(text) == v.String() {
-			*r = v
-			return nil
-		}
-	}
-	return fmt.Errorf("%w: %q", ErrUnknownRole, text)
-}
-
-// valid returns nil for a Valid role, and an error that wraps [ErrUnknownRole] and
-// states the number of r for any other. The generated ValidateKanon calls it, so a
+// valid returns nil for one of the eight roles, and an error that wraps [ErrUnknownRole]
+// and states the number of r for any other. The generated ValidateKanon calls it, so a
 // codec refuses a role outside the eight.
 func (r Role) valid() error {
-	if !r.Valid() {
+	if !r.IsValid() {
 		return fmt.Errorf("%w: %d", ErrUnknownRole, uint8(r))
 	}
 	return nil

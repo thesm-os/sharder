@@ -29,7 +29,7 @@ const (
 var recordedReplica = shard.Replica{Node: "n1", Role: shard.RolePrimary}
 
 // TestReplica checks the recorded encoding of a Replica, and the refusal of a Role
-// that is not Valid.
+// that is not valid.
 func TestReplica(t *testing.T) {
 	t.Parallel()
 
@@ -49,7 +49,7 @@ func TestReplica(t *testing.T) {
 			)
 		})
 
-		t.Run("returns ErrUnknownRole for a Role that is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownRole for a Role that is not valid", func(t *testing.T) {
 			t.Parallel()
 			r := shard.Replica{Node: "n1", Role: shard.RoleLearner + 1}
 			_, err := r.AppendBinary(nil)
@@ -71,7 +71,7 @@ func TestReplica(t *testing.T) {
 			assert.Equal(t, got, recordedReplica, "UnmarshalBinary must return the recorded Replica")
 		})
 
-		t.Run("returns ErrUnknownRole for an encoded Role that is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownRole for an encoded Role that is not valid", func(t *testing.T) {
 			t.Parallel()
 			var got shard.Replica
 			assert.ErrorIs(t, got.UnmarshalBinary(decodeHex(t, unknownRoleHex)), shard.ErrUnknownRole,

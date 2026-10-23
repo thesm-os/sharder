@@ -17,7 +17,7 @@ type Load map[string]float64
 
 // Observed is what a node reports about one of its replicas.
 //
-// The zero Observed is no report. Its Status is the zero Status, which is not Valid.
+// The zero Observed is no report. Its Status is the zero Status, which is not valid.
 //
 // # Encoding
 //
@@ -25,7 +25,7 @@ type Load map[string]float64
 // field 3, Status is field 4, Load is field 5, Fault is field 6, Cause is field 7,
 // Range is field 8, Parents is field 9, and Reported is field 10. The codec returns
 // an error that wraps [ErrUnknownRole], [ErrUnknownStatus] or [ErrUnknownFault] for a
-// Role, a Status or a Fault other than zero that is not Valid.
+// Role, a Status or a Fault other than zero that is not valid.
 //
 // # Concurrency
 //

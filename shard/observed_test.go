@@ -74,7 +74,7 @@ var recordedObserved = shard.Observed{
 }
 
 // TestObserved checks the recorded encoding of an Observed, and the refusal of a
-// Role, a Status or a Fault that is not Valid.
+// Role, a Status or a Fault that is not valid.
 func TestObserved(t *testing.T) {
 	t.Parallel()
 
@@ -113,17 +113,17 @@ func TestObserved(t *testing.T) {
 			want error
 		}{
 			{
-				name: "returns ErrUnknownRole for a Role that is not Valid",
+				name: "returns ErrUnknownRole for a Role that is not valid",
 				give: shard.Observed{Role: shard.RoleLearner + 1, Status: shard.StatusServing},
 				want: shard.ErrUnknownRole,
 			},
 			{
-				name: "returns ErrUnknownStatus for a Status other than zero that is not Valid",
+				name: "returns ErrUnknownStatus for a Status other than zero that is not valid",
 				give: shard.Observed{Status: shard.StatusFailed + 1},
 				want: shard.ErrUnknownStatus,
 			},
 			{
-				name: "returns ErrUnknownFault for a Fault that is not Valid",
+				name: "returns ErrUnknownFault for a Fault that is not valid",
 				give: shard.Observed{Status: shard.StatusServing, Fault: shard.FaultPermanent + 1},
 				want: shard.ErrUnknownFault,
 			},
@@ -154,17 +154,17 @@ func TestObserved(t *testing.T) {
 			want error
 		}{
 			{
-				name: "returns ErrUnknownRole for an encoded Role that is not Valid",
+				name: "returns ErrUnknownRole for an encoded Role that is not valid",
 				give: unknownObservedRoleHex,
 				want: shard.ErrUnknownRole,
 			},
 			{
-				name: "returns ErrUnknownStatus for an encoded Status that is not Valid",
+				name: "returns ErrUnknownStatus for an encoded Status that is not valid",
 				give: unknownStatusHex,
 				want: shard.ErrUnknownStatus,
 			},
 			{
-				name: "returns ErrUnknownFault for an encoded Fault that is not Valid",
+				name: "returns ErrUnknownFault for an encoded Fault that is not valid",
 				give: unknownFaultHex,
 				want: shard.ErrUnknownFault,
 			},

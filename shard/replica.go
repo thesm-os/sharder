@@ -12,7 +12,7 @@ package shard
 // # Encoding
 //
 // kanon generates the codec of Replica. Node is field 1, and Role is field 2. The
-// codec returns an error that wraps [ErrUnknownRole] for a Role that is not Valid.
+// codec returns an error that wraps [ErrUnknownRole] for a Role that is not valid.
 //
 // # Concurrency
 //
