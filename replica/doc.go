@@ -88,4 +88,6 @@
 // telemetry of go.thesmos.sh/core, and the packages config, fence, internal/driver,
 // internal/machine, internal/machine/agent, membership, protocol, shard and store of
 // go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package replica
