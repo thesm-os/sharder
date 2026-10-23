@@ -287,6 +287,7 @@ linters:
         - (fs|filepath)\.WalkDir\(
         - filepath\.Walk\(
         - errs\.WithClass\(
+        - machine\.ClassifyAttempt\(
     # G115 analyses each function alone. The sharder bounds each count where it validates a
     # configuration or a range, so G115 reports conversions of values that an earlier check
     # bounds.
@@ -351,8 +352,11 @@ formatters:
     gofumpt:
       extra:
         group-params: true
+    # golines keeps each struct tag as it is written. Its default, reformat-tags, pads the keys of
+    # the tags of a struct into columns.
     golines:
       max-len: 120
+      reformat-tags: false
     # The packages of the sharder form an import group of their own.
     gci:
       sections:

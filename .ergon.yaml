@@ -60,9 +60,15 @@ common:
   # The release of github.com/pre-commit/pre-commit-hooks, whose hooks check the hygiene of the
   # files before each commit.
   pre-commit-hooks: v6.0.0
-  # The targets of the Makefile that the hooks of .pre-commit-config.yaml run, at each stage of git.
-  # An empty list turns the hooks of its stage off.
+  # The hooks of .pre-commit-config.yaml: the paths that the hooks of file hygiene keep as they are,
+  # and the targets of the Makefile that the hooks run at each stage of git. An empty list of
+  # targets turns the hooks of its stage off.
   hooks:
+    # A regular expression of the paths whose content the hooks trailing-whitespace,
+    # end-of-file-fixer, mixed-line-ending and check-added-large-files keep as it is, such as
+    # ^models/. pre-commit matches it with the re module of Python. The other hooks still check
+    # those paths. The empty string turns the exclusion off.
+    exclude: ""
     # The targets that run before each commit, in order: fmt, lint, test, audit or check.
     pre-commit: [lint, test]
     # The targets that run before each push, in order: fmt, lint, test, audit or check.
@@ -156,6 +162,11 @@ github:
         commit: 1e69f48acb82d1966a394da916b4c1698aa569d6
         release: v4.2.2
     timeout: 15
+  # When true, ergon init renders security.yml with the CodeQL analysis of each language, the
+  # dependency review of each pull request and the weekly Scorecard, and codeql.yml. A private
+  # repository needs GitHub Code Security for the analysis and the review, so a private repository
+  # without it sets false. The Scorecard runs in a public repository alone.
+  code-security: true
 go:
   # The tools of the targets and of the releases of Go, which ergon tool run installs: a Go module
   # with go install, as <module>@<version>, and a release binary by its version and the SHA-256 of
@@ -276,8 +287,9 @@ go:
   # packages and cask; module, the directory of the module in go.work, . for the root; main, the
   # package of the command in the module; description, one line, and for a cask one that brew audit
   # accepts, such as one without a full stop at its end; platforms, every platform when empty;
-  # completions, true for a cobra program; packages, from deb, rpm and apk; homebrew, true for a
-  # cask in homebrew.tap; license, the license of the repository when empty.
+  # completions, true for a command whose command completion writes the scripts of bash, zsh and
+  # fish, as in a program of cobra or of go.stealthscale.io/cli; packages, from deb, rpm and apk;
+  # homebrew, true for a cask in homebrew.tap; license, the license of the repository when empty.
   binaries: []
   # The options of the casks of the commands under binaries whose homebrew is true.
   homebrew:

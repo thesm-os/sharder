@@ -91,11 +91,12 @@ linters:
     gosec:
       excludes:
         - G115
-    # errs.WithClass of core wraps an error with a class, so the error that it returns already
-    # contains its cause.
+    # errs.WithClass of core and machine.ClassifyAttempt return their error with a class, so
+    # the error that they return already contains its cause.
     wrapcheck:
       ignore-sig-regexps:
         - errs\.WithClass\(
+        - machine\.ClassifyAttempt\(
 
 formatters:
   settings:

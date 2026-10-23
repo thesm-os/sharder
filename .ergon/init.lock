@@ -1,5 +1,5 @@
 {
-  "ergon": "0.9.1",
+  "ergon": "0.10.0",
   "files": [
     {
       "path": ".commitlint.yaml",
@@ -69,7 +69,7 @@
     {
       "path": ".github/workflows/codeql.yml",
       "producer": "github",
-      "sha256": "219b2a3e23e5b10b2e7ea9e33cb6bfb937d97c93ac9886df9d86793370e4af8b"
+      "sha256": "5e07fa561318aaf54ca5a6d3edab8644647d25de75225b40cf3fe2474fb1abaa"
     },
     {
       "path": ".github/workflows/nightly.yml",
@@ -84,7 +84,7 @@
     {
       "path": ".github/workflows/security.yml",
       "producer": "github",
-      "sha256": "623fd26152fc68d822fcf30ffb781d146bd8efb3a94d3ec0ed709b5c2a67f45b"
+      "sha256": "d8e417da7c7c24961381966bc06f18d494867fc77fde0d3925910253f1a5b2e3"
     },
     {
       "path": ".github/workflows/version.yml",
@@ -100,8 +100,8 @@
     {
       "path": ".golangci.yml",
       "producer": "go",
-      "local": "fc204f74ea02d45f4b6d3641e172870a607a295dce3d6e079d6338fa7d155023",
-      "sha256": "0fcfa482f1a387a517ae02eac90ec038a7aa8b26646aa1294e3605ec24a46f51"
+      "local": "d872f3881501890b54d1559eff1c8523be79fd6500e9e9c422f0b2f9f7a6c857",
+      "sha256": "2f485ace28b951173fc403f4ffbe720129549e0dcf3a1703fab6e620778c6696"
     },
     {
       "path": ".markdownlint.yml",
@@ -116,7 +116,7 @@
     {
       "path": ".pre-commit-config.yaml",
       "producer": "common",
-      "sha256": "ecaa2fc2648601525a24707cf06193b20f5e8db8df7d0b1264caaeb9e629b4c2"
+      "sha256": "6eac5d714a351b97a4cdf0d698c8c218c534c035d7ad967aa5bd3c952d2dc42a"
     },
     {
       "path": "CODE_OF_CONDUCT.md",
@@ -139,6 +139,7 @@
     "common.ergon": [
       "ergon"
     ],
+    "common.hooks.exclude": "",
     "common.hooks.pre-commit": [
       "lint",
       "test"
@@ -187,6 +188,7 @@
     "github.ci.actions.upload-artifact.release": "v7.0.2",
     "github.ci.actions.upload-artifact.uses": "actions/upload-artifact",
     "github.ci.timeout": 15,
+    "github.code-security": true,
     "github.linux": "ubuntu-26.04",
     "github.make": "4.4.1",
     "github.nightly.schedule": "0 3 * * *",
