@@ -88,13 +88,14 @@ var (
 //     has a fault of s2.
 //   - s3 has its primary on the gone node g1, and a load without bytes.
 //   - s4 has the label t1, and no placement and no load.
-//   - s5 has its primary on n3, and a transition in flight to n1 with the fallback n3.
+//   - s5 has its primary on n3, and a transition in flight of its primary to n1 with the
+//     fallback n3.
 //
 // The layout lists the shards in the order s3, s1, s5, s2, s4, and Input.Nodes lists
 // n3 before n1 and n2, so NewState orders both.
 func cell() *placement.Input {
 	return &placement.Input{
-		Transitions: map[shard.ID]placement.InFlight{s5: {To: n1, Fallback: n3}},
+		Transitions: map[shard.ID]placement.InFlight{s5: {To: n1, Fallback: n3, Role: shard.RolePrimary}},
 		Faults:      map[shard.ID][]shard.NodeID{s2: {n3}},
 		Draining:    map[shard.NodeID]bool{d1: true, x1: false},
 		ShardLoad: map[shard.ID]shard.Load{
@@ -329,6 +330,22 @@ func TestState(t *testing.T) {
 			expect.NotContains(t, err.Error(), s9.String(), "the error must not name a higher shard")
 		})
 
+		t.Run("returns the lowest shard whose transition has a role that is not valid", func(t *testing.T) {
+			t.Parallel()
+			in := cell()
+			in.Transitions[s5] = placement.InFlight{To: n1, Role: shard.RoleLearner + 1}
+			in.Transitions[s4] = placement.InFlight{To: n2, Role: shard.RoleLearner + 2}
+			in.Transitions[s9] = placement.InFlight{To: n2, Role: shard.RoleLearner + 3}
+			assert.Deterministic(t, func(in *placement.Input) (string, error) {
+				_, err := placement.NewState(in)
+				return fmt.Sprint(err), nil
+			}, in, "NewState must return the same error on every call")
+			_, err := placement.NewState(in)
+			assert.ErrorIs(t, err, placement.ErrInput, "NewState must refuse a transition whose role is not valid")
+			expect.Contains(t, err.Error(), s4.String(), "the error must name the lowest such shard")
+			expect.NotContains(t, err.Error(), s5.String(), "the error must not name a higher shard")
+		})
+
 		t.Run("returns the lowest node that is accepting and draining", func(t *testing.T) {
 			t.Parallel()
 			in := cell()
@@ -455,7 +472,8 @@ func TestState(t *testing.T) {
 			t.Parallel()
 			got, ok := st.InFlight(s5)
 			assert.True(t, ok, "InFlight must report the transition of s5")
-			assert.Equal(t, got, placement.InFlight{To: n1, Fallback: n3}, "InFlight must return the transition")
+			assert.Equal(t, got, placement.InFlight{To: n1, Fallback: n3, Role: shard.RolePrimary},
+				"InFlight must return the transition")
 		})
 
 		t.Run("reports false for a shard without a transition", func(t *testing.T) {
@@ -471,6 +489,14 @@ func TestState(t *testing.T) {
 			in.Transitions[s1] = placement.InFlight{To: n3}
 			_, ok := newState(t, in).InFlight(s9)
 			assert.False(t, ok, "InFlight must report false for a shard outside the layout")
+		})
+
+		t.Run("ignores the transition of a shard that the layout does not list", func(t *testing.T) {
+			t.Parallel()
+			in := cell()
+			in.Transitions[s9] = placement.InFlight{To: n1, Role: shard.RoleLearner + 1}
+			_, ok := newState(t, in).InFlight(s1)
+			assert.False(t, ok, "the transition of a shard outside the layout must not freeze a shard of the layout")
 		})
 	})
 
@@ -751,6 +777,80 @@ func TestState(t *testing.T) {
 			in := cell()
 			in.Transitions[s5] = placement.InFlight{To: n1}
 			assert.False(t, newState(t, in).PeakCounts("", s5), "PeakCounts must not count the empty node")
+		})
+	})
+
+	t.Run("PeakCount", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give shard.NodeID
+			want int
+		}{
+			{name: "returns the shards with a replica on a node", give: n2, want: 2},
+			{name: "counts the shard of a transition at its destination", give: n1, want: 2},
+			{name: "counts the shard of a transition once at its fallback with its replica", give: n3, want: 2},
+			{name: "returns 0 for a node that the cell does not have", give: unknown},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(
+					t,
+					st.PeakCount(tt.give),
+					tt.want,
+					"PeakCount must count the shards on the node at the peak",
+				)
+			})
+		}
+
+		t.Run("returns 0 for the empty fallback of a transition", func(t *testing.T) {
+			t.Parallel()
+			in := cell()
+			in.Transitions[s5] = placement.InFlight{To: n1, Role: shard.RolePrimary}
+			assert.Equal(t, newState(t, in).PeakCount(""), 0, "PeakCount must not count the empty node")
+		})
+	})
+
+	t.Run("PeakRoleCount", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			node shard.NodeID
+			role shard.Role
+			want int
+		}{
+			{name: "returns the primaries of a node", node: n2, role: shard.RolePrimary, want: 1},
+			{
+				name: "counts the shard of a transition in its role at its destination",
+				node: n1, role: shard.RolePrimary, want: 2,
+			},
+			{
+				name: "counts the shard of a transition once at its fallback with its replica",
+				node: n3, role: shard.RolePrimary, want: 1,
+			},
+			{name: "returns 0 for a role without shards on the node", node: n1, role: shard.RoleSecondary},
+			{name: "returns 0 for a role that is not valid", node: n1, role: shard.RoleLearner + 1},
+			{name: "returns 0 for a node that the cell does not have", node: unknown, role: shard.RolePrimary},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, st.PeakRoleCount(tt.node, tt.role), tt.want,
+					"PeakRoleCount must count the shards of the role on the node at the peak")
+			})
+		}
+
+		t.Run("counts a transition without a role in no role", func(t *testing.T) {
+			t.Parallel()
+			in := cell()
+			in.Transitions[s5] = placement.InFlight{To: n1, Fallback: n3}
+			got := newState(t, in)
+			expect.Equal(t, got.PeakRoleCount(n1, shard.RolePrimary), 1, "the transition must not count as a primary")
+			expect.Equal(t, got.PeakRoleCount(n1, shard.RoleNone), 0, "the transition must not count in RoleNone")
+			expect.Equal(t, got.PeakCount(n1), 2, "the transition must count in PeakCount")
 		})
 	})
 
@@ -1063,6 +1163,12 @@ func TestState(t *testing.T) {
 				"the peak load of d1 must keep s1, which it hosted at the start")
 			expect.Equal(t, got.NodeLoad(n3)[placementtest.CPU], 9.0, "the load of s1 must count on n3")
 			expect.Equal(t, got.PeakLoad(n3)[placementtest.CPU], 9.0, "the peak load of n3 must count s1")
+			expect.Equal(t, got.PeakCount(d1), 1, "the peak count of d1 must keep s1, which it hosted at the start")
+			expect.Equal(t, got.PeakRoleCount(d1, shard.RoleSecondary), 1,
+				"the peak count of the secondaries of d1 must keep s1")
+			expect.Equal(t, got.PeakCount(n3), 3, "the peak count of n3 must count s1")
+			expect.Equal(t, got.PeakRoleCount(n3, shard.RoleSecondary), 2,
+				"the peak count of the secondaries of n3 must count s1")
 			expect.Equal(t, got.Labelled(t0, n3), 2, "the label of s1 must count on n3")
 			expect.Equal(t, got.LabelledNodes(t0), 3, "d1 must no longer count for the label of s1")
 			expect.Equal(t, got.Moved(), 1, "Moved must count the move")
@@ -1093,6 +1199,7 @@ func TestState(t *testing.T) {
 				"Apply must delete the replica")
 			expect.Equal(t, got.NodeLoad(n3)[placementtest.CPU], 3.0, "the load of s2 must leave n3")
 			expect.Equal(t, got.PeakLoad(n3)[placementtest.CPU], 7.0, "the peak load of n3 must keep s2")
+			expect.Equal(t, got.PeakCount(n3), 2, "the peak count of n3 must keep s2")
 		})
 
 		t.Run("returns the peak load of a node that a shard leaves again", func(t *testing.T) {
@@ -1106,6 +1213,24 @@ func TestState(t *testing.T) {
 				"the peak load of n1 must lose s2, which n1 did not host at the start")
 			expect.Equal(t, got.PeakLoad(n3), newState(t, cell()).PeakLoad(n3),
 				"the peak load of n3 must count s2 once")
+			expect.Equal(t, got.PeakCount(n1), 2, "the peak count of n1 must lose s2")
+			expect.Equal(t, got.PeakRoleCount(n1, shard.RoleSecondary), 0,
+				"the peak count of the secondaries of n1 must lose s2")
+			expect.Equal(t, got.PeakCount(n3), 2, "the peak count of n3 must count s2 once")
+		})
+
+		t.Run("counts a shard in a second role on a node that it left in its first role", func(t *testing.T) {
+			t.Parallel()
+			got := newState(t, cell())
+			assert.NoError(t, got.Apply(placement.Move{From: n2, To: n1, Shard: s2, Role: shard.RolePrimary}),
+				"Apply must move the primary of s2 off n2")
+			assert.NoError(t, got.Apply(placement.Move{From: n3, To: n2, Shard: s2, Role: shard.RoleSecondary}),
+				"Apply must move the secondary of s2 onto n2")
+			expect.Equal(t, got.PeakCount(n2), 2, "the peak count of n2 must count s2 once")
+			expect.Equal(t, got.PeakRoleCount(n2, shard.RolePrimary), 1,
+				"the peak count of the primaries of n2 must keep s2, which n2 hosted as a primary at the start")
+			expect.Equal(t, got.PeakRoleCount(n2, shard.RoleSecondary), 2,
+				"the peak count of the secondaries of n2 must count s2")
 		})
 
 		t.Run("keeps every index of the state equal to its definition", func(t *testing.T) {
@@ -1182,6 +1307,8 @@ func TestStateAllocs(t *testing.T) {
 		{name: "NodeLoad", call: func() { _ = st.NodeLoad(n1) }},
 		{name: "PeakLoad", call: func() { _ = st.PeakLoad(n1) }},
 		{name: "PeakCounts", call: func() { _ = st.PeakCounts(n1, s5) }},
+		{name: "PeakCount", call: func() { _ = st.PeakCount(n1) }},
+		{name: "PeakRoleCount", call: func() { _ = st.PeakRoleCount(n1, shard.RolePrimary) }},
 		{name: "Metrics", call: func() { _ = st.Metrics() }},
 		{name: "Capacity", call: func() { _, _ = st.Capacity(n1, placementtest.Bytes) }},
 		{name: "Utilisation", call: func() { _, _ = st.Utilisation(n1, placementtest.Bytes) }},
@@ -1279,6 +1406,32 @@ func BenchmarkState(b *testing.B) {
 
 		assert.True(b, got, "the benchmark must measure a node that counts the shard")
 	})
+
+	b.Run("PeakCount", func(b *testing.B) {
+		var got int
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = st.PeakCount(node)
+		}
+
+		assert.NotEqual(b, got, 0, "the benchmark must measure a node with shards")
+	})
+
+	b.Run("PeakRoleCount", func(b *testing.B) {
+		var got int
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = st.PeakRoleCount(node, shard.RolePrimary)
+		}
+
+		assert.NotEqual(b, got, 0, "the benchmark must measure a node with primaries")
+	})
 }
 
 // newState returns the state of in, and stops tb when NewState refuses in.
@@ -1346,16 +1499,29 @@ func assertIndexes(
 		assert.Equal(tb, st.MovedNode(n), moves.nodes[n], "MovedNode must count the moves from and to the node")
 		_, accepting := st.Node(n)
 		var shards []shard.ID
-		var roles [shard.RoleCount]int
+		var roles, peakRoles [shard.RoleCount]int
+		peakCount := 0
 		load, peak := map[string]float64{}, map[string]float64{}
 		labelled := map[tag.Tag]int{}
 		for _, id := range st.Shards() {
 			on := func(r shard.Replica) bool { return r.Node == n }
 			hosted := slices.IndexFunc(replicas[id], on)
 			f, frozen := in.Transitions[id]
-			counts := hosted >= 0 || (frozen && (f.To == n || f.Fallback == n))
+			reserved := frozen && (f.To == n || f.Fallback == n)
+			counts := hosted >= 0 || reserved
 			peaks := counts || slices.ContainsFunc(st.Initial(id), on)
 			assert.Equal(tb, st.PeakCounts(n, id), peaks, "PeakCounts must follow its definition")
+			if peaks {
+				peakCount++
+			}
+			for r := range peakRoles {
+				role := shard.Role(r)
+				replica := shard.Replica{Node: n, Role: role}
+				placed := slices.Contains(replicas[id], replica) || slices.Contains(st.Initial(id), replica)
+				if placed || reserved && role != shard.RoleNone && f.Role == role {
+					peakRoles[r]++
+				}
+			}
 			for _, m := range st.Metrics() {
 				if counts {
 					load[m.Name] += st.ShardLoad(id)[m.Name]
@@ -1377,8 +1543,15 @@ func assertIndexes(
 			}
 		}
 		assert.Equal(tb, st.OnNode(n), shards, "OnNode must list the shards of the node", assert.EquateEmpty())
+		assert.Equal(tb, st.PeakCount(n), peakCount, "PeakCount must follow its definition")
 		for r := range roles {
 			assert.Equal(tb, st.RoleCount(n, shard.Role(r)), roles[r], "RoleCount must count the replicas of the role")
+			assert.Equal(
+				tb,
+				st.PeakRoleCount(n, shard.Role(r)),
+				peakRoles[r],
+				"PeakRoleCount must follow its definition",
+			)
 			if accepting {
 				total[r] += roles[r]
 			}

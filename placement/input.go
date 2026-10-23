@@ -98,8 +98,9 @@ type Snapshot struct {
 }
 
 // InFlight is the part of a transition in flight that placement accounts for: the
-// nodes on which the transition can place the replica of the shard. The load of the
-// shard counts on both nodes until the transition ends.
+// nodes on which the transition can place the replica of the shard, and the role of
+// that replica. The load of the shard counts on both nodes until the transition ends,
+// and so does the shard in the peak counts of the nodes.
 //
 // # Concurrency
 //
@@ -111,6 +112,9 @@ type InFlight struct {
 	// Fallback is the node that the abort path of the transition makes the writer. It
 	// is empty when the transition has none.
 	Fallback shard.NodeID
+	// Role is the role of the replica that the transition places. A transition whose
+	// Role is shard.RoleNone counts in no role of the peak counts.
+	Role shard.Role
 }
 
 // Metric is a load metric of the namespace, with the capacity of a node that it

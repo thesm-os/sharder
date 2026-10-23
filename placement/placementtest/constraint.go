@@ -34,6 +34,8 @@ type view struct {
 	Load map[shard.NodeID]shard.Load
 	// Peak maps each node to its peak load.
 	Peak map[shard.NodeID]shard.Load
+	// Count maps each node to its peak count.
+	Count map[shard.NodeID]int
 	// Moved is the number of moves that the state applied.
 	Moved int
 }
@@ -106,6 +108,7 @@ func viewOf(st *placement.State) view {
 		Shards:   map[shard.NodeID][]shard.ID{},
 		Load:     map[shard.NodeID]shard.Load{},
 		Peak:     map[shard.NodeID]shard.Load{},
+		Count:    map[shard.NodeID]int{},
 		Moved:    st.Moved(),
 	}
 	nodes := slices.Clone(st.Nodes())
@@ -119,6 +122,7 @@ func viewOf(st *placement.State) view {
 		v.Shards[n] = slices.Clone(st.OnNode(n))
 		v.Load[n] = maps.Clone(st.NodeLoad(n))
 		v.Peak[n] = maps.Clone(st.PeakLoad(n))
+		v.Count[n] = st.PeakCount(n)
 	}
 	return v
 }

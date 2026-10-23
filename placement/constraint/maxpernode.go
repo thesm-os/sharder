@@ -6,6 +6,7 @@ package constraint
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"go.thesmos.sh/sharder/placement"
 	"go.thesmos.sh/sharder/shard"
@@ -47,10 +48,15 @@ func (c MaxPerNodeConfig) Validate() error {
 // the configuration has no role. [NewMaxPerNode] returns a MaxPerNode, and the zero
 // MaxPerNode is not ready for use.
 //
-// MaxPerNode counts the replicas on the destination with the replica that the move
-// places. For a move whose From equals its To, it counts the replicas as they are. A
-// move that removes a replica passes, and so does a move of a replica in another role
-// than the role of the configuration.
+// MaxPerNode checks a move that relocates or adds a replica against the peak count of
+// the destination with the shard: the shards that count on the node at the peak of the
+// pass, which PeakCount and PeakRoleCount return. A shard keeps its replica on its source
+// until its transition ends, and a transition in flight counts at its destination and at
+// its fallback, so the moves of one plan and the transitions into a node share its room.
+// A shard that counts on the destination already, such as a replica that returns to its
+// node of the start of the pass, counts once. For a move whose From equals its To,
+// MaxPerNode counts the replicas as they are. A move that removes a replica passes, and so
+// does a move of a replica in another role than the role of the configuration.
 //
 // # Concurrency
 //
@@ -96,14 +102,23 @@ func (c *MaxPerNode) Check(st *placement.State, m placement.Move) error {
 	if c.role != shard.RoleNone && m.Role != c.role {
 		return nil
 	}
-	// The empty node of a removal has no replicas, so a removal counts one replica,
-	// and Max is at least one.
 	count := len(st.OnNode(m.To))
 	if c.role != shard.RoleNone {
 		count = st.RoleCount(m.To, c.role)
 	}
 	if m.From != m.To {
-		count++
+		// The empty node of a removal has no replicas, so a removal counts one replica,
+		// and Max is at least one.
+		count = st.PeakCount(m.To)
+		if c.role != shard.RoleNone {
+			count = st.PeakRoleCount(m.To, c.role)
+		}
+		initial := slices.ContainsFunc(st.Initial(m.Shard), func(r shard.Replica) bool {
+			return r.Node == m.To && (c.role == shard.RoleNone || r.Role == c.role)
+		})
+		if !initial {
+			count++
+		}
 	}
 	if count > c.max {
 		return ErrMaxPerNode

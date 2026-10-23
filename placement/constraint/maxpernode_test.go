@@ -139,6 +139,19 @@ func TestMaxPerNode(t *testing.T) {
 				max:  1,
 				give: placement.Move{From: n1, Shard: s1, Role: shard.RolePrimary},
 			},
+			{
+				name: "returns ErrMaxPerNode for a replica that the destination of a transition fills",
+				max:  2,
+				give: placement.Move{To: n2, Shard: s4, Role: shard.RolePrimary},
+				want: constraint.ErrMaxPerNode,
+			},
+			{
+				name: "returns ErrMaxPerNode for a primary that the destination of a transition fills",
+				max:  1,
+				role: shard.RolePrimary,
+				give: placement.Move{To: n2, Shard: s4, Role: shard.RolePrimary},
+				want: constraint.ErrMaxPerNode,
+			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
@@ -147,6 +160,58 @@ func TestMaxPerNode(t *testing.T) {
 				assert.Equal(t, got, tt.want, "Check must return the error of the Max")
 			})
 		}
+
+		t.Run("returns ErrMaxPerNode for a replica on a node that a move of the pass left", func(t *testing.T) {
+			t.Parallel()
+			st := newState(t, cell())
+			assert.NoError(t, st.Apply(placement.Move{From: n3, To: n4, Shard: s2, Role: shard.RolePrimary}),
+				"the state must move the primary of s2 off n3")
+			got := newMaxPerNode(t, 2, shard.RoleNone).Check(st,
+				placement.Move{To: n3, Shard: s4, Role: shard.RolePrimary})
+			assert.Equal(t, got, constraint.ErrMaxPerNode, "Check must count s2 on n3 until the move of s2 ends")
+		})
+
+		t.Run("returns nil for a replica that returns to the node that it left in the pass", func(t *testing.T) {
+			t.Parallel()
+			st := newState(t, cell())
+			assert.NoError(t, st.Apply(placement.Move{From: n3, To: n4, Shard: s2, Role: shard.RolePrimary}),
+				"the state must move the primary of s2 off n3")
+			got := newMaxPerNode(t, 1, shard.RolePrimary).Check(st,
+				placement.Move{From: n4, To: n3, Shard: s2, Role: shard.RolePrimary})
+			assert.NoError(t, got, "Check must count s2 once on n3, where it was at the start of the pass")
+		})
+
+		t.Run("returns nil for a replica that returns to the node that it left in the pass under every role",
+			func(t *testing.T) {
+				t.Parallel()
+				st := newState(t, cell())
+				assert.NoError(t, st.Apply(placement.Move{From: n3, To: n4, Shard: s2, Role: shard.RolePrimary}),
+					"the state must move the primary of s2 off n3")
+				got := newMaxPerNode(t, 2, shard.RoleNone).Check(st,
+					placement.Move{From: n4, To: n3, Shard: s2, Role: shard.RolePrimary})
+				assert.NoError(t, got, "Check must count s2 once on n3, beside the secondary of s6")
+			})
+
+		t.Run("returns nil for a replica that keeps a node at its Max beside a transition to the node",
+			func(t *testing.T) {
+				t.Parallel()
+				got := newMaxPerNode(t, 1, shard.RoleNone).Check(newState(t, cell()),
+					placement.Move{From: n2, To: n2, Shard: s1, Role: shard.RoleSecondary})
+				assert.NoError(t, got,
+					"Check must count the replicas of a node as they are for a replica that it keeps")
+			})
+
+		t.Run("returns ErrMaxPerNode for a primary on a node that hosted another role of its shard",
+			func(t *testing.T) {
+				t.Parallel()
+				st := newState(t, cell())
+				assert.NoError(t, st.Apply(placement.Move{From: n2, To: n4, Shard: s1, Role: shard.RoleSecondary}),
+					"the state must move the secondary of s1 off n2")
+				got := newMaxPerNode(t, 1, shard.RolePrimary).Check(st,
+					placement.Move{From: n1, To: n2, Shard: s1, Role: shard.RolePrimary})
+				assert.Equal(t, got, constraint.ErrMaxPerNode,
+					"Check must count the primary of s1 on n2 beside the primary of the transition of s5")
+			})
 	})
 }
 

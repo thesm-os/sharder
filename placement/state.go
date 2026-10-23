@@ -38,6 +38,16 @@ import (
 // the mean load of the shards with one. A node has a load of 0 on each metric that no
 // shard on the node reports.
 //
+// # Peak counts
+//
+// PeakCount counts the shards of a node as PeakLoad counts their load: each shard with a
+// replica on the node, with a replica on the node when the pass started, or with a
+// transition in flight whose destination or fallback is the node. PeakRoleCount counts
+// the same shards in one role, with the role of the replica of each shard on the node and
+// the Role of each transition. A constraint that bounds the replicas of a node checks the
+// peak counts. A plan that it passes is then within the bound for every subset of its
+// moves, and for every outcome of the transitions in flight.
+//
 // # Order
 //
 // Shards, Nodes and OnNode return IDs in ascending order. Replicas returns the
@@ -148,6 +158,10 @@ type nodeState struct {
 	shards []shard.ID
 	// roles counts the replicas on the node in each role.
 	roles [shard.RoleCount]int32
+	// peakRoles counts the shards that count on the node at the peak in each role.
+	peakRoles [shard.RoleCount]int32
+	// peakShards counts the shards that count on the node at the peak.
+	peakShards int32
 	// moved counts the moves that Apply applied to or from the node.
 	moved int32
 	// draining reports that the node drains.
@@ -160,6 +174,17 @@ type labelledKey struct {
 	label tag.Tag
 	// node is the position of the node in State.nodes.
 	node int32
+}
+
+// peaks reports which peaks of a node a move of a replica onto it or off it changes. A
+// peak keeps each shard that had a replica on the node when the pass started.
+type peaks struct {
+	// shard is true when the shard had no replica on the node when the pass started, so
+	// the peak load and the peak count of the node change.
+	shard bool
+	// role is true when the shard had no replica in the role of the move on the node when
+	// the pass started, so the peak count of that role changes.
+	role bool
 }
 
 // NewState builds the state of in before any move. The state refers to in, so the
@@ -185,6 +210,8 @@ type labelledKey struct {
 //     and for two replicas of one shard on one node.
 //   - an error that wraps ErrInput for a load of a metric that is negative or not
 //     finite.
+//   - an error that wraps ErrInput for a transition in flight of a shard of the layout
+//     whose Role is not valid.
 func NewState(in *Input) (*State, error) {
 	if in == nil {
 		return nil, fmt.Errorf("%w: the input is nil", ErrInput)
@@ -203,6 +230,9 @@ func NewState(in *Input) (*State, error) {
 		return nil, err
 	}
 	if err := st.indexLoads(); err != nil {
+		return nil, err
+	}
+	if err := st.indexTransitions(); err != nil {
 		return nil, err
 	}
 	st.indexReplicas()
@@ -459,6 +489,39 @@ func (st *State) PeakCounts(n shard.NodeID, id shard.ID) bool {
 	}
 	f := st.in.Transitions[id]
 	return f.To == n || f.Fallback == n
+}
+
+// PeakCount returns the number of shards that count on node n at the peak of the pass:
+// the shards with a replica on n, the shards that had a replica on n when the pass
+// started, and the shards with a transition in flight whose destination or fallback is n.
+// Each shard counts once. It returns 0 for a node that the state does not know.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (st *State) PeakCount(n shard.NodeID) int {
+	x, ok := st.nodeIndex[n]
+	if !ok {
+		return 0
+	}
+	return int(st.nodes[x].peakShards)
+}
+
+// PeakRoleCount returns the number of shards that count on node n in role r at the peak
+// of the pass: the shards with a replica in r on n, the shards that had a replica in r on
+// n when the pass started, and the shards with a transition in flight in r whose
+// destination or fallback is n. Each shard counts once in each role. It returns 0 for a
+// node that the state does not know, and for a role that is not valid.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (st *State) PeakRoleCount(n shard.NodeID, r shard.Role) int {
+	x, ok := st.nodeIndex[n]
+	if !ok || !r.Valid() {
+		return 0
+	}
+	return int(st.nodes[x].peakRoles[r])
 }
 
 // Metrics returns the metrics of the input in their order. The Capacity of each
@@ -933,17 +996,36 @@ func (st *State) indexLoads() error {
 	return nil
 }
 
-// indexReplicas records the shards with a transition in flight, the gone nodes, and
-// for each node its shards, its counts of roles, its loads and its counts of labels.
-// It reads the shards in the order of their IDs, so the lists of the nodes are in
-// ascending order.
-func (st *State) indexReplicas() {
-	for id := range st.in.Transitions {
-		if i, ok := st.index.Get(id); ok {
-			st.shards[i].frozen = true
+// indexTransitions marks each shard of the layout that has a transition in flight. It
+// ignores the transitions of the shards that the layout does not list, and reports the
+// problem of the lowest ID.
+//
+// Error modes:
+//   - an error that wraps ErrInput for a transition whose Role is not valid.
+func (st *State) indexTransitions() error {
+	var invalid shard.ID
+	for id, f := range st.in.Transitions {
+		i, ok := st.index.Get(id)
+		if !ok {
+			continue
+		}
+		st.shards[i].frozen = true
+		//dokimi:mutate-skip ror-boundary: the keys of a map differ, so two IDs never compare equal
+		if !f.Role.Valid() && (invalid.IsZero() || id.Compare(invalid) < 0) {
+			invalid = id
 		}
 	}
+	if invalid.IsZero() {
+		return nil
+	}
+	return fmt.Errorf("%w: the transition of shard %v has the role %v, which is not valid",
+		ErrInput, invalid, st.in.Transitions[invalid].Role)
+}
 
+// indexReplicas records the gone nodes, and for each node its shards, its counts of
+// roles, its peak counts, its loads and its counts of labels. It reads the shards in the
+// order of their IDs, so the lists of the nodes are in ascending order.
+func (st *State) indexReplicas() {
 	counts := make([]int, 0, len(st.nodes))
 	replicas := 0
 	for i := range st.shards {
@@ -1006,10 +1088,13 @@ func (st *State) indexReplicas() {
 	}
 }
 
-// indexShard records the shard at position i of ids in the lists, the counts of roles
-// and the counts of labels of the nodes of its replicas. It adds its load to sums on
-// each node where it counts, once per node. sums contains the load of the node at
-// position x of nodes on the metric at position k of metrics at x*len(metrics)+k.
+// indexShard records the shard at position i of ids in the lists, the counts of roles,
+// the peak counts and the counts of labels of the nodes of its replicas. It adds its
+// load to sums on each node where it counts, once per node. sums contains the load of
+// the node at position x of nodes on the metric at position k of metrics at
+// x*len(metrics)+k. The destination and the fallback of a transition in flight count
+// the shard in its load and its peak counts, and in the peak count of the Role of the
+// transition.
 func (st *State) indexShard(i int32, sums []float64) {
 	s := &st.shards[i]
 	width := len(st.metrics)
@@ -1025,6 +1110,8 @@ func (st *State) indexShard(i int32, sums []float64) {
 		n := &st.nodes[x]
 		n.shards = append(n.shards, st.ids[i])
 		n.roles[r.Role]++
+		n.peakRoles[r.Role]++
+		n.peakShards++
 		st.label(labels, x, 1)
 		add(x)
 	}
@@ -1034,11 +1121,17 @@ func (st *State) indexShard(i int32, sums []float64) {
 	}
 	f := st.in.Transitions[st.ids[i]]
 	for k, n := range [...]shard.NodeID{f.To, f.Fallback} {
-		on := func(r shard.Replica) bool { return r.Node == n }
-		if n == "" || (k == 1 && n == f.To) || slices.ContainsFunc(s.replicas, on) {
+		if n == "" || (k == 1 && n == f.To) {
 			continue
 		}
-		add(st.nodeIndex[n])
+		x := st.nodeIndex[n]
+		if !slices.ContainsFunc(s.replicas, func(r shard.Replica) bool { return r.Node == n }) {
+			st.nodes[x].peakShards++
+			add(x)
+		}
+		if f.Role != shard.RoleNone && !slices.Contains(s.replicas, shard.Replica{Node: n, Role: f.Role}) {
+			st.nodes[x].peakRoles[f.Role]++
+		}
 	}
 }
 
@@ -1093,10 +1186,16 @@ func (st *State) apply(i int32, from int, to int32, m Move) {
 		return slices.ContainsFunc(s.initial, func(r shard.Replica) bool { return r.Node == n })
 	}
 	if from >= 0 {
-		st.shift(i, st.nodeIndex[m.From], m.Role, -1, !initial(m.From))
+		st.shift(i, st.nodeIndex[m.From], m.Role, -1, peaks{
+			shard: !initial(m.From),
+			role:  !slices.Contains(s.initial, shard.Replica{Node: m.From, Role: m.Role}),
+		})
 	}
 	if to >= 0 {
-		st.shift(i, to, m.Role, 1, !initial(m.To))
+		st.shift(i, to, m.Role, 1, peaks{
+			shard: !initial(m.To),
+			role:  !slices.Contains(s.initial, shard.Replica{Node: m.To, Role: m.Role}),
+		})
 	}
 	if from >= 0 && to >= 0 {
 		s.replicas[from].Node = m.To
@@ -1110,8 +1209,8 @@ func (st *State) apply(i int32, from int, to int32, m Move) {
 // shift moves one replica of the shard at position i of ids in the role r onto the
 // node at position x of nodes when sign is 1, and off it when sign is -1. It updates
 // the list, the counts of roles, the loads, the utilisation and the counts of labels
-// of the node. peak reports whether the peak load of the node changes too.
-func (st *State) shift(i, x int32, r shard.Role, sign int32, peak bool) {
+// of the node. p reports which peaks of the node change too.
+func (st *State) shift(i, x int32, r shard.Role, sign int32, p peaks) {
 	n := &st.nodes[x]
 	id := st.ids[i]
 	pos, _ := slices.BinarySearchFunc(n.shards, id, shard.ID.Compare)
@@ -1122,6 +1221,12 @@ func (st *State) shift(i, x int32, r shard.Role, sign int32, peak bool) {
 		n.shards = slices.Delete(n.shards, pos, pos+1)
 	}
 	n.roles[r] += sign
+	if p.role {
+		n.peakRoles[r] += sign
+	}
+	if p.shard {
+		n.peakShards += sign
+	}
 	if n.node != nil {
 		st.total[r] += int(sign)
 	}
@@ -1130,7 +1235,7 @@ func (st *State) shift(i, x int32, r shard.Role, sign int32, peak bool) {
 	for k, m := range st.metrics {
 		v := float64(sign) * st.loads[int(i)*width+k]
 		n.load[m.Name] += v
-		if peak {
+		if p.shard {
 			n.peak[m.Name] += v
 		}
 		if n.node == nil {

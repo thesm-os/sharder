@@ -132,8 +132,9 @@ var Replicated = replication.Model{
 //     a generated order, and the shard at position i has the ID whose last byte is i+1
 //     in the order of the IDs.
 //   - A replica of a placed shard is on an accepting, a draining or a gone node.
-//   - A shard has a load of CPU and Bytes or none, a transition in flight or none,
-//     and a fault on the node of its first replica or none.
+//   - A shard has a load of CPU and Bytes or none, a transition in flight of a replica
+//     in the first role of the model or none, and a fault on the node of its first
+//     replica or none.
 //   - The clock is a fake clock that the laws do not advance. Rand is a PCG source
 //     with a generated seed.
 //
@@ -283,6 +284,7 @@ func drawShard(c *prop.Case, in *placement.Input, sh shard.ID, pool []shard.Node
 		in.Transitions[sh] = placement.InFlight{
 			To:       c.Draw(prop.SampledFrom(pool...), labelTo),
 			Fallback: c.Draw(prop.SampledFrom(append([]shard.NodeID{""}, pool...)...), labelFallback),
+			Role:     in.Model.Roles[0].Name,
 		}
 	}
 	if len(replicas) > 0 && c.Draw(prop.Boolean(prop.Odds(1, 5)), labelFault) {

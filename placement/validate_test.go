@@ -292,13 +292,24 @@ func TestValidate(t *testing.T) {
 
 		t.Run("returns nil for a replica that brings a node to the Max of a constraint", func(t *testing.T) {
 			t.Parallel()
-			perNode, err := constraint.NewMaxPerNode(constraint.MaxPerNodeConfig{Max: 2})
-			assert.NoError(t, err, "NewMaxPerNode must accept a Max of 2")
+			perNode, err := constraint.NewMaxPerNode(constraint.MaxPerNodeConfig{Max: 3})
+			assert.NoError(t, err, "NewMaxPerNode must accept a Max of 3")
 			violations, err := placement.Validate(cell(), placement.Plan{Targets: map[shard.ID]placement.Target{
 				s4: {Deficit: 2, Replicas: []shard.Replica{{Node: n1, Role: shard.RolePrimary}}},
 			}}, []placement.Constraint{perNode})
 			expect.NoError(t, err, "Validate must count the added replica once")
 			expect.Empty(t, violations, "Validate must return no violation for a node at the Max")
+		})
+
+		t.Run("returns ErrPlan for a replica on a node that a transition in flight fills", func(t *testing.T) {
+			t.Parallel()
+			perNode, err := constraint.NewMaxPerNode(constraint.MaxPerNodeConfig{Max: 2})
+			assert.NoError(t, err, "NewMaxPerNode must accept a Max of 2")
+			_, err = placement.Validate(cell(), placement.Plan{Targets: map[shard.ID]placement.Target{
+				s4: {Deficit: 2, Replicas: []shard.Replica{{Node: n1, Role: shard.RolePrimary}}},
+			}}, []placement.Constraint{perNode})
+			expect.ErrorIs(t, err, placement.ErrPlan, "Validate must refuse a third shard on n1")
+			expect.ErrorIs(t, err, constraint.ErrMaxPerNode, "the error must wrap the error of the constraint")
 		})
 
 		t.Run("returns nil for a target that keeps a shard with a transition in flight", func(t *testing.T) {

@@ -66,8 +66,8 @@ var (
 //   - s2 has the jurisdiction us, its primary on n3, and a load of 3.
 //   - s3 has its primary on the draining node d1, and a load of 1.
 //   - s4 has no placement and no load, so its load is the mean, 2.25.
-//   - s5 has its primary on n1, a transition in flight to n2 with the fallback n1,
-//     and a load of 2.
+//   - s5 has its primary on n1, a transition in flight of its primary to n2 with the
+//     fallback n1, and a load of 2.
 //   - s6 has its primary on n1 and its secondary on n3, both in zone a, and a load
 //     of 0.
 func cell() *placement.Input {
@@ -83,7 +83,7 @@ func cell() *placement.Input {
 		}
 	}
 	return &placement.Input{
-		Transitions: map[shard.ID]placement.InFlight{s5: {To: n2, Fallback: n1}},
+		Transitions: map[shard.ID]placement.InFlight{s5: {To: n2, Fallback: n1, Role: shard.RolePrimary}},
 		Draining:    map[shard.NodeID]bool{d1: true},
 		ShardLoad: map[shard.ID]shard.Load{
 			s1: {placementtest.CPU: 3},

@@ -42,7 +42,9 @@ type Violation struct {
 // result without it. It checks each replica that p keeps as a move whose From equals
 // its To. The load of a shard counts on each node of its current replicas, of its
 // target, and of its transition in flight, so two targets that each fit the last free
-// capacity of a node fail together. A replica that p adds must pass every constraint.
+// capacity of a node fail together. The peak counts of a node count the shard in the
+// same way, so two targets that each fit the last room of a node under max-per-node fail
+// together too. A replica that p adds must pass every constraint.
 // A replica that p keeps and that a constraint rejects is a violation. Validate
 // returns the violations in the order of the IDs of their shards, then of the replicas
 // of the shard, then of cs.

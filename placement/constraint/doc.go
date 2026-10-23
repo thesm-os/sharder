@@ -32,7 +32,9 @@
 // checks the state with the replica on the node. [Capacity] checks such a move against
 // the load of the node once the moves of the pass end, and every other move against
 // the peak load. A node above its capacity then keeps the replicas that fit, and the
-// planner moves the others off it.
+// planner moves the others off it. [MaxPerNode] checks such a move against the replicas
+// of the node, and every other move against the peak count, which counts the transitions
+// in flight to the node.
 //
 // # Errors
 //
