@@ -81,6 +81,10 @@ type pass struct {
 	// stopped reports that the pass stopped at its timeout or at a limit of its work
 	// while work remained.
 	stopped bool
+	// urgent reports that the repair of the pass repairs only the missing replicas, the
+	// replicas on a gone node and the replicas with a fault. It is true in the first repair
+	// of an emergency pass.
+	urgent bool
 }
 
 // deficit is the part of the desired replicas of a shard that repair could not place.
@@ -132,11 +136,14 @@ func newPass(pl *Planner, in *placement.Input, st *placement.State) *pass {
 		perm:       perm,
 		repairNext: in.RepairFrom,
 		maxShards:  int(math.Ceil(pl.churn.MaxShardFraction * float64(len(st.Shards())))),
+		urgent:     in.Emergency,
 	}
 }
 
-// run runs the repair of the pass, and then the improvement. It skips the improvement
-// in an emergency, and when the triggers do not report a node at risk.
+// run runs the repair of the pass, and then the improvement. An emergency pass whose
+// repair does not apply a move repairs again by the rules of a periodic pass, within the
+// same limits, so a shard without a feasible node does not stop a drain. run skips the
+// improvement in an emergency, and when the triggers do not report a node at risk.
 //
 // Error modes:
 //   - the errors of measure, repair and improve.
@@ -146,6 +153,12 @@ func (p *pass) run(ctx context.Context) (placement.Plan, error) {
 	}
 	if err := p.repair(ctx); err != nil {
 		return placement.Plan{}, err
+	}
+	if p.urgent && p.moves == 0 {
+		p.urgent = false
+		if err := p.repair(ctx); err != nil {
+			return placement.Plan{}, err
+		}
 	}
 	if !p.in.Emergency && p.triggered() {
 		if err := p.improve(ctx); err != nil {
@@ -217,15 +230,15 @@ func (p *pass) needsRepair(id shard.ID, replicas []shard.Replica) bool {
 }
 
 // bad reports whether replica r of shard id needs repair. A replica on a gone node and
-// a replica with a fault need repair. Outside an emergency, a replica on a draining
-// node and a replica that a constraint rejects need repair too.
+// a replica with a fault need repair. Unless the repair is urgent, a replica on a
+// draining node and a replica that a constraint rejects need repair too.
 func (p *pass) bad(id shard.ID, r shard.Replica) bool {
 	_, accepting := p.st.Node(r.Node)
 	draining := p.st.Draining(r.Node)
 	if (!accepting && !draining) || slices.Contains(p.in.Faults[id], r.Node) {
 		return true
 	}
-	if p.in.Emergency {
+	if p.urgent {
 		return false
 	}
 	if draining {

@@ -21,6 +21,10 @@
 // replica without a feasible node remains where it is, and its shard reports a deficit.
 // The churn budget does not limit repair, and neither do the triggers.
 //
+// An emergency pass whose repair does not apply a move repairs again by the rules of a
+// periodic pass, unless a limit has ended the pass. A shard without a feasible node then
+// does not stop a drain or the repair of a constraint.
+//
 // # Improvement
 //
 // After the repair of a periodic pass, the pass improves the assignment when the

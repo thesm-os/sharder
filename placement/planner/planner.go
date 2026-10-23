@@ -121,7 +121,8 @@ func New(cfg *Config, constraints []placement.Constraint, goals []placement.Goal
 // it repairs only the replicas that are missing or on a gone node, and the replicas
 // with a fault. Otherwise it also repairs the replicas on a draining node and the
 // replicas that a constraint rejects, and then improves the assignment when the
-// triggers report a node at risk.
+// triggers report a node at risk. An emergency pass whose repair does not apply a move
+// also repairs those replicas, and does not improve the assignment.
 //
 // Error modes:
 //   - an error that wraps the errors of placement.NewState.

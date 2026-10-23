@@ -576,10 +576,11 @@ func TestPass(t *testing.T) {
 				want:  map[shard.ID]placement.Target{ids[0]: onN3},
 			},
 			{
-				name:  "keeps a replica on a draining node in an emergency",
-				hosts: []shard.NodeID{d9, n0, n1, n2},
+				name:  "keeps a replica on a draining node in an emergency pass that restores a replica",
+				hosts: []shard.NodeID{d9, n0, n1, n2, ""},
 				goals: []tiered{{goal: count, weight: 1}},
-				input: func(in *placement.Input) { in.Emergency = true },
+				input: emergency,
+				want:  map[shard.ID]placement.Target{ids[4]: onN3},
 			},
 			{
 				name:        "moves a replica that a constraint rejects",
@@ -947,6 +948,71 @@ func TestPass(t *testing.T) {
 				ErrorIs(constraint.ErrLabels, "the reason must wrap the error of the constraint")
 		})
 
+		t.Run("moves a replica off a draining node in an emergency pass that restores no replica", func(t *testing.T) {
+			t.Parallel()
+			in := cell(d9, n0, n1, n2, "")
+			in.Emergency = true
+			in.Faults[ids[4]] = []shard.NodeID{n0, n1, n2, n3}
+			plan, err := newPlanner(t, defaults(), nil, tiered{goal: count, weight: 1}).Place(t.Context(), in)
+			assert.NoError(t, err, "Place must plan the cell")
+			expect.Equal(t, plan.Targets[ids[0]], onN3, "the pass must move the replica off the draining node")
+			expect.Equal(t, plan.Targets[ids[4]].Deficit, 1, "the shard without a feasible node must report a deficit")
+		})
+
+		t.Run("moves a replica that a constraint rejects in an emergency pass that restores no replica",
+			func(t *testing.T) {
+				t.Parallel()
+				in := cell(n2, n0, "")
+				in.Emergency = true
+				in.Faults[ids[2]] = []shard.NodeID{n0, n1, n2, n3}
+				plan, err := newPlanner(t, defaults(), []placement.Constraint{inZoneA}, tiered{goal: count, weight: 1}).
+					Place(t.Context(), in)
+				assert.NoError(t, err, "Place must plan the cell")
+				expect.Equal(t, plan.Targets[ids[0]], onN1,
+					"the pass must move the replica that the constraint rejects")
+				expect.Equal(t, plan.Targets[ids[2]].Deficit, 1,
+					"the shard without a feasible node must report a deficit")
+			})
+
+		t.Run("keeps a replica on a draining node in an emergency pass that a limit ends", func(t *testing.T) {
+			t.Parallel()
+			in := cell(d9, n0, "", "")
+			in.Emergency = true
+			everywhere := []shard.NodeID{n0, n1, n2, n3}
+			in.Faults[ids[2]] = everywhere
+			in.Faults[ids[3]] = everywhere
+			cfg := defaults()
+			cfg.Search.MaxSourceShards = 1
+			plan, err := newPlanner(t, cfg, nil, tiered{goal: count, weight: 1}).Place(t.Context(), in)
+			assert.NoError(t, err, "Place must plan the cell")
+			_, moved := plan.Targets[ids[0]]
+			expect.False(t, moved, "the pass must keep the replica on the draining node")
+			expect.True(t, plan.Incomplete, "the plan must report that the pass ended on its limit")
+		})
+
+		t.Run("examines each shard once in a periodic pass whose repair applies no move", func(t *testing.T) {
+			t.Parallel()
+			in := cell(n0, n1, n2, n3, "")
+			in.Faults[ids[4]] = []shard.NodeID{n0, n1, n2, n3}
+			cfg := defaults()
+			cfg.Search.MaxSourceShards = 1
+			plan, err := newPlanner(t, cfg, nil, tiered{goal: count, weight: 1}).Place(t.Context(), in)
+			assert.NoError(t, err, "Place must plan the cell")
+			expect.Equal(t, plan.Targets[ids[4]].Deficit, 1, "the shard without a feasible node must report a deficit")
+			expect.False(t, plan.Incomplete, "the pass must examine the shard once and end before its limit")
+		})
+
+		t.Run("does not improve the assignment in an emergency pass that restores no replica", func(t *testing.T) {
+			t.Parallel()
+			in := cell(n0, n0, n0, n1, n2, "")
+			in.Emergency = true
+			in.Faults[ids[5]] = []shard.NodeID{n0, n1, n2, n3}
+			plan, err := newPlanner(t, defaults(), nil, tiered{goal: count, weight: 1}).Place(t.Context(), in)
+			assert.NoError(t, err, "Place must plan the cell")
+			assert.Length(t, plan.Targets, 1, "the pass must not move a shard to improve the cell")
+			expect.Equal(t, plan.Targets[ids[5]].Deficit, 1, "the shard without a feasible node must report a deficit")
+		})
+
 		t.Run("returns ErrNoNode as the reason of a cell without accepting nodes", func(t *testing.T) {
 			t.Parallel()
 			in := cell("")
@@ -1307,6 +1373,19 @@ func TestPass(t *testing.T) {
 				assert.ErrorIs(t, err, errStopped, "Place must return the cause of the context")
 			})
 		}
+
+		t.Run("returns the cause of a context that ends in the second repair of an emergency pass", func(t *testing.T) {
+			t.Parallel()
+			in := cell(d9, "")
+			in.Emergency = true
+			in.Faults[ids[1]] = []shard.NodeID{n0, n1, n2, n3}
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(nil)
+			p := newPlanner(t, defaults(), []placement.Constraint{cancelling{cancel: cancel}},
+				tiered{goal: count, weight: 1})
+			_, err := p.Place(ctx, in)
+			assert.ErrorIs(t, err, errStopped, "Place must return the cause of the context")
+		})
 
 		faults := []struct {
 			name  string
