@@ -280,10 +280,26 @@ func (m *Machine) start(ev machine.Started, out []machine.Effect) ([]machine.Eff
 	return m.incoming.root.Start(out), nil
 }
 
-// cancelled drops the call of ev, whose caller no longer waits: a Started or a Refresh.
+// cancelled drops the call of ev, whose caller no longer waits: a Started or a Refresh. It
+// then sets the highest generation of each cell of the installed discovery to the highest
+// that a Refresh of the cell in its incarnation waits for, so a cancelled Refresh does not
+// count in the lag. cancelled costs O(c·w) for the c cells and the w Refresh calls that wait.
 func (m *Machine) cancelled(ev machine.Cancelled) {
 	m.started = slices.DeleteFunc(m.started, func(to machine.ReplyToken) bool { return to == ev.Reply })
 	m.waits = slices.DeleteFunc(m.waits, func(w wait) bool { return w.reply == ev.Reply })
+	d := m.current
+	if d == nil {
+		return
+	}
+	for _, c := range d.cells {
+		c.highest = 0
+		for _, w := range m.waits {
+			if w.cell == c.scope.Cell && w.incarnation == d.incarnation {
+				c.highest = max(c.highest, w.min)
+			}
+		}
+		c.report()
+	}
 }
 
 // fire delivers ev to the lifecycle of m. When the lifecycle refuses ev, fire returns the

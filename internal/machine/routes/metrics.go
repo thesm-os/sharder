@@ -20,7 +20,7 @@ const (
 	routesName telemetry.InstrumentName = "sharder.router.cache.routes"
 	// lagName is the gauge of the generations of each cell that a Refresh waits for and the
 	// router has not applied.
-	lagName telemetry.InstrumentName = "sharder.generation.lag"
+	lagName telemetry.InstrumentName = "sharder.router.refresh.lag"
 )
 
 // The keys of the attributes of the instruments and the logs.
@@ -106,7 +106,7 @@ func newCellMetrics(r telemetry.Reporter, ns shard.Namespace, id shard.CellID) c
 		}).With(attrs),
 		lag: r.Gauge(telemetry.InstrumentSpec{
 			Name: lagName, Unit: unitGeneration, Aggregation: telemetry.GaugeAggregationMax,
-			Description: "Generations between the store and each agent or router.",
+			Description: "Generations of a cell that a Refresh waits for and the router has not applied.",
 		}).With(attrs),
 	}
 }

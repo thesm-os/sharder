@@ -29,9 +29,18 @@
 // without a placement, and a shard whose nodes the view does not list, has no route.
 //
 // A snapshot of a cell publishes a new table, and so does a change of the cell map. A
-// generation of a cell replaces the route of each placement that it puts, and a view
-// replaces the routes of the cell. The follower passes the generations of a cell in order,
-// so a route never goes back to an older generation of its shard within an incarnation.
+// generation of a cell replaces the route of each placement that it puts. A view replaces
+// the route of each slot with a replica on a node that the view adds, removes or gives
+// another address, and every other route remains published. The follower passes the
+// generations of a cell in order, so a route never goes back to an older generation of its
+// shard within an incarnation.
+//
+// # Instruments
+//
+// The router counts its lookups in sharder.router.lookups, and the routes of the cache of
+// each cell in sharder.router.cache.routes. sharder.router.refresh.lag is the highest
+// generation of a cell that a Refresh waits for, less the generation that the router has
+// applied. A cancelled Refresh does not count.
 //
 // # Refresh
 //

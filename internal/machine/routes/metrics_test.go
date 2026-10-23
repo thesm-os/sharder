@@ -20,9 +20,10 @@ import (
 
 // The names of the instruments that the tests read.
 const (
-	lookupsName telemetry.InstrumentName = "sharder.router.lookups"
-	routesName  telemetry.InstrumentName = "sharder.router.cache.routes"
-	lagName     telemetry.InstrumentName = "sharder.generation.lag"
+	lookupsName  telemetry.InstrumentName = "sharder.router.lookups"
+	routesName   telemetry.InstrumentName = "sharder.router.cache.routes"
+	lagName      telemetry.InstrumentName = "sharder.router.refresh.lag"
+	storeLagName telemetry.InstrumentName = "sharder.generation.lag"
 )
 
 // The results of a lookup, which the counter of lookups has as an attribute.
@@ -145,6 +146,67 @@ func TestMetrics(t *testing.T) {
 			h.follow(t)
 			h.refresh(t, incA, cellID, h.placed)
 			assert.Equal(t, latest(t, h.metrics, lagName, ofCell...), 0.0, "the lag must not fall below zero")
+		})
+
+		t.Run("reports a lag of zero once the Refresh that waits for a later generation is cancelled",
+			func(t *testing.T) {
+				t.Parallel()
+				h := newHarness(t)
+				h.start(t)
+				to := h.refresh(t, incA, cellID, h.placed+20)
+				h.step(t, machine.Cancelled{Reply: to})
+				assert.Equal(t, latest(t, h.metrics, lagName, ofCell...), 0.0,
+					"a cancelled Refresh must not count in the lag")
+			})
+
+		t.Run("reports the lag of the Refresh that still waits once another one is cancelled", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.refresh(t, incA, cellID, h.placed+2)
+			far := h.refresh(t, incA, cellID, h.placed+20)
+			h.step(t, machine.Cancelled{Reply: far})
+			assert.Equal(t, latest(t, h.metrics, lagName, ofCell...), 2.0,
+				"the lag must count the Refresh that still waits")
+		})
+
+		t.Run("reports the lag of a cell from the Refresh calls of that cell alone", func(t *testing.T) {
+			t.Parallel()
+			h := halved(t)
+			h.commit(t, rootScope, &store.Mutation{Put: []shard.Placement{{
+				Shard: shard.ID{ID128: cellKey},
+				Range: shard.Range{End: middle},
+			}}})
+			applied := h.commit(t, cellScope, &store.Mutation{Put: []shard.Placement{
+				h.placement(0, nodeA.ID, firstEpoch),
+				h.placement(1, nodeA.ID, firstEpoch),
+			}})
+			h.follow(t)
+			h.view(t, cellScope, nodeA)
+			h.refresh(t, incA, cellID, applied+2)
+			h.refresh(t, incA, otherScope.Cell, applied+20)
+			h.step(t, machine.Cancelled{Reply: h.call()})
+			assert.Equal(t, latest(t, h.metrics, lagName, ofCell...), 2.0,
+				"the lag of a cell must not count a Refresh of another cell")
+		})
+
+		t.Run("does not count a Refresh of another incarnation in the lag", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.pause = func(e machine.Effect) bool { _, ok := e.(machine.Read); return ok }
+			h.refresh(t, incB, cellID, h.placed+20)
+			h.step(t, machine.Cancelled{Reply: h.call()})
+			assert.Equal(t, latest(t, h.metrics, lagName, ofCell...), 0.0,
+				"the lag must not count a Refresh of another incarnation")
+		})
+
+		t.Run("does not report the lag of an agent", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.refresh(t, incA, cellID, h.placed+3)
+			assert.Empty(t, h.metrics.Series(storeLagName), "the router must not report the gauge of the lag of agents")
 		})
 
 		t.Run("releases its instruments at Stopped", func(t *testing.T) {

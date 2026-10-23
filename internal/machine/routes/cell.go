@@ -6,6 +6,7 @@ package routes
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"sync/atomic"
 
 	"go.thesmos.sh/core/epoch"
@@ -30,6 +31,12 @@ type cell struct {
 	// addresses maps each node of the latest view of the cell to its address, and is nil
 	// before the first view.
 	addresses map[shard.NodeID]string
+	// spare is the map of the view before the latest, which the next view clears and fills
+	// in place of a new map. It is nil before the second view.
+	spare map[shard.NodeID]string
+	// changed lists the nodes that the latest view added, removed or gave another address.
+	// Each view reuses its array.
+	changed []shard.NodeID
 	// follower reads the scope of the cell.
 	follower *follow.Follower
 	// scope is the scope of the cell.
@@ -44,7 +51,9 @@ type cell struct {
 	first uint64
 	// generation is the last generation of the scope that the router has applied.
 	generation epoch.Epoch
-	// highest is the highest generation that a Refresh of the cell has waited for.
+	// highest is the highest generation that a Refresh of the cell has waited for since the
+	// last cancel of a Refresh. The lag counts it only above the generation that the router
+	// has applied, so a Refresh that has its reply does not count.
 	highest epoch.Epoch
 	// views is the token of the WatchViews that runs, and zero without one.
 	views machine.Token
@@ -179,15 +188,47 @@ func (c *cell) apply(inc shard.NamespaceIncarnation, ev *store.Event) error {
 }
 
 // view takes the view v of the cell in the namespace incarnation inc. It keeps the address
-// of each node of v, and replaces the route of each slot with one whose endpoints have
-// those addresses.
+// of each node of v. It compares the addresses with those of the last view once, and
+// replaces the route of each slot with a replica on a node that v adds, removes or gives
+// another address. view leaves the published route of each other slot in place. It costs
+// O(n) for the n nodes of the two views when it does not change a node, and O(s) for the s
+// slots of the cell otherwise.
+//
+// # Allocation contract
+//
+// From the third view of the cell on, a view allocates only the route and the endpoints of
+// each slot that it replaces.
 func (c *cell) view(inc shard.NamespaceIncarnation, v *membership.View) {
-	c.addresses = make(map[shard.NodeID]string, len(v.Nodes))
-	for i := range v.Nodes {
-		c.addresses[v.Nodes[i].ID] = v.Nodes[i].Address
+	old, next := c.addresses, c.spare
+	if next == nil {
+		next = make(map[shard.NodeID]string, len(v.Nodes))
 	}
-	for j := range c.entries {
-		c.store(j, c.route(inc, &c.entries[j]))
+	clear(next)
+	for i := range v.Nodes {
+		next[v.Nodes[i].ID] = v.Nodes[i].Address
+	}
+	c.addresses, c.spare = next, old
+	c.changed = c.changed[:0]
+	for n, a := range old {
+		if b, ok := next[n]; !ok || a != b {
+			c.changed = append(c.changed, n)
+		}
+	}
+	for n := range next {
+		if _, ok := old[n]; !ok {
+			c.changed = append(c.changed, n)
+		}
+	}
+	//dokimi:mutate-skip ror-boundary: a scan of the slots without a changed node replaces no route, so the condition saves the time of the scan alone
+	if len(c.changed) > 0 {
+		for j := range c.entries {
+			moved := slices.ContainsFunc(c.entries[j].placement.Replicas, func(r shard.Replica) bool {
+				return slices.Contains(c.changed, r.Node)
+			})
+			if moved {
+				c.store(j, c.route(inc, &c.entries[j]))
+			}
+		}
 	}
 	c.report()
 }
@@ -239,9 +280,11 @@ func (m *Machine) watchViews(d *discovery, c *cell, out []machine.Effect) []mach
 }
 
 // viewed takes one item of the watch of the views of a cell. The routes of the cell take the
-// addresses of their nodes from a view. After a transient error, the watch runs again once
-// a backoff has elapsed. viewed returns out unchanged for an item of a watch that the router
-// has ended.
+// addresses of their nodes from a view. A view of a cell of the installed discovery replaces
+// routes in the cache of the cell, which the published table has already, so it publishes
+// no table and decides no Refresh. A view of the incoming discovery can complete it. After a
+// transient error, the watch runs again once a backoff has elapsed. viewed returns out
+// unchanged for an item of a watch that the router has ended.
 //
 // Error modes:
 //   - the error of lost for the error of a watch that is not transient.
@@ -265,6 +308,9 @@ func (m *Machine) viewed(ev *machine.Viewed, out []machine.Effect) ([]machine.Ef
 	}
 	c.attempt = 0
 	c.view(d.incarnation, &ev.View)
+	if d == m.current {
+		return out, nil
+	}
 	return m.progress(d, out)
 }
 

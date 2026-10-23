@@ -91,10 +91,11 @@ var (
 	errBusy = errs.WithClass(errors.New("test: the backend is busy"), errs.Transient)
 )
 
-// The nodes of the tests, each at its first incarnation.
+// The nodes of the tests, each at its first incarnation. Node C hosts no replica.
 var (
 	nodeA = shard.Node{ID: "node-a", Address: "node-a:7000", Incarnation: 1}
 	nodeB = shard.Node{ID: "node-b", Address: "node-b:7000", Incarnation: 1}
+	nodeC = shard.Node{ID: "node-c", Address: "node-c:7000", Incarnation: 1}
 )
 
 // shards lists the shard of each slot of the tests, in slot order. The shard of slot i has
@@ -232,6 +233,8 @@ type harness struct {
 	// placed is the generation of the commit that placed the slots of the cell before the
 	// router started, and zero without one.
 	placed epoch.Epoch
+	// limit is the number of placements on each page that the harness reads.
+	limit int
 	// revision is the revision of the last view that the harness passed.
 	revision epoch.Epoch
 	// calls is the token of the last inbound call of the harness.
@@ -267,6 +270,7 @@ func newHarness(tb testCase, opts ...option) *harness {
 		delivered:   make(map[scopeKey]epoch.Epoch),
 		cell:        cellScope,
 		incarnation: incA,
+		limit:       pageLimit,
 	}
 	tb.Cleanup(func() { assert.NoError(tb, h.st.Close(), "the store must close") })
 	tb.Cleanup(func() {
@@ -453,7 +457,7 @@ func (h *harness) read(tb assert.TB, e *machine.Read) machine.Event {
 	tb.Helper()
 	ctx := assert.Context(tb)
 	p := e.Page
-	p.Limit = pageLimit
+	p.Limit = h.limit
 	state, cursor, err := h.st.Read(ctx, e.Scope, e.Incarnation, e.Query, p)
 	if err != nil {
 		return machine.PageRead{Err: err, Token: e.Token}
