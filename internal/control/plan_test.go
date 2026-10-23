@@ -725,6 +725,24 @@ func TestPlan(t *testing.T) {
 				h.live(t, later, nodeB)
 			})
 
+		t.Run("starts a pass for a commit that ends a transition of a writer on a draining node", func(t *testing.T) {
+			t.Parallel()
+			h := spare(t)
+			h.pause = func(e machine.Effect) bool {
+				cb, ok := e.(machine.Callback)
+				return ok && cb.Request.Call == protocol.Add && cb.Request.Node == nodeC.ID
+			}
+			before := len(h.commits)
+			h.elapse(t, interval)
+			assert.Contains(t, destinations(h.commits[before:]), nodeC.ID,
+				"the periodic pass must start a move to node C")
+			h.disrupt(t, disruption(1, nodeC.ID), operator)
+			h.pause = nil
+			h.run(t)
+			assert.Equal(t, h.writers(t)[nodeC.ID], 0,
+				"the end of the move to the draining node must start the pass that moves its writer off")
+		})
+
 		t.Run("logs a move that the protocol cannot script", func(t *testing.T) {
 			t.Parallel()
 			h := served(t, selects(config.Handoff, "", func(r *config.Registry) error {

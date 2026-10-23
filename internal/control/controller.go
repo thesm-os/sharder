@@ -710,6 +710,7 @@ func (c *Controller) commit(p *pending, out []machine.Effect) ([]machine.Effect,
 //   - a commit that leaves a shard without a writer.
 //   - a commit that ends the transition of a shard whose writer the view does not have at
 //     the incarnation of its placement.
+//   - a commit that ends the transition of a shard whose writer is on a node that drains.
 //   - a commit that adds or removes a drain.
 //   - a commit that ends a transition while the bounds refused a move of the last plan.
 func (c *Controller) apply(id store.CommitID, gen epoch.Epoch, out []machine.Effect) ([]machine.Effect, error) {
@@ -779,9 +780,10 @@ func (c *Controller) follow(f *followup, gen epoch.Epoch, out []machine.Effect) 
 
 // lost reports whether the mutation mu leaves a shard that the next pass places again: a
 // placement without a writer, or a shard whose transition mu ends while the view does not
-// have its writer at the incarnation of its placement. A pass skips a shard with a
-// transition in flight, so the end of the transition starts the pass that repairs it. lost
-// reads the assignment after mu has applied.
+// have its writer at the incarnation of its placement. A shard whose transition mu ends with
+// its writer on a node that drains counts too. A pass skips a shard with a transition in
+// flight, so the end of the transition starts the pass that repairs the shard or moves it
+// off the node. lost reads the assignment after mu has applied.
 func (c *Controller) lost(mu *store.Mutation) bool {
 	for i := range mu.Put {
 		if _, ok := writer(&mu.Put[i], c.spec.writer); !ok {
@@ -791,7 +793,7 @@ func (c *Controller) lost(mu *store.Mutation) bool {
 	for _, sid := range mu.Done {
 		p := c.assignment.placement(sid)
 		w, _ := writer(&p, c.spec.writer)
-		if _, live := c.members.at(w.Node, p.Incarnation); !live {
+		if _, live := c.members.at(w.Node, p.Incarnation); !live || c.budget.draining(w.Node) {
 			return true
 		}
 	}

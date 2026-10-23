@@ -45,6 +45,7 @@
 //     and a commit that adds or removes a drain.
 //   - A commit that ends the transition of a shard whose writer the view does not have at
 //     the incarnation of its placement.
+//   - A commit that ends the transition of a shard whose writer is on a node that drains.
 //   - The end of a transition, while the bounds of the engine refused a move of the last
 //     plan.
 //
@@ -61,10 +62,10 @@
 // moves that the step has admitted. A transition counts on its destination and on its
 // fallback there, so the constraints of the spec apply to every outcome of the transitions.
 // A move that the admission refuses waits for a later pass. The source of a move has the
-// incarnation that its placement
-// records for its writer. The destination has the incarnation of its node in the view. The
-// fallback of a move is its source when the view has the node of the source at that
-// incarnation, the node does not drain, and its replica of the shard has no fault. The
+// incarnation that its placement records for its writer. The destination has the
+// incarnation of its node in the view. The fallback of a move is its source when the view
+// has the node of the source at that incarnation, the node does not drain, and its replica
+// of the shard has no fault. The
 // Controller skips a target on a node that started to drain after the input of the pass. A
 // shard without a reported load has Config.Load in a pass, or the mean load of the shards
 // with one when Config.Load is nil.
