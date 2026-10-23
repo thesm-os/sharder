@@ -76,4 +76,6 @@
 // internal/driver, internal/machine, internal/machine/agent, internal/machine/cell,
 // internal/machine/root, membership, proposal, protocol, shard and store of
 // go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package controller
