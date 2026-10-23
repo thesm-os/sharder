@@ -58,4 +58,6 @@
 // errs of go.thesmos.sh/core, and the packages budget, proposal and shard of
 // go.thesmos.sh/sharder. Its generated codecs also import go.thesmos.sh/kanon and
 // go.thesmos.sh/kanon/wire.
+//
+//dokimi:sentinel remote=[CallError]
 package protocol

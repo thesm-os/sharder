@@ -8,15 +8,14 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/prop"
 	"go.thesmos.sh/core/errs"
 
 	"go.thesmos.sh/sharder/protocol"
 )
 
-// errorPrefix is the prefix of the text of every error of package protocol.
-const errorPrefix = "protocol: "
-
-// TestErrors checks the class and the text of each sentinel error of package protocol.
+// TestErrors checks the class of each sentinel error of package protocol, and the class of
+// a CallError.
 func TestErrors(t *testing.T) {
 	t.Parallel()
 
@@ -38,12 +37,6 @@ func TestErrors(t *testing.T) {
 				t.Parallel()
 				assert.Equal(t, errs.Classify(tt.give), tt.want, "the sentinel must classify as its documented class")
 			})
-
-			t.Run("starts its text with the package's name", func(t *testing.T) {
-				t.Parallel()
-				assert.HasPrefix(t, tt.give.Error(), errorPrefix,
-					"the text of the sentinel must start with the name of the package")
-			})
 		})
 	}
 
@@ -54,6 +47,18 @@ func TestErrors(t *testing.T) {
 			t.Parallel()
 			assert.ErrorIs(t, protocol.ErrUnsupported, errors.ErrUnsupported,
 				"ErrUnsupported must match the error of the standard library")
+		})
+	})
+
+	t.Run("CallError", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("classifies as the class of the error of the server", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, func(c errs.Class) errs.Class { return errs.Classify(&protocol.CallError{ErrorClass: c}) },
+				func(c errs.Class) errs.Class { return c }, "errs.Classify must return the class of the CallError",
+				prop.Using(prop.SampledFrom(errs.Unspecified, errs.Transient, errs.Conflict, errs.NotFound,
+					errs.Invalid, errs.Unsupported, errs.Denied, errs.Integrity)))
 		})
 	})
 }

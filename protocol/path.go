@@ -4,22 +4,22 @@
 package protocol
 
 //go:generate go tool kanon -type=Path -validate=valid
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=Path -linecomment -output=path.string_gen.go
 
 import "fmt"
 
 // Path is the path of the script of a transition that a callback belongs to, or the
 // cleanup of an agent.
 //
-// The zero Path is not Valid. An encoding leaves out a field of the zero Path, so a codec
-// does not check it, and the agent that receives a request checks [Path.Valid].
+// [Path.IsValid] refuses the zero Path. An encoding leaves out a field of the zero Path,
+// so a codec does not check it, and the agent that receives a request checks
+// [Path.IsValid].
 //
 // # Encoding
 //
 // kanon encodes a Path as an unsigned varint of its number. A codec returns an error that
-// wraps [ErrUnknownPath] for a Path other than zero that is not Valid, on encode and on
-// decode. [Path.String] returns the spelling of a Path, such as "forward", and the form
-// "Path(n)" for a value that is not Valid.
+// wraps [ErrUnknownPath] for a Path other than zero outside the three paths, on encode and
+// on decode. [Path.String] returns the spelling of a Path, such as "forward", and the form
+// "Path(n)" for any other value. [ParsePath] returns the Path of a spelling.
 //
 // # Concurrency
 //
@@ -27,8 +27,10 @@ import "fmt"
 //
 // # Allocation contract
 //
-// [Path.Valid], and [Path.String] of a Valid Path, do not allocate. String allocates the
-// form of a value that is not Valid.
+// [Path.IsValid], and [Path.String] of one of the three paths, do not allocate. String
+// allocates the form of any other value.
+//
+//dokimi:enum text=comment
 type Path uint8
 
 const (
@@ -42,20 +44,11 @@ const (
 	Cleanup Path = 3 // cleanup
 )
 
-// Valid reports whether p is one of the three paths. The zero Path is not.
-//
-// # Allocation contract
-//
-// Zero alloc.
-func (p Path) Valid() bool {
-	return p >= Forward && p <= Cleanup
-}
-
-// valid returns nil for a Valid path. For any other path, it returns an error that wraps
-// [ErrUnknownPath] and contains the number of p. The generated ValidateKanon calls it, so
-// a codec refuses a path outside the three.
+// valid returns nil for one of the three paths. For any other path, it returns an error
+// that wraps [ErrUnknownPath] and contains the number of p. The generated ValidateKanon
+// calls it, so a codec refuses a path outside the three.
 func (p Path) valid() error {
-	if !p.Valid() {
+	if !p.IsValid() {
 		return fmt.Errorf("%w: %d", ErrUnknownPath, uint8(p))
 	}
 	return nil

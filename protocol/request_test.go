@@ -216,7 +216,7 @@ func TestRequest(t *testing.T) {
 			assert.NoError(t, err, "Digest must encode the Request")
 		})
 
-		t.Run("returns ErrUnknownRole for a request whose role is not Valid", func(t *testing.T) {
+		t.Run("returns ErrUnknownRole for a request whose role is not valid", func(t *testing.T) {
 			t.Parallel()
 			r := recordedRequest
 			r.Role = shard.RoleLearner + 1

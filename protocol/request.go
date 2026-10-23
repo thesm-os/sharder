@@ -33,7 +33,7 @@ const digestBuffer = 256
 // field 3, Path is field 4, Step is field 5, Node is field 6, NodeIncarnation is field 7,
 // Shard is field 8, Range is field 9, Role is field 10, Epoch is field 11, and
 // ControllerEpoch is field 12. The codec returns an error that wraps [ErrUnknownCall],
-// [ErrUnknownPath] or shard.ErrUnknownRole for a Call, a Path or a Role that is not Valid.
+// [ErrUnknownPath] or shard.ErrUnknownRole for a Call, a Path or a Role that is not valid.
 //
 // # Concurrency
 //
@@ -93,7 +93,7 @@ func (r *Request) Key() Key {
 //
 // Error modes:
 //   - an error that wraps the error of the codec when r fails to encode, such as for a Role
-//     that is not Valid.
+//     that is not valid.
 //
 // # Allocation contract
 //

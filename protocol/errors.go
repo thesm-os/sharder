@@ -24,10 +24,13 @@ var (
 	ErrUnreachable = errs.WithClass(errors.New("protocol: the transport did not deliver the call"), errs.Transient)
 
 	// ErrUnknownCall reports a Call that is not one of the two callbacks. A codec returns an
-	// error that wraps it for such a Call other than zero. It classifies as errs.Invalid.
+	// error that wraps it for such a Call other than zero. ParseCall and Call.UnmarshalText
+	// return one for text that is not the spelling of a callback. It classifies as
+	// errs.Invalid.
 	ErrUnknownCall = errs.WithClass(errors.New("protocol: unknown callback"), errs.Invalid)
 
 	// ErrUnknownPath reports a Path that is not one of the three paths. A codec returns an
-	// error that wraps it for such a Path other than zero. It classifies as errs.Invalid.
+	// error that wraps it for such a Path other than zero. ParsePath and Path.UnmarshalText
+	// return one for text that is not the spelling of a path. It classifies as errs.Invalid.
 	ErrUnknownPath = errs.WithClass(errors.New("protocol: unknown path"), errs.Invalid)
 )
