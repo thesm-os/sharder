@@ -22,3 +22,5 @@ Each RFC proposes one part of the design of `sharder` and records the alternativ
 | [0011](0011-embedded-process-and-tenure-runner.md) | An embedded process, a runner of tenures and a pass after a refused move | Accepted |
 | [0012](0012-prompt-close.md) | A Disrupt that waits for its admission, and a Close that ends the root sessions of a controller | Accepted |
 | [0013](0013-observed-generation-of-a-node.md) | The generation that the agent of a node has observed, for the refusal of a request | Accepted |
+| [0014](0014-filesystem-store.md) | A filesystem store for the scopes of one process | Draft |
+| [0015](0015-consensus-only-for-the-root.md) | Consensus only for the root, and cell scopes that the root replicates | Draft |
