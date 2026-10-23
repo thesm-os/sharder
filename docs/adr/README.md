@@ -49,3 +49,7 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0038](0038-example-programs-are-one-file.md) | An example keeps its program in main.go and its application in a package under internal | Superseded by [0039](0039-example-applications-are-in-main.md) |
 | [0039](0039-example-applications-are-in-main.md) | An example keeps its application in main.go, and examples/internal keeps the storage that the examples share | Accepted |
 | [0040](0040-failed-add-is-a-fault-of-the-node-incarnation.md) | A definite failure of an add is a fault of the shard on the node incarnation | Accepted |
+| [0041](0041-admission-counts-transitions-in-flight.md) | The controller admits each move against the replicas that the transitions in flight can place | Accepted |
+| [0042](0042-agent-revokes-tenures-under-stop.md) | The agent revokes each tenure of the node at the end of its session under stop | Accepted |
+| [0043](0043-emergency-pass-without-progress-repairs-the-rest.md) | An emergency pass that restores no replica repairs the other replicas | Accepted |
+| [0044](0044-router-reports-the-lag-of-its-refreshes.md) | The router reports the lag of the generations that its Refresh calls wait for | Accepted |
