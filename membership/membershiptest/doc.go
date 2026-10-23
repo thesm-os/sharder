@@ -12,6 +12,10 @@
 //
 // [WithLostRenewals] adds the laws of renewals that a fault interrupts.
 //
+// # Errors
+//
+// [ErrUnknownLoss] classifies as errs.Invalid.
+//
 // # Concurrency
 //
 // AssertMembership runs its subtests in parallel, and each case builds its own membership
@@ -23,4 +27,6 @@
 // and stateful, the packages clock, clock/fake, epoch, errs, id and tag of
 // go.thesmos.sh/core, and the packages internal/streamtest, membership, ownership, shard
 // and store of go.thesmos.sh/sharder.
+//
+//dokimi:sentinel
 package membershiptest

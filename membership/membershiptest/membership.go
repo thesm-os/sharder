@@ -3,8 +3,6 @@
 
 package membershiptest
 
-//go:generate go run golang.org/x/tools/cmd/stringer@v0.52.0 -type=Loss -linecomment -output=membership.string_gen.go
-
 import (
 	"context"
 	"testing"
@@ -163,11 +161,13 @@ var (
 // Loss is the point at which a fault that [WithLostRenewals] injects interrupts a renewal of
 // a lease.
 //
-// The zero Loss is not Valid.
+// [Loss.IsValid] refuses the zero Loss.
 //
 // # Concurrency
 //
 // A Loss is a comparable value.
+//
+//dokimi:enum text=comment
 type Loss uint8
 
 // The points at which a fault interrupts a renewal.
@@ -179,15 +179,6 @@ const (
 	// expiry of the lease and not the local deadline of the session.
 	LoseReply Loss = 2 // reply
 )
-
-// Valid reports whether l is LoseRequest or LoseReply.
-//
-// # Allocation contract
-//
-// Zero alloc.
-func (l Loss) Valid() bool {
-	return l >= LoseRequest && l <= LoseReply
-}
 
 // config is the result of the Options of one run of AssertMembership.
 type config struct {
