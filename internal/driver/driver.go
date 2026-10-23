@@ -34,6 +34,14 @@ type Handler interface {
 	DropShard(ctx context.Context, r *protocol.Request) error
 }
 
+// Revoker is a Handler that ends the tenure of a fencing token. The driver calls RevokeShard
+// for a machine.Revoke when its Handler implements Revoker. RevokeShard does not modify the
+// token, and does not keep it after it returns.
+type Revoker interface {
+	// RevokeShard ends the work of the tenure of t, whose session has ended.
+	RevokeShard(ctx context.Context, t *fence.Token) error
+}
+
 // LoadReporter reports the load of the replicas of an application. The driver sends each
 // report of an agent with the loads that it reports.
 type LoadReporter interface {

@@ -35,6 +35,19 @@ func (h *handler) DropShard(ctx context.Context, r *protocol.Request) error {
 	return h.drop(ctx, r)
 }
 
+// revoker is a driver.Revoker whose RevokeShard calls its function.
+type revoker struct {
+	handler
+	revoke func(ctx context.Context, t *fence.Token) error
+}
+
+var _ driver.Revoker = (*revoker)(nil)
+
+// RevokeShard calls the revoke function of r.
+func (r *revoker) RevokeShard(ctx context.Context, t *fence.Token) error {
+	return r.revoke(ctx, t)
+}
+
 // acquirer is a fence.Acquirer whose Acquire calls the function.
 type acquirer func(ctx context.Context, t fence.Token) error
 
@@ -54,8 +67,8 @@ const (
 // fencing is the fencing token of the acquisitions of the tests.
 var fencing = fence.Token{Namespace: namespace, Incarnation: inc, Shard: shardA, Epoch: 3}
 
-// TestApplication checks the effects of the application that Run performs: Handle and
-// Acquire.
+// TestApplication checks the effects of the application that Run performs: Handle, Acquire
+// and Revoke.
 func TestApplication(t *testing.T) {
 	t.Parallel()
 
@@ -206,6 +219,64 @@ func TestApplication(t *testing.T) {
 				assert.True(t, ok, "the run must pass an Acquired")
 				expect.That(t, got.Err).ErrorIs(driver.ErrConfig, "the Acquired must have ErrConfig")
 				expect.Equal(t, got.Token, machine.Token(1), "the Acquired must have the token of the Acquire")
+			})
+		})
+
+		t.Run("passes the fencing token of a Revoke to RevokeShard", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t, performing(machine.Revoke{Fence: fencing, Token: 1}))
+				var gotToken fence.Token
+				f.cfg.Handler = &revoker{revoke: func(_ context.Context, ft *fence.Token) error {
+					gotToken = *ft
+					return errBusy
+				}}
+				got, ok := f.results(t, 1)[0].(machine.Revoked)
+				assert.True(t, ok, "the run must pass a Revoked")
+				expect.That(t, got.Err).ErrorIs(errBusy, "the Revoked must have the error of RevokeShard")
+				expect.Equal(t, got.Token, machine.Token(1), "the Revoked must have the token of the Revoke")
+				expect.Equal(t, gotToken, fencing, "the run must revoke the fencing token of the Revoke")
+			})
+		})
+
+		t.Run("passes a Revoked without an error for a handler without RevokeShard", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t, performing(machine.Revoke{Fence: fencing, Token: 1}))
+				f.cfg.Handler = &handler{}
+				got, ok := f.results(t, 1)[0].(machine.Revoked)
+				assert.True(t, ok, "the run must pass a Revoked")
+				expect.NoError(t, got.Err, "the Revoked of a handler without RevokeShard must have no error")
+				expect.Equal(t, got.Token, machine.Token(1), "the Revoked must have the token of the Revoke")
+			})
+		})
+
+		t.Run("ends a Revoke at its Timeout", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t, performing(machine.Revoke{Fence: fencing, Token: 1, Timeout: timeout}))
+				f.cfg.Handler = &revoker{
+					revoke: func(ctx context.Context, _ *fence.Token) error { return blocked(ctx) },
+				}
+				got, ok := f.results(t, 1)[0].(machine.Revoked)
+				assert.True(t, ok, "the run must pass a Revoked")
+				assert.ErrorIs(
+					t,
+					got.Err,
+					context.DeadlineExceeded,
+					"the Revoked must have the error of the ended call",
+				)
+			})
+		})
+
+		t.Run("passes ErrConfig for a Revoke without a handler", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				f := newFixture(t, performing(machine.Revoke{Fence: fencing, Token: 1}))
+				got, ok := f.results(t, 1)[0].(machine.Revoked)
+				assert.True(t, ok, "the run must pass a Revoked")
+				expect.That(t, got.Err).ErrorIs(driver.ErrConfig, "the Revoked must have ErrConfig")
+				expect.Equal(t, got.Token, machine.Token(1), "the Revoked must have the token of the Revoke")
 			})
 		})
 	})

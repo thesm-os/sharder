@@ -32,6 +32,21 @@ func (d *Driver) handle(ctx context.Context, e *machine.Handle) machine.Event {
 	return machine.Handled{Err: err, Token: e.Token}
 }
 
+// revoke performs e through the RevokeShard of a handler that implements Revoker, and
+// returns the Revoked of e. The run bounds ctx by the Timeout of e. A handler without
+// RevokeShard has no work to end, and the Revoked of e then has no error. Without a handler,
+// the Revoked of e has an error that wraps ErrConfig.
+func (d *Driver) revoke(ctx context.Context, e *machine.Revoke) machine.Event {
+	if d.handler == nil {
+		return machine.Revoked{Err: fmt.Errorf("%w: a Revoke without a handler", ErrConfig), Token: e.Token}
+	}
+	r, ok := d.handler.(Revoker)
+	if !ok {
+		return machine.Revoked{Token: e.Token}
+	}
+	return machine.Revoked{Err: r.RevokeShard(ctx, &e.Fence), Token: e.Token}
+}
+
 // acquire performs e through the fence guard, and returns the Acquired of e. The run
 // bounds ctx by the Timeout of e.
 func (d *Driver) acquire(ctx context.Context, e *machine.Acquire) machine.Event {

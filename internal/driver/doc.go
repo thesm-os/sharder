@@ -21,7 +21,8 @@
 //   - Callback calls the agent client. SendReport, SendDisrupt and SendDone call the
 //     controller client. A SendReport sends the load of each replica that the
 //     [LoadReporter] reports.
-//   - Handle calls the [Handler], and Acquire calls the fence guard.
+//   - Handle calls the [Handler], and Acquire calls the fence guard. Revoke calls the
+//     RevokeShard of a Handler that implements [Revoker].
 //   - Plan runs the placer of the effect, and then placement.Validate.
 //   - Timer waits on the clock of the [Config].
 //

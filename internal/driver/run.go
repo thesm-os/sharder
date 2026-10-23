@@ -140,6 +140,8 @@ func (r *run) perform(ctx context.Context, e machine.Effect) {
 		r.spawn(ctx, e.Timeout, e, (*Driver).handle)
 	case machine.Acquire:
 		r.spawn(ctx, e.Timeout, e, (*Driver).acquire)
+	case machine.Revoke:
+		r.spawn(ctx, e.Timeout, e, (*Driver).revoke)
 	case machine.Plan:
 		r.spawn(ctx, 0, e, (*Driver).plan)
 	case machine.Timer:
