@@ -25,6 +25,9 @@ const config = "{}"
 // # Allocation contract
 //
 // [Partitioner.Position] does not allocate.
+//
+//dokimi:subject partition.Partitioner new=newPartitioner
+//dokimi:budget Partitioner.Position allocs=0
 type Partitioner struct{}
 
 var _ partition.Partitioner = Partitioner{}

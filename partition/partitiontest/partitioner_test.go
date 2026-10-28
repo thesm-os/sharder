@@ -54,9 +54,10 @@ func (quarters) Initial(r shard.Range) ([]partition.Span, error) {
 	return spans, nil
 }
 
-// TestAssertPartitioner runs the laws of a partitioner against quarters, which keeps
-// every law.
-func TestAssertPartitioner(t *testing.T) {
+// TestPartitioner checks that quarters passes the checks of the suite of
+// partition.Partitioner.
+func TestPartitioner(t *testing.T) {
 	t.Parallel()
-	partitiontest.AssertPartitioner(t, quarters{})
+
+	partitiontest.RunPartitionerSuite(t, func() quarters { return quarters{} })
 }

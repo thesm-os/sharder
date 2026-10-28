@@ -6,11 +6,9 @@ package partition_test
 import (
 	"bytes"
 	"slices"
-	"strconv"
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/prop"
 	"go.thesmos.sh/core/id"
@@ -140,11 +138,11 @@ func TestLayout(t *testing.T) {
 	})
 }
 
-// TestLayoutAllocs checks the allocation contracts of Shard and Layout. MaxAllocs
-// counts the allocations of the whole process, so the test does not run in parallel.
+// TestLayoutAllocs checks the allocation contracts of the construction of Shard and
+// Layout. MaxAllocs counts the allocations of the whole process, so the test does not
+// run in parallel.
 func TestLayoutAllocs(t *testing.T) {
 	s := threeShards.Shards[1]
-	pos := []byte("s")
 
 	t.Run("Shard", func(t *testing.T) {
 		t.Run("constructs a Shard without an allocation", func(t *testing.T) {
@@ -164,36 +162,6 @@ func TestLayoutAllocs(t *testing.T) {
 			"constructing a Layout must not allocate",
 		)
 		assert.Equal(t, got, threeShards, "the test must measure the construction of the Layout")
-	})
-
-	t.Run("Locate", func(t *testing.T) {
-		var got shard.ID
-		expect.MaxAllocs(t, func() { got, _ = threeShards.Locate(pos) }, 0, "Locate must not allocate")
-		assert.Equal(t, got, s.ID, "the test must measure a position that a shard contains")
-	})
-}
-
-// BenchmarkLayout reports the cost of Layout.Locate for layouts of 1, 1,024 and 65,536
-// shards, and fails when it allocates.
-func BenchmarkLayout(b *testing.B) {
-	b.Run("Locate", func(b *testing.B) {
-		for _, n := range []int{1, 1024, 65536} {
-			l := evenCover(n)
-			pos := l.Shards[n/2].Range.Start
-
-			b.Run(strconv.Itoa(n), func(b *testing.B) {
-				var ok bool
-
-				c := bench.Start(b).MaxAllocs(0)
-				defer c.End()
-
-				for c.Loop() {
-					_, ok = l.Locate(pos)
-				}
-
-				assert.True(b, ok, "the benchmark must measure a position that a shard contains")
-			})
-		}
 	})
 }
 
@@ -217,29 +185,6 @@ func drawCover(c *prop.Case) partition.Layout {
 			ID:    shard.ID{ID128: id.ID128{15: byte(i + 1)}},
 		}
 		start = end
-	}
-	return partition.Layout{Cell: cell, Shards: shards}
-}
-
-// evenCover returns a layout of n shards, n at most 65,536. Shard i starts at the
-// big-endian encoding of i in two bytes, except the first shard, which starts at the
-// empty position, and ends where shard i+1 starts. Its ID has i+1 in its last three
-// bytes.
-func evenCover(n int) partition.Layout {
-	shards := make([]partition.Shard, n)
-	for i := range n {
-		var start, end []byte
-		if i > 0 {
-			start = []byte{byte(i >> 8), byte(i)}
-		}
-		next := i + 1
-		if next < n {
-			end = []byte{byte(next >> 8), byte(next)}
-		}
-		shards[i] = partition.Shard{
-			Range: shard.Range{Start: start, End: end},
-			ID:    shard.ID{ID128: id.ID128{13: byte(next >> 16), 14: byte(next >> 8), 15: byte(next)}},
-		}
 	}
 	return partition.Layout{Cell: cell, Shards: shards}
 }

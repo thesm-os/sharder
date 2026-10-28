@@ -4,15 +4,10 @@
 package xxhash64_test
 
 import (
-	"strconv"
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
-	"go.dokimi.dev/assert/expect"
 
-	"go.thesmos.sh/sharder/partition"
-	"go.thesmos.sh/sharder/partition/partitiontest"
 	"go.thesmos.sh/sharder/partition/xxhash64"
 )
 
@@ -40,17 +35,7 @@ const (
 // sanity is the buffer of the sanity check, whose prefixes are the keys of vectors.
 var sanity = sanityBuffer(sanityLength)
 
-// vectors are the rows of seed 0 of the table XSUM_XXH64_testdata in the sanity
-// check of xxHash v0.8.3.
-var vectors = []partitiontest.Vector{
-	{Key: sanity[:0], Sum: 0xEF46DB3751D8E999},
-	{Key: sanity[:1], Sum: 0xE934A84ADB052768},
-	{Key: sanity[:4], Sum: 0x9136A0DCA57457EE},
-	{Key: sanity[:14], Sum: 0x8282DCC4994E35C8},
-	{Key: sanity[:222], Sum: 0xB641AE8CB691C174},
-}
-
-// TestHash checks the registered name of the hash.
+// TestHash checks the registered name, the sums and the version of the hash.
 func TestHash(t *testing.T) {
 	t.Parallel()
 
@@ -62,50 +47,46 @@ func TestHash(t *testing.T) {
 			assert.Equal(t, xxhash64.Name, recordedName, "Name must be the name that the mappings of namespaces record")
 		})
 	})
-}
-
-// TestHashConformance runs the laws of a hash against Hash, with the XXH64 vectors of
-// xxHash.
-func TestHashConformance(t *testing.T) {
-	t.Parallel()
-	partitiontest.AssertHash(t, xxhash64.Hash{}, recordedVersion, vectors...)
-}
-
-// TestHashAllocs checks the allocation contract of Hash through partition.Hash, as a
-// partitioner calls it. MaxAllocs counts the allocations of the whole process, so the
-// test does not run in parallel.
-func TestHashAllocs(t *testing.T) {
-	var h partition.Hash = xxhash64.Hash{}
 
 	t.Run("Sum64", func(t *testing.T) {
-		v := vectors[len(vectors)-1]
-		var got uint64
-		expect.MaxAllocs(t, func() { got = h.Sum64(v.Key) }, 0, "Sum64 must not allocate")
-		assert.Equal(t, got, v.Sum, "the test must measure the sum of the vector")
-	})
-}
+		t.Parallel()
 
-// BenchmarkHash reports the cost of Sum64 for the key of each vector, and fails when
-// Sum64 allocates.
-func BenchmarkHash(b *testing.B) {
-	var h partition.Hash = xxhash64.Hash{}
-
-	b.Run("Sum64", func(b *testing.B) {
-		for _, v := range vectors {
-			b.Run(strconv.Itoa(len(v.Key)), func(b *testing.B) {
-				var got uint64
-
-				c := bench.Start(b).MaxAllocs(0)
-				defer c.End()
-
-				for c.Loop() {
-					got = h.Sum64(v.Key)
-				}
-
-				assert.Equal(b, got, v.Sum, "the benchmark must measure the sum of the vector")
+		// The rows of seed 0 of the table XSUM_XXH64_testdata in the sanity check of
+		// xxHash v0.8.3. The key of each row is a prefix of the buffer of the check.
+		tests := []struct {
+			name string
+			give []byte
+			want uint64
+		}{
+			{name: "returns the XXH64 of the empty key", give: sanity[:0], want: 0xEF46DB3751D8E999},
+			{name: "returns the XXH64 of a key of 1 byte", give: sanity[:1], want: 0xE934A84ADB052768},
+			{name: "returns the XXH64 of a key of 4 bytes", give: sanity[:4], want: 0x9136A0DCA57457EE},
+			{name: "returns the XXH64 of a key of 14 bytes", give: sanity[:14], want: 0x8282DCC4994E35C8},
+			{name: "returns the XXH64 of a key of 222 bytes", give: sanity[:222], want: 0xB641AE8CB691C174},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, xxhash64.Hash{}.Sum64(tt.give), tt.want,
+					"Sum64 must return the sum of the sanity check of xxHash")
 			})
 		}
 	})
+
+	t.Run("Version", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the version that mappings record", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, xxhash64.Hash{}.Version(), recordedVersion,
+				"Version must return the version that the mappings of namespaces record")
+		})
+	})
+}
+
+// newHash returns the zero Hash, the subject of the suite of partition.Hash.
+func newHash() xxhash64.Hash {
+	return xxhash64.Hash{}
 }
 
 // sanityBuffer returns the first n bytes that the generator of the sanity check of

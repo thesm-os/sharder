@@ -22,8 +22,8 @@
 //     shard covers every position of a cell.
 //   - go.thesmos.sh/sharder/partition/xxhash64 is the hash xxhash64, which is XXH64
 //     with seed 0.
-//   - go.thesmos.sh/sharder/partition/partitiontest checks a partitioner and a hash
-//     against the laws of this package.
+//   - go.thesmos.sh/sharder/partition/partitiontest contains the conformance suites of
+//     Partitioner, Hash and Layout, and the doubles of Partitioner and Hash.
 //
 // # Errors
 //

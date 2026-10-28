@@ -16,6 +16,10 @@ import (
 // # Concurrency
 //
 // A Partitioner does not perform I/O, and it is safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=partitiontest/
 type Partitioner interface {
 	// Position appends the position of key to dst and returns the extended slice. It
 	// does not allocate when dst has room for the position.
@@ -58,9 +62,15 @@ type Span struct {
 // # Concurrency
 //
 // A Hash is safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=partitiontest/
 type Hash interface {
 	// Sum64 returns the hash of key. It returns the same value for the same key in
 	// every process and on every platform, and it does not allocate.
+	//
+	//dokimi:budget allocs=0
 	Sum64(key []byte) uint64
 	// Version returns the version of the function that Sum64 computes. The version is
 	// at least one. It increases whenever Sum64 returns another value for any key, so

@@ -41,6 +41,10 @@ type Shard struct {
 // # Allocation contract
 //
 // Construction and [Layout.Locate] do not allocate.
+//
+//dokimi:suite
+//dokimi:out path=partitiontest/
+//dokimi:subject Layout new=newLayout
 type Layout struct {
 	// Cell is the cell of the shards.
 	Cell shard.CellID
@@ -57,6 +61,8 @@ type Layout struct {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (l *Layout) Locate(pos []byte) (shard.ID, bool) {
 	if l == nil {
 		return shard.ID{}, false

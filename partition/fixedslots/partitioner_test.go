@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/errs"
 
@@ -29,7 +28,8 @@ const (
 	// recordedHashVersion is the version of xxhash64, which the mappings of
 	// namespaces record.
 	recordedHashVersion = 1
-	// versionedVersion is the version of the hash versioned.
+	// versionedVersion is the version that the double of the hash returns in the test
+	// of the hash version of the mapping.
 	versionedVersion = 7
 	// plainKey is a key without a hash tag.
 	plainKey = "user:42"
@@ -65,15 +65,6 @@ var (
 	slot3 = []byte{0, 0, 0, 3}
 	slot4 = []byte{0, 0, 0, 4}
 )
-
-// versioned is the hash xxhash64 at the version versionedVersion, so that a test can
-// tell the version of a hash from a constant of the partitioner.
-type versioned struct{ xxhash64.Hash }
-
-// Version returns versionedVersion.
-func (versioned) Version() uint32 {
-	return versionedVersion
-}
 
 // TestPartitioner checks the construction, the positions, the mapping and the spans
 // of fixed-slots.
@@ -192,7 +183,9 @@ func TestPartitioner(t *testing.T) {
 
 		t.Run("returns the version of the hash", func(t *testing.T) {
 			t.Parallel()
-			p, err := fixedslots.New(tagged, versioned{})
+			versioned := partitiontest.NewHashStub(t, partitiontest.HashStubDelegateTo(xxhash64.Hash{}),
+				partitiontest.WithHashVersion(func() uint32 { return versionedVersion }))
+			p, err := fixedslots.New(tagged, versioned)
 			assert.NoError(t, err, "New must build the partitioner")
 			assert.Equal(t, p.Mapping().HashVersion, versionedVersion, "Mapping must return the version of the hash")
 		})
@@ -286,80 +279,15 @@ func TestPartitioner(t *testing.T) {
 	})
 }
 
-// TestPartitionerConformance runs the laws of a partitioner against fixed-slots with
-// hash tags.
-func TestPartitionerConformance(t *testing.T) {
-	t.Parallel()
-	partitiontest.AssertPartitioner(t, newPartitioner(t, tagged))
-}
-
-// TestPartitionerAllocs checks the allocation contract of fixed-slots through
-// partition.Partitioner, as a router calls it. MaxAllocs counts the allocations of the
-// whole process, so the test does not run in parallel.
-func TestPartitionerAllocs(t *testing.T) {
-	dst := make([]byte, 0, 4)
-
-	t.Run("Position", func(t *testing.T) {
-		tests := []struct {
-			name string
-			p    partition.Partitioner
-			key  []byte
-			want string
-		}{
-			{
-				name: "does not allocate for a key without hash tags",
-				p:    newPartitioner(t, plain), key: []byte(plainKey), want: plainPosition,
-			},
-			{
-				name: "does not allocate for the hash tag of a key",
-				p:    newPartitioner(t, tagged), key: []byte(taggedKey), want: taggedPosition,
-			},
-		}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				var got []byte
-				expect.MaxAllocs(t, func() { got = tt.p.Position(dst, tt.key) }, 0, "Position must not allocate")
-				assert.Equal(t, hex.EncodeToString(got), tt.want, "the test must measure the position of the key")
-			})
-		}
-	})
-}
-
-// BenchmarkPartitioner reports the cost of Position for a key without hash tags and
-// for the hash tag of a key, and fails when Position allocates.
-func BenchmarkPartitioner(b *testing.B) {
-	dst := make([]byte, 0, 4)
-
-	b.Run("Position", func(b *testing.B) {
-		benchmarks := []struct {
-			name string
-			p    partition.Partitioner
-			key  []byte
-			want string
-		}{
-			{name: plainKey, p: newPartitioner(b, plain), key: []byte(plainKey), want: plainPosition},
-			{name: taggedKey, p: newPartitioner(b, tagged), key: []byte(taggedKey), want: taggedPosition},
-		}
-		for _, bb := range benchmarks {
-			b.Run(bb.name, func(b *testing.B) {
-				var got []byte
-
-				c := bench.Start(b).MaxAllocs(0)
-				defer c.End()
-
-				for c.Loop() {
-					got = bb.p.Position(dst, bb.key)
-				}
-
-				assert.Equal(b, hex.EncodeToString(got), bb.want, "the benchmark must measure the position of the key")
-			})
-		}
-	})
+// newTagged returns fixed-slots with the configuration tagged, the subject of the suite
+// of partition.Partitioner.
+func newTagged(h *partitiontest.PartitionerHandle) *fixedslots.Partitioner {
+	return newPartitioner(h, tagged)
 }
 
 // newPartitioner returns fixed-slots with the configuration cfg and the hash
 // xxhash64. It stops tb when New fails.
-func newPartitioner(tb testing.TB, cfg fixedslots.Config) *fixedslots.Partitioner {
+func newPartitioner(tb assert.TB, cfg fixedslots.Config) *fixedslots.Partitioner {
 	tb.Helper()
 	p, err := fixedslots.New(cfg, xxhash64.Hash{})
 	assert.NoError(tb, err, "New must build the partitioner")

@@ -24,6 +24,8 @@ const Name shard.StrategyName = "xxhash64"
 // # Allocation contract
 //
 // [Hash.Sum64] does not allocate.
+//
+//dokimi:subject partition.Hash new=newHash
 type Hash struct{}
 
 var _ partition.Hash = Hash{}

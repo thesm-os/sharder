@@ -7,12 +7,9 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
-	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/sharder/partition"
-	"go.thesmos.sh/sharder/partition/partitiontest"
 	"go.thesmos.sh/sharder/partition/singleton"
 	"go.thesmos.sh/sharder/shard"
 )
@@ -24,9 +21,6 @@ const (
 	// recordedConfig is the configuration of the partitioner, which the mappings of
 	// namespaces record.
 	recordedConfig = "{}"
-	// measuredKey is a key whose position the allocation tests and the benchmark
-	// measure.
-	measuredKey = "user:42"
 	// labelKey labels the key that a property generates.
 	labelKey = "key"
 )
@@ -74,43 +68,8 @@ func TestPartitioner(t *testing.T) {
 	})
 }
 
-// TestPartitionerConformance runs the laws of a partitioner against singleton.
-func TestPartitionerConformance(t *testing.T) {
-	t.Parallel()
-	partitiontest.AssertPartitioner(t, singleton.Partitioner{})
-}
-
-// TestPartitionerAllocs checks the allocation contract of singleton through
-// partition.Partitioner, as a router calls it. MaxAllocs counts the allocations of the
-// whole process, so the test does not run in parallel.
-func TestPartitionerAllocs(t *testing.T) {
-	var p partition.Partitioner = singleton.Partitioner{}
-	k := []byte(measuredKey)
-	dst := make([]byte, 0, 4)
-
-	t.Run("Position", func(t *testing.T) {
-		var got []byte
-		expect.MaxAllocs(t, func() { got = p.Position(dst, k) }, 0, "Position must not allocate")
-		assert.Empty(t, got, "the test must measure the empty position")
-	})
-}
-
-// BenchmarkPartitioner reports the cost of Position, and fails when it allocates.
-func BenchmarkPartitioner(b *testing.B) {
-	var p partition.Partitioner = singleton.Partitioner{}
-	k := []byte(measuredKey)
-	dst := make([]byte, 0, 4)
-
-	b.Run("Position", func(b *testing.B) {
-		var got []byte
-
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		for c.Loop() {
-			got = p.Position(dst, k)
-		}
-
-		assert.Empty(b, got, "the benchmark must measure the empty position")
-	})
+// newPartitioner returns the zero Partitioner, the subject of the suite of
+// partition.Partitioner.
+func newPartitioner() singleton.Partitioner {
+	return singleton.Partitioner{}
 }

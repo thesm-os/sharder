@@ -5,60 +5,46 @@ package partitiontest
 
 import (
 	"math"
-	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/sharder/partition"
+	"go.thesmos.sh/sharder/partition/xxhash64"
 )
 
-// Vector is a key and the sum that a hash function returns for it.
-type Vector struct {
-	// Key is the key.
-	Key []byte
-	// Sum is the hash of Key.
-	Sum uint64
+// Sum64IsDeterministic checks that Sum64 returns the same hash for the same key.
+//
+//dokimi:check Hash.Sum64 defect=driftsSums
+func Sum64IsDeterministic(h *HashHandle, c *prop.Case) {
+	s := h.Subject()
+	key := c.Draw(prop.Bytes(prop.MaxSize(maxKey)), labelKey)
+	assert.Deterministic(h, func(key []byte) (uint64, error) { return s.Sum64(key), nil }, key, h.Statement())
 }
 
-// AssertHash checks the laws of partition.Hash against h, and fails t when h breaks
-// one. Version of h must return version, and Sum64 of h must return the Sum of each
-// vector for its Key. AssertHash also fails t when vectors is empty, because every
-// hash states vectors of its own. It runs each law as a parallel subtest of t. The
-// subtest of a law has the name of the method that the law constrains.
-func AssertHash(t *testing.T, h partition.Hash, version uint32, vectors ...Vector) {
-	t.Helper()
+// driftsSums returns a planted defect over xxhash64 whose Sum64 adds one to the hash
+// after driftCalls calls. One goroutine runs a check, so the count of the calls has no
+// lock.
+func driftsSums(h *HashHandle) partition.Hash {
+	calls := 0
+	return NewHashStub(h, HashStubDelegateTo(xxhash64.Hash{}), WithHashSum64(func(key []byte) uint64 {
+		calls++
+		sum := xxhash64.Hash{}.Sum64(key)
+		if calls > driftCalls {
+			sum++
+		}
+		return sum
+	}))
+}
 
-	t.Run("Sum64", func(t *testing.T) {
-		t.Parallel()
+// VersionIsPositive checks that Version returns a version of at least one.
+//
+//dokimi:check Hash.Version defect=returnsVersionZero
+func VersionIsPositive(h *HashHandle) {
+	assert.InRange(h, h.Subject().Version(), 1, math.MaxUint32, h.Statement())
+}
 
-		t.Run("returns the sum of each vector", func(t *testing.T) {
-			t.Parallel()
-			assert.NotEmpty(t, vectors, "the hash must state at least one vector")
-			for _, v := range vectors {
-				expect.Equal(t, h.Sum64(v.Key), v.Sum, "Sum64 must return the sum of the vector")
-			}
-		})
-
-		t.Run("returns the same hash for the same key", func(t *testing.T) {
-			t.Parallel()
-			prop.Deterministic(t, func(key []byte) (uint64, error) { return h.Sum64(key), nil },
-				"Sum64 must return the same hash for the same key")
-		})
-	})
-
-	t.Run("Version", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("returns the version of the hash", func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, h.Version(), version, "Version must return the version of the hash")
-		})
-
-		t.Run("returns a version of at least one", func(t *testing.T) {
-			t.Parallel()
-			assert.InRange(t, h.Version(), 1, math.MaxUint32, "Version must return a version of at least one")
-		})
-	})
+// returnsVersionZero returns a planted defect over xxhash64 whose Version returns 0.
+func returnsVersionZero(h *HashHandle) partition.Hash {
+	return NewHashStub(h, HashStubDelegateTo(xxhash64.Hash{}), WithHashVersion(func() uint32 { return 0 }))
 }

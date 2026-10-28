@@ -42,6 +42,9 @@ const (
 //
 // [Partitioner.Position] does not allocate when dst has room for 4 bytes, because
 // Sum64 of a hash does not allocate.
+//
+//dokimi:subject partition.Partitioner new=newTagged
+//dokimi:budget Partitioner.Position allocs=1
 type Partitioner struct {
 	// hash is the hash function of keys.
 	hash partition.Hash

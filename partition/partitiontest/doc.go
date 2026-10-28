@@ -1,40 +1,44 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: BUSL-1.1
 
-// Package partitiontest checks a partition.Partitioner and a partition.Hash against
-// the laws of package partition.
+// Package partitiontest contains the conformance suites of partition.Partitioner,
+// partition.Hash and partition.Layout, and the doubles of Partitioner and Hash.
 //
-// An implementation calls [AssertPartitioner] or [AssertHash] in the test function
-// Test<Unit>Conformance. The tests of its own behaviour are in other test functions,
-// so their subtests and the subtests of the laws have different names. Each law is a
-// parallel subtest under the name of the method that it constrains, such as Position.
+// Every partitioner and every hash passes the same checks, so a router and the core rely
+// on the laws of package partition under each implementation that a namespace
+// registers. [RunPartitionerSuite] applies every check of [PartitionerSuite] to a new
+// partitioner of a factory, one partitioner for each check.
+// [RunPartitionerSuiteFromHandle] builds each partitioner from the handle of its check.
+// [RunHashSuite] applies the checks of [HashSuite] to new hashes in the same way. Each
+// check belongs to the method that it constrains.
 //
-// # Laws of a partitioner
+// [LayoutSuite] is the suite of the hot path [partition.Layout.Locate]. Its budget
+// states that Locate does not allocate.
 //
-//   - Position returns the same position for the same key, and appends the position
-//     to dst.
-//   - Mapping returns an equal mapping on every call. The mapping contains the name of
-//     the partitioner and its configuration as JSON. It contains a hash version
-//     exactly when it contains the name of a hash.
-//   - Initial returns spans in position order that partition the position space,
-//     without gaps or overlaps. It also partitions every range between the bounds of
-//     two of those spans, because a cell starts and ends at the bounds of shards. It
-//     returns equal spans on every call.
+// # Budgets
 //
-// # Laws of a hash
+// [RunHashBudgets] applies the allocation ceiling of Sum64, which [HashSuite] states for
+// every hash. [RunPartitionerBudgets] applies the ceilings that the subject of a
+// partitioner states, such as one allocation for Position of fixed-slots. Each ceiling
+// holds for every input that the call generator of its callable draws.
 //
-//   - Sum64 returns the sum of each vector that the caller states. It returns the
-//     same hash for the same key.
-//   - Version returns the version that the caller states, which is at least one.
+// # Planted defects
 //
-// # Allocations
+// Each check has a planted defect: the double of its interface over fixed-slots or
+// xxhash64, with the calls that break the law of the check replaced. The test of the
+// suite runs each check on its defect, and the check must fail at the assertion whose
+// message is its statement. Every other check must pass on the defect.
 //
-// The laws do not count allocations. A count of allocations covers the whole process,
-// and the laws run as parallel subtests. The package of an implementation checks its
-// allocation contract in a test of its own.
+// # Doubles
+//
+// [PartitionerStub] and [HashStub] are recording doubles of [partition.Partitioner] and
+// [partition.Hash]. Each method of a double returns the results of a function, fixed
+// results or an armed fault.
 //
 // # Dependency position
 //
-// partitiontest imports the standard library, go.dokimi.dev/assert with its packages
-// expect and prop, and the packages partition and shard of sharder.
+// partitiontest imports bytes, context, encoding/json, math, math/rand/v2, slices,
+// testing and time of the standard library, go.dokimi.dev/assert with its package prop,
+// go.dokimi.dev/conform, go.dokimi.dev/stub, and the packages partition,
+// partition/fixedslots, partition/xxhash64 and shard of sharder.
 package partitiontest
