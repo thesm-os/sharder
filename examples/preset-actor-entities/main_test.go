@@ -35,9 +35,11 @@ import (
 	"go.thesmos.sh/sharder/protocol/local"
 	"go.thesmos.sh/sharder/replica"
 	"go.thesmos.sh/sharder/router"
+	"go.thesmos.sh/sharder/router/routertest"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
+	"go.thesmos.sh/sharder/store/storetest"
 )
 
 // mainEnv makes the test binary run main in place of its tests when it has the value runMain.
@@ -116,25 +118,13 @@ type scopePage struct {
 	close error
 }
 
-// reader is a store.Reader of the tests. It returns root for the root scope and cell for every
-// other scope.
-type reader struct {
-	store.Reader
+// pages are the pages that the double reader returns: root for the root scope and cell for
+// every other scope.
+type pages struct {
 	// root is the page of the root scope.
 	root scopePage
 	// cell is the page of the scope of a cell.
 	cell scopePage
-}
-
-// Read returns the page of the scope s.
-func (r *reader) Read(_ context.Context, s shard.Scope, _ shard.NamespaceIncarnation, _ store.Query, _ page.Page) (
-	store.State, page.Cursor[shard.Placement], error,
-) {
-	p := r.root
-	if s.Cell != "" {
-		p = r.cell
-	}
-	return p.state, &cursor{page: p}, p.err
 }
 
 // cursor is the cursor of a page of the double reader.
@@ -165,25 +155,6 @@ func (*cursor) NextPage() string {
 // Close returns the error of the close of the page.
 func (c *cursor) Close() error {
 	return c.page.close
-}
-
-// fixedRouter is a router of the tests. Route returns err for every key, and Refresh returns
-// refresh.
-type fixedRouter struct {
-	// err is the error of Route.
-	err error
-	// refresh is the error of Refresh.
-	refresh error
-}
-
-// Route returns the error of f.
-func (f *fixedRouter) Route(context.Context, *router.RouteRequest) (router.RouteResult, error) {
-	return router.RouteResult{}, f.err
-}
-
-// Refresh returns the error of the refresh of f.
-func (f *fixedRouter) Refresh(context.Context, *router.RefreshRequest) (router.RefreshResult, error) {
-	return router.RefreshResult{}, f.refresh
 }
 
 // TestMain runs main in place of the tests when mainEnv has the value runMain, and the tests
@@ -475,7 +446,9 @@ func TestCommand(t *testing.T) {
 
 			t.Run("returns an error that wraps the error of the route of the account", func(t *testing.T) {
 				t.Parallel()
-				c := &client{router: &fixedRouter{err: router.ErrNoRoute}}
+				r := routertest.NewRouterStub(t)
+				r.OnRoute.Returns(router.RouteResult{}, router.ErrNoRoute)
+				c := &client{router: r}
 				err := c.deposit(t.Context(), names[0], func() {})
 				assert.ErrorIs(t, err, router.ErrNoRoute, "deposit must return the error of the router")
 			})
@@ -597,60 +570,62 @@ func TestCommand(t *testing.T) {
 		t.Parallel()
 
 		tests := []struct {
-			give *reader
+			give pages
 			want error
 			name string
 		}{
 			{
 				name: "returns the error of the read of the root scope",
-				give: &reader{root: scopePage{err: errRead}},
+				give: pages{root: scopePage{err: errRead}},
 				want: errRead,
 			},
 			{
 				name: "returns the error of the iteration of the cells",
-				give: &reader{root: scopePage{seq: errRead}},
+				give: pages{root: scopePage{seq: errRead}},
 				want: errRead,
 			},
 			{
 				name: "returns the error of the close of the cursor of the cells",
-				give: &reader{root: scopePage{placements: []shard.Placement{cell}, close: errRead}},
+				give: pages{root: scopePage{placements: []shard.Placement{cell}, close: errRead}},
 				want: errRead,
 			},
 			{
 				name: "returns errNoCell for a root scope without a cell",
-				give: &reader{},
+				give: pages{},
 				want: errNoCell,
 			},
 			{
 				name: "returns the error of the read of the scope of the cell",
-				give: &reader{root: scopePage{placements: []shard.Placement{cell}}, cell: scopePage{err: errRead}},
+				give: pages{root: scopePage{placements: []shard.Placement{cell}}, cell: scopePage{err: errRead}},
 				want: errRead,
 			},
 			{
 				name: "returns the error of the iteration of the placements of the cell",
-				give: &reader{root: scopePage{placements: []shard.Placement{cell}}, cell: scopePage{seq: errRead}},
+				give: pages{root: scopePage{placements: []shard.Placement{cell}}, cell: scopePage{seq: errRead}},
 				want: errRead,
 			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				err := settle(t.Context(), hlc.New(1), tt.give, &fixedRouter{}, nodeA, 0)
+				err := settle(t.Context(), hlc.New(1), newReader(t, tt.give), routertest.NewRouterStub(t), nodeA, 0)
 				assert.ErrorIs(t, err, tt.want, "settle must return the error of the read")
 			})
 		}
 
 		t.Run("returns the error of the refresh of the router", func(t *testing.T) {
 			t.Parallel()
-			st := &reader{root: scopePage{placements: []shard.Placement{cell}}}
-			err := settle(t.Context(), hlc.New(1), st, &fixedRouter{refresh: errRead}, nodeA, 0)
+			st := newReader(t, pages{root: scopePage{placements: []shard.Placement{cell}}})
+			r := routertest.NewRouterStub(t)
+			r.OnRefresh.Returns(router.RefreshResult{}, errRead)
+			err := settle(t.Context(), hlc.New(1), st, r, nodeA, 0)
 			assert.ErrorIs(t, err, errRead, "settle must return the error of the refresh")
 		})
 
 		t.Run("returns nil once the router has applied the generation of the cell", func(t *testing.T) {
 			t.Parallel()
-			st := &reader{root: scopePage{placements: []shard.Placement{cell}}}
-			assert.NoError(t, settle(t.Context(), hlc.New(1), st, &fixedRouter{}, nodeA, 0),
+			st := newReader(t, pages{root: scopePage{placements: []shard.Placement{cell}}})
+			assert.NoError(t, settle(t.Context(), hlc.New(1), st, routertest.NewRouterStub(t), nodeA, 0),
 				"settle must return once the cell has settled")
 		})
 
@@ -658,8 +633,8 @@ func TestCommand(t *testing.T) {
 			t.Parallel()
 			ctx, cancel := context.WithCancelCause(t.Context())
 			cancel(errStop)
-			st := &reader{root: scopePage{placements: []shard.Placement{cell}}}
-			assert.ErrorIs(t, settle(ctx, hlc.New(1), st, &fixedRouter{}, nodeA, 1), errStop,
+			st := newReader(t, pages{root: scopePage{placements: []shard.Placement{cell}}})
+			assert.ErrorIs(t, settle(ctx, hlc.New(1), st, routertest.NewRouterStub(t), nodeA, 1), errStop,
 				"settle must return the cause of its context")
 		})
 	})
@@ -683,6 +658,26 @@ func TestCommand(t *testing.T) {
 			assert.Empty(t, depositsOf(fencedstore.New(), names[0]), "an account without a deposit must have no entry")
 		})
 	})
+}
+
+// newReader returns a double of a store.Reader whose Read returns the page of p for each
+// scope. It reports to tb.
+func newReader(tb assert.TB, p pages) *storetest.ReaderStub {
+	tb.Helper()
+	read := func(
+		_ context.Context,
+		s shard.Scope,
+		_ shard.NamespaceIncarnation,
+		_ store.Query,
+		_ page.Page,
+	) (store.State, page.Cursor[shard.Placement], error) {
+		sp := p.root
+		if s.Cell != "" {
+			sp = p.cell
+		}
+		return sp.state, &cursor{page: sp}, sp.err
+	}
+	return storetest.NewReaderStub(tb, storetest.WithReaderRead(read))
 }
 
 // newEnvironment returns the environment of a run of the example that writes to out. Inside a

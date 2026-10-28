@@ -27,6 +27,7 @@ import (
 	"go.thesmos.sh/sharder/embedded"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
+	"go.thesmos.sh/sharder/store/storetest"
 )
 
 // mainEnv makes the test binary run main in place of its tests when it has the value runMain.
@@ -94,25 +95,13 @@ type scopePage struct {
 	close error
 }
 
-// reader is a store.Reader of the tests. It returns root for the root scope and cell for every
-// other scope.
-type reader struct {
-	store.Reader
+// pages are the pages that the double reader returns: root for the root scope and cell for
+// every other scope.
+type pages struct {
 	// root is the page of the root scope.
 	root scopePage
 	// cell is the page of the scope of a cell.
 	cell scopePage
-}
-
-// Read returns the page of the scope s.
-func (r *reader) Read(_ context.Context, s shard.Scope, _ shard.NamespaceIncarnation, _ store.Query, _ page.Page) (
-	store.State, page.Cursor[shard.Placement], error,
-) {
-	p := r.root
-	if s.Cell != "" {
-		p = r.cell
-	}
-	return p.state, &cursor{page: p}, p.err
 }
 
 // cursor is the cursor of a page of the double reader.
@@ -304,7 +293,7 @@ func TestCommand(t *testing.T) {
 
 		t.Run("returns the error of observe", func(t *testing.T) {
 			t.Parallel()
-			_, err := await(t.Context(), hlc.New(1), &reader{root: scopePage{err: errRead}},
+			_, err := await(t.Context(), hlc.New(1), newReader(t, pages{root: scopePage{err: errRead}}),
 				func(view) bool { return true })
 			assert.ErrorIs(t, err, errRead, "await must return the error of the read")
 		})
@@ -314,9 +303,9 @@ func TestCommand(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ctx, cancel := context.WithTimeoutCause(t.Context(), tick, errStop)
 				defer cancel()
-				st := &reader{
+				st := newReader(t, pages{
 					root: scopePage{state: store.State{Spec: []byte(validSpec)}, placements: []shard.Placement{cell}},
-				}
+				})
 				_, err := await(ctx, hlc.New(1), st, func(view) bool { return false })
 				assert.ErrorIs(t, err, errStop, "await must return the cause of its context")
 			})
@@ -328,28 +317,28 @@ func TestCommand(t *testing.T) {
 
 		root := store.State{Spec: []byte(validSpec)}
 		tests := []struct {
-			give *reader
+			give pages
 			want error
 			name string
 		}{
 			{
 				name: "returns the error of the read of the root scope",
-				give: &reader{root: scopePage{err: errRead}},
+				give: pages{root: scopePage{err: errRead}},
 				want: errRead,
 			},
 			{
 				name: "returns the error of the iteration of the cells",
-				give: &reader{root: scopePage{seq: errRead}},
+				give: pages{root: scopePage{seq: errRead}},
 				want: errRead,
 			},
 			{
 				name: "returns errNoCell for a root scope without a cell",
-				give: &reader{},
+				give: pages{},
 				want: errNoCell,
 			},
 			{
 				name: "returns the error of the read of the scope of the cell",
-				give: &reader{
+				give: pages{
 					root: scopePage{state: root, placements: []shard.Placement{cell}},
 					cell: scopePage{err: errRead},
 				},
@@ -357,7 +346,7 @@ func TestCommand(t *testing.T) {
 			},
 			{
 				name: "returns the error of the close of the cursor of the cell",
-				give: &reader{
+				give: pages{
 					root: scopePage{state: root, placements: []shard.Placement{cell}},
 					cell: scopePage{close: errRead},
 				},
@@ -367,29 +356,49 @@ func TestCommand(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				_, err := observe(t.Context(), tt.give)
+				_, err := observe(t.Context(), newReader(t, tt.give))
 				assert.ErrorIs(t, err, tt.want, "observe must return the error of the read")
 			})
 		}
 
 		t.Run("returns an error for a spec that does not decode", func(t *testing.T) {
 			t.Parallel()
-			st := &reader{
+			st := newReader(t, pages{
 				root: scopePage{state: store.State{Spec: []byte(invalidSpec)}, placements: []shard.Placement{cell}},
-			}
+			})
 			_, err := observe(t.Context(), st)
 			assert.HasError(t, err, "observe must refuse a spec that does not decode")
 		})
 
 		t.Run("returns an error for a configuration of fixed-slots that does not decode", func(t *testing.T) {
 			t.Parallel()
-			st := &reader{
+			st := newReader(t, pages{
 				root: scopePage{state: store.State{Spec: []byte(invalidSlots)}, placements: []shard.Placement{cell}},
-			}
+			})
 			_, err := observe(t.Context(), st)
 			assert.HasError(t, err, "observe must refuse a configuration that does not decode")
 		})
 	})
+}
+
+// newReader returns a double of a store.Reader whose Read returns the page of p for each
+// scope. It reports to tb.
+func newReader(tb assert.TB, p pages) *storetest.ReaderStub {
+	tb.Helper()
+	read := func(
+		_ context.Context,
+		s shard.Scope,
+		_ shard.NamespaceIncarnation,
+		_ store.Query,
+		_ page.Page,
+	) (store.State, page.Cursor[shard.Placement], error) {
+		sp := p.root
+		if s.Cell != "" {
+			sp = p.cell
+		}
+		return sp.state, &cursor{page: sp}, sp.err
+	}
+	return storetest.NewReaderStub(tb, storetest.WithReaderRead(read))
 }
 
 // newEnvironment returns the environment of a run of the example that writes to out. Inside a
