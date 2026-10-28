@@ -90,6 +90,9 @@ func (t Transfer) Node(s Side) shard.NodeID {
 // # Concurrency
 //
 // An implementation is safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:out path=handofftest/
 type Protocol interface {
 	// Name returns the registered name of the protocol, such as "break-before-make". A
 	// transition records it.
