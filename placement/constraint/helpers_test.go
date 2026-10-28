@@ -12,6 +12,7 @@ import (
 	"go.thesmos.sh/sharder/placement"
 	"go.thesmos.sh/sharder/placement/placementtest"
 	"go.thesmos.sh/sharder/shard"
+	"go.thesmos.sh/sharder/shard/shardtest"
 )
 
 // The nodes of the cell of the tests of this package.
@@ -65,15 +66,15 @@ var (
 //     of 0.
 func cell() *placement.Input {
 	node := func(id shard.NodeID, zone, reg, law string, cpu float64) shard.Node {
-		return shard.Node{
-			ID: id,
-			Labels: tag.Tags{
+		return shardtest.NewNodeBuilder().
+			WithID(id).
+			WithLabels(tag.Tags{
 				{Key: placementtest.Zone, Value: zone},
 				{Key: region, Value: reg},
 				{Key: jurisdiction, Value: law},
-			},
-			Capacity: map[string]float64{placementtest.CPU: cpu},
-		}
+			}).
+			WithCapacityEntry(placementtest.CPU, cpu).
+			Build()
 	}
 	return &placement.Input{
 		Transitions: map[shard.ID]placement.InFlight{s5: {To: n2, Fallback: n1, Role: shard.RolePrimary}},
