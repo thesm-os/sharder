@@ -1,5 +1,65 @@
 # go.thesmos.sh/sharder
 
+## 0.2.0
+
+### Minor Changes
+
+- 458ca91: Add `membershiptest.ErrOperation` for a check that calls an operation of the kit on a membership without it.
+- f020380: Add a `Parse` function, a `Values` function, the text methods and an `ErrUnknown` sentinel to each exported enumeration.
+- 26996e3: Add `placement.State.PeakCount`, `PeakRoleCount` and `placement.InFlight.Role` for the replicas that the transitions in flight can place on a node.
+- 355ea94: Add `placementtest.Constrained` and `ErrUnconstrained` for the check that validates the plans of a placer against its constraints.
+- 6f0a9e9: Add `placementtest.PlacerCells` to draw the input of each generated call of `Place` from the cells of `Inputs`.
+- aee26b2: Add `replica.Revoker` and `Runner.RevokeShard` to end the work of a tenure when the session of its node ends under `stop`.
+- f887eaf: Add `storetest.ErrOperation` for a check that calls an operation of the kit on a store without it.
+- 5268c3f: Add `storetest.MutationBuilder`, the generated builder of `store.Mutation`.
+- f76f51b: Add `configtest.SpecBuilder` and `configtest.SelectionBuilder`, the generated builders of `config.Spec` and `config.Selection`.
+- 679f394: Add `shardtest.PlacementBuilder` and `shardtest.NodeBuilder`, the generated builders of `shard.Placement` and `shard.Node`.
+- 355ea94: Add `placementtest.States`, `CellMoves`, `ConstraintCells` and `GoalCells` to draw the calls of the suites from the cells of `Inputs`.
+- 9d0dc62: Add `fencetest.AcquirerStub`, the generated double of `fence.Acquirer`.
+- cec90b9: Add `handofftest.ProtocolStub`, the generated double of `handoff.Protocol`.
+- 355ea94: Add `placementtest.StateStub`, the generated double of the methods of `placement.State`.
+- aef9a90: Add `routertest.RouterStub`, the generated double of `router.Router`.
+- 04e1e28: Add `configtest.ParsedStub`, `FactoryStub` and `ProviderStub`, the generated doubles of `config.Parsed`, `config.Factory` and `config.Provider`.
+- 458ca91: Add `membershiptest.MembershipStub` and `SessionStub`, the generated doubles of `membership.Membership` and `membership.Session`.
+- 3add429: Add `partitiontest.PartitionerStub` and `partitiontest.HashStub`, the generated doubles of `partition.Partitioner` and `partition.Hash`.
+- 355ea94: Add `placementtest.ConstraintStub`, `GoalStub` and `PlacerStub`, the generated doubles of `placement.Constraint`, `placement.Goal` and `placement.Placer`.
+- 0642763: Add `protocoltest.ConnectorStub`, `AgentClientStub` and `ControllerClientStub`, the generated doubles of `protocoltest.Connector`, `protocol.AgentClient` and `protocol.ControllerClient`.
+- d0d711d: Add `replicatest.HandlerStub`, `RevokerStub`, `LoadReporterStub` and `OpenerStub`, the generated doubles of `replica.Handler`, `replica.Revoker`, `replica.LoadReporter` and `replica.Opener`.
+- f887eaf: Add `storetest.StoreStub`, `ReaderStub`, `WriterStub` and `LeadershipStub`, the generated doubles of `store.Store`, `store.Reader`, `store.Writer` and `store.Leadership`.
+- 3add429: Add `partitiontest.RunLayoutSuite`, the suite of `partition.Layout` with a budget of no allocation for `Locate`.
+- 355ea94: Add `placementtest.RunStateSuite`, the suite of `placement.State` with a budget of no allocation for each reader and the counted check `RepeatedMovesDoNotAllocate` of `Apply`.
+- 0642763: Add `protocoltest.RunMetadataSuite`, the suite of `protocol.Metadata` with a budget of no allocation for `Check`.
+- aef9a90: Add `routertest.RunWatcherSuite`, the suite of `router.Watcher` with a budget of no allocation for `Route`.
+- c6bfe06: Add `shardtest.RunCellMapSuite`, the suite of `shard.CellMap` with a budget of no allocation for `Locate`.
+- 02b944b: **Breaking:** Rename `proposal.ErrUnknownKind` to `proposal.ErrUnknownOperationKind`.
+- 08a2ba6: **Breaking:** Rename the lag gauge of a router from `sharder.generation.lag` to `sharder.router.refresh.lag`.
+- 76e98aa: **Breaking:** Rename `Valid` to `IsValid` on each exported enumeration.
+- 458ca91: **Breaking:** Replace `membershiptest.AssertMembership` and `WithLostRenewals` with the generated suite `RunMembershipSuite` and the interfaces `membershiptest.Backed` and `Faulty`.
+- 3add429: **Breaking:** Replace `partitiontest.AssertPartitioner`, `AssertHash` and `Vector` with the generated suites `RunPartitionerSuite` and `RunHashSuite`.
+- 355ea94: **Breaking:** Replace `placementtest.AssertConstraint`, `AssertConstraintAllocs`, `AssertGoal`, `AssertGoalAllocs` and `AssertPlacer` with the generated suites `RunConstraintSuite`, `RunGoalSuite` and `RunPlacerSuite`.
+- 0642763: **Breaking:** Replace `protocoltest.AssertTransport` with the interface `protocoltest.Connector` and its generated suite `RunConnectorSuite`.
+- f887eaf: **Breaking:** Replace `storetest.AssertStore` and its options with the generated suite `RunStoreSuite` and the interfaces `storetest.Faulty`, `Deleter` and `Compactor`.
+- 4c1801f: **Breaking:** Return an error that wraps the `ErrUnknown` sentinel of its type from the text methods of each exported enumeration.
+
+### Patch Changes
+
+- b8e250d: Admit each move of a pass and each move proposal against the constraints, the budget and the transitions in flight.
+- c3f39e1: Classify an error of `controller.Controller.Do` that wraps `context.DeadlineExceeded` as `errs.Transient`.
+- aee26b2: Classify an error of `replica.Agent.Do` that wraps `context.DeadlineExceeded` as `errs.Transient`.
+- 26996e3: Count the destination and the fallback of each transition in flight in `constraint.MaxPerNode`.
+- 5268c3f: Draw each mutation of the generated calls of `storetest.StoreSuite` from the value of `storetest.NewMutationBuilder`.
+- 08a2ba6: Leave the `Refresh` calls that a client cancelled out of the lag gauge of a router.
+- e57a51f: Repair the drains and the violations in an emergency pass of the planner that restores no replica.
+- 08a2ba6: Replace only the routes of the slots whose node a membership view adds, removes or moves.
+- 56020ad: Require `go.dokimi.dev/conform` v0.8.0 and `go.dokimi.dev/stub` v0.2.0 for the generated suites and doubles of the kits.
+- 56825cc: Require Go 1.27.3.
+- 6908ef1: Return the error of encoding/json from `fixedslots.New` in place of discarding it.
+- 554b622: Retry a callback, a fence acquisition or a cleanup that ran past its deadline instead of keeping the deadline as its result.
+- 6106cd6: Fix the controller to start a pass when a transition ends with its writer on a node that drains.
+- 56825cc: Update `go.dokimi.dev/assert` to v0.10.0.
+- 56825cc: Update `go.thesmos.sh/core` to v0.35.0.
+- 56825cc: Update `go.thesmos.sh/kanon` to v0.3.0.
+
 ## 0.1.1
 
 ### Patch Changes
