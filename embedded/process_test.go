@@ -89,7 +89,7 @@ func TestProcess(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				cfg, _ := newSystem(t).config(nodeA)
+				cfg, _ := newSystem(t).config(t, nodeA)
 				_, err := embedded.New(tt.give(cfg))
 				expect.That(t, err).
 					ErrorIs(embedded.ErrConfig, "New must return an error that wraps ErrConfig").
@@ -472,7 +472,7 @@ func TestProcess(t *testing.T) {
 				p := s.start(t, nodeA)
 				r := route(t, p)
 				root := shard.Scope{Namespace: orders}
-				s.store.refuse.Store(&root)
+				s.refuseRead.Store(&root)
 				w, _ := p.Router(orders)
 				_, err := w.Refresh(
 					t.Context(),
