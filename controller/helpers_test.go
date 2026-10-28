@@ -628,11 +628,11 @@ func disruption(n shard.NodeID, b byte) *budget.Disruption {
 
 // spec returns the spec of the namespace ns.
 func spec(ns shard.Namespace) config.Spec {
-	return config.Spec{
-		Namespace:    ns,
-		Preset:       builtin.ExclusiveWorker,
-		Partitioning: config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)},
-	}
+	return configtest.NewSpecBuilder().
+		WithNamespace(ns).
+		WithPreset(builtin.ExclusiveWorker).
+		WithPartitioning(config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)}).
+		Build()
 }
 
 // received receives the value that ch delivers, and fails tb with msg when ch delivers
