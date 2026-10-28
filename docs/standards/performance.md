@@ -58,8 +58,12 @@ in Go:
 ## Measurement
 
 - Every hot path has a benchmark that runs at 1 and 4 cores with
-  `-cpu=1,4`, under `bench.Start(b).MaxAllocs(n)`. Its `Test<Unit>Allocs`
-  checks the same ceiling in an ordinary test run.
+  `-cpu=1,4`, and an allocation test that checks its ceiling in an
+  ordinary test run. dokimi generates both from the budget of a callable of
+  a suite. A hot path without a suite, such as a method of a type whose
+  codec kanon generates, keeps its hand-written `Benchmark<Unit>` under
+  `bench.Start(b).MaxAllocs(n)` and its `Test<Unit>Allocs`. So does a pass
+  of the planner over 1,000,000 shards.
 - Every RFC states the costs and the targets of its hot paths. A slice is
   done when its benchmarks meet the targets.
 - A comparison of two versions runs both sides in alternating rounds and

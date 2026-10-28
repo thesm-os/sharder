@@ -7,7 +7,7 @@ created: 2026-09-27
 updated: 2026-10-10
 discussion: none
 supersedes: none
-superseded-by: none
+superseded-by: RFC-0016 in part
 produces-adr: tbd
 research: Research-0001, Research-0002, Research-0003
 related: RFC-0001, RFC-0002, RFC-0006, RFC-0008, RFC-0009

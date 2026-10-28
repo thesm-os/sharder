@@ -4,7 +4,7 @@ title: Conformance kits for every contract with more than one implementation
 status: Accepted
 date: 2026-10-10
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0045 in part
 rfc: RFC-0001, RFC-0004, RFC-0007, RFC-0008
 ---
 
@@ -17,7 +17,7 @@ rfc: RFC-0001, RFC-0004, RFC-0007, RFC-0008
 
 ## Status
 
-Accepted
+Accepted. [ADR-0045](0045-dokimi-generates-the-test-code.md) supersedes it in part.
 
 ## Context
 

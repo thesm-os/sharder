@@ -9,21 +9,21 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 
 | ADR | Title | Status |
 |---|---|---|
-| [0001](0001-conformance-kits-per-contract.md) | Conformance kits for every contract with more than one implementation | Accepted |
+| [0001](0001-conformance-kits-per-contract.md) | Conformance kits for every contract with more than one implementation | Superseded in part by [0045](0045-dokimi-generates-the-test-code.md) |
 | [0002](0002-store-reader-for-readers.md) | Readers of the store take store.Reader | Accepted |
 | [0003](0003-implementations-below-contracts.md) | Built-in implementations are subpackages of their contracts | Accepted |
 | [0004](0004-proposals-in-their-own-package.md) | Proposals and approvals form package proposal | Superseded by [0008](0008-declarations-of-the-support-matrix.md) |
 | [0005](0005-core-assigns-shard-ids.md) | The core assigns shard IDs from core's identifiers | Superseded by [0018](0018-shard-ids-are-128-bit-identifiers.md) |
-| [0006](0006-roles-and-statuses-are-enumerations.md) | Roles and statuses are closed enumerations | Accepted |
+| [0006](0006-roles-and-statuses-are-enumerations.md) | Roles and statuses are closed enumerations | Superseded in part by [0045](0045-dokimi-generates-the-test-code.md) |
 | [0007](0007-partitioners-return-spans.md) | Partitioners divide a range into spans, and the core assigns their IDs | Accepted |
 | [0008](0008-declarations-of-the-support-matrix.md) | Replication, ownership, fence and proposal declare only the capabilities of the support matrix | Accepted |
 | [0009](0009-improvement-toward-underloaded-nodes.md) | The planner improves a cell whose least loaded node is far below the mean | Accepted |
 | [0010](0010-budget-counts-nodes-with-replicas.md) | The budget counts only the disrupted nodes that host a replica | Accepted |
 | [0011](0011-churn-limits-moves-out-of-a-node.md) | The churn budget limits the moves out of a node | Accepted |
-| [0012](0012-config-and-budget-declare-the-matrix.md) | Config and budget declare only the capabilities of the support matrix | Accepted |
-| [0013](0013-store-membership-protocol-declare-the-matrix.md) | Store, membership and protocol declare only the capabilities of the support matrix | Accepted |
+| [0012](0012-config-and-budget-declare-the-matrix.md) | Config and budget declare only the capabilities of the support matrix | Superseded in part by [0045](0045-dokimi-generates-the-test-code.md) |
+| [0013](0013-store-membership-protocol-declare-the-matrix.md) | Store, membership and protocol declare only the capabilities of the support matrix | Superseded in part by [0045](0045-dokimi-generates-the-test-code.md) |
 | [0014](0014-cell-ids-are-root-shard-ids.md) | The ID of a cell is the canonical text of its shard ID in the root | Accepted |
-| [0015](0015-placement-declares-the-planner-of-the-matrix.md) | Placement declares only the planner of the support matrix, with sparse plans and a concrete state | Accepted |
+| [0015](0015-placement-declares-the-planner-of-the-matrix.md) | Placement declares only the planner of the support matrix, with sparse plans and a concrete state | Superseded in part by [0045](0045-dokimi-generates-the-test-code.md) |
 | [0016](0016-improvement-weighs-every-tier-at-once.md) | The improvement weighs every tier at once and examines a sample of the shards of each node | Accepted |
 | [0017](0017-handoff-steps-on-the-sides-of-a-transfer.md) | Handoff declares only the protocol of the support matrix, with steps on the sides of a transfer | Accepted |
 | [0018](0018-shard-ids-are-128-bit-identifiers.md) | The core assigns shard IDs as 128-bit identifiers of core | Accepted |
@@ -53,3 +53,4 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0042](0042-agent-revokes-tenures-under-stop.md) | The agent revokes each tenure of the node at the end of its session under stop | Accepted |
 | [0043](0043-emergency-pass-without-progress-repairs-the-rest.md) | An emergency pass that restores no replica repairs the other replicas | Accepted |
 | [0044](0044-router-reports-the-lag-of-its-refreshes.md) | The router reports the lag of the generations that its Refresh calls wait for | Accepted |
+| [0045](0045-dokimi-generates-the-test-code.md) | dokimi generates the enumerations, the error checks, the conformance suites, the doubles and the builders | Accepted |

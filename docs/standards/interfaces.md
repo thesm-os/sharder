@@ -97,8 +97,9 @@ They do not apply to these calls:
 - A concrete method that a host calls copies the host's request into a
   pooled call state, and passes that state to the interface. The host's
   request then remains on the host's stack.
-- The `Allocs` test of each call measures it with the request in a local
-  variable, as a host writes it.
+- A hand-written allocation spec of each call measures the call with the
+  request in a local variable, as a host writes it. The budget of the call
+  does not count that escape.
 
 ## Costs
 

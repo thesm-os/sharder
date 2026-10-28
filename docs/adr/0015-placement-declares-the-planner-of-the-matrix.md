@@ -4,7 +4,7 @@ title: Placement declares only the planner of the support matrix, with sparse pl
 status: Accepted
 date: 2026-10-11
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0045 in part
 rfc: RFC-0003, RFC-0004
 ---
 
@@ -17,7 +17,7 @@ rfc: RFC-0003, RFC-0004
 
 ## Status
 
-Accepted
+Accepted. [ADR-0045](0045-dokimi-generates-the-test-code.md) supersedes it in part.
 
 ## Context
 

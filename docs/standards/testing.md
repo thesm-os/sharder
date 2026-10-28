@@ -19,8 +19,10 @@ which part of the library states which contract.
   the behaviour that `x.go` implements. `doc.go` has no spec, and a
   generated file has one that pins what it generates.
 - A test file without a source file of its name does not exist, except
-  `helpers_test.go`. It contains the helpers and fixtures that two or
-  more specs of the package use.
+  `helpers_test.go` and the specs that dokimi writes: `x_enum_test.go`,
+  `errors_sentinel_test.go` and `x_suite_test.go`. `helpers_test.go`
+  contains the helpers and fixtures that two or more specs of the package
+  use.
 - A helper calls `t.Helper()` first. A helper exists only for logic of two
   or more steps that two or more cases call.
 
@@ -38,30 +40,59 @@ which part of the library states which contract.
 - A table of cases is a slice named `tests`, each row is `tt`, its `name`
   is the whole case sentence, and its other fields start with `give` and
   `want`.
-- `Test<Subject>Allocs` checks the allocation ceilings of the subject,
-  `Benchmark<Subject>` measures them, and `Fuzz<Function>` fuzzes one
-  entry point.
+- dokimi names the tests of a subject of a suite
+  `Test<Subject>ConformsTo<Declaration>`,
+  `Test<Subject>ConformsTo<Declaration>Allocs`,
+  `Benchmark<Subject>ConformsTo<Declaration>` and
+  `Fuzz<Subject>ConformsTo<Declaration><Callable>`. A spec does not
+  declare a test of these names.
+- A hand-written `Fuzz<Function>` fuzzes one entry point that no suite
+  covers. A hand-written `Test<Subject>Allocs` and `Benchmark<Subject>`
+  check and measure the ceilings of a struct or a function that has no
+  suite, or apply the budgets of a suite that its subject applies by hand.
 
 ## Conformance suites
 
-- The contract of an interface has a suite `<pkg>test`, such as
-  `storagetest` or `ledgertest`, that every implementation runs.
-- Each case of a suite is named as a law in kebab case, such as
-  `batches-are-atomic`. It checks the law through assertions only, so a
-  failure has a record.
-- Each case has one mutant in `<pkg>test/mutant`: an implementation that
-  breaks the law and nothing else. The suite's own test runs the case
-  against its mutant with `assert.Rejects`, and checks that the record's
-  contract is the law that the mutant breaks.
-- A stateful contract has a case `histories-are-linearizable`: a
+- dokimi generates the suite of the contract of an interface into
+  `<pkg>test` from the directives `suite`, `stub` and `out path=<pkg>test/`
+  on the interface. Every implementation applies the suite with the
+  directive `subject`.
+- The param `options` of the directive `subject` passes the options of the
+  application, such as `conform.Using` and `conform.Restartable`. The suite
+  starts a struct without exported fields from its zero value, so a subject
+  whose calls need other values of such a struct passes `conform.Using`
+  there.
+- A spec applies a suite by hand where a generated test cannot apply it,
+  such as to a subject whose generated calls draw inputs that it refuses,
+  or to a type that the spec declares: `Test<Subject>Conformance` calls
+  `Run<X>Suite`, `Test<Subject>Allocs` calls `Run<X>Budgets`, and
+  `Benchmark<Subject>` calls `Bench<X>Suite`.
+- A struct of a hot path that `docs/architecture/packages.md` lists has a
+  suite of its own, unless core or kanon tests its type. Its factory is a
+  function of the external test package of its kit.
+- Each law is a check of the kit: an exported function under
+  `//dokimi:check <Declaration>.<Method> defect=<function>`, whose doc
+  comment opens with "<Name> checks that". dokimi names the check after
+  the function in kebab case, such as `batches-are-atomic`. The check
+  states the law through assertions only, and its decisive assertion
+  passes `h.Statement()`.
+- The planted defect of each check is the generated double over a
+  verified fake of the kit, with the calls that break the law replaced.
+  The generated test of the suite proves that the check fails on it at
+  its statement, and that every other check passes on it.
+- A law that needs an operation outside its contract reads the operation
+  from an interface of the kit that the subject implements. An
+  implementation without the operation excuses the law with
+  `//dokimi:excuse` and a reason.
+- A stateful contract has a check `histories-are-linearizable`: a
   `stateful` machine with concurrent clients, checked against the
   sequential specification of the contract.
 
 ## Determinism and isolation
 
-- Every test and subtest calls `t.Parallel()`. The exceptions are
-  `Test<Subject>Allocs` and a test that reads state of the whole process,
-  whose doc comment states which state.
+- Every test and subtest calls `t.Parallel()`. The exceptions are the
+  allocation tests, generated or hand-written, and a test that reads state
+  of the whole process, whose doc comment states which state.
 - A test takes its context from `t.Context()`, and never from
   `context.Background()` or `context.TODO()`.
 - A test waits on a channel or a context, never on `time.Sleep`. Code
@@ -91,13 +122,21 @@ which part of the library states which contract.
 
 ## Allocation ceilings and benchmarks
 
-- Every exported function on a hot or warm path has a benchmark: one
-  `b.Run` per method under `bench.Start(b).MaxAllocs(n)`, with an
-  assertion on the result after the loop. A cold path, such as a
+- Every callable of a suite on a hot or warm path has a `//dokimi:budget`
+  with the ceiling of one call. dokimi generates its allocation test, its
+  benchmark and a planted defect of each ceiling, so `go test -count=1`
+  enforces the ceiling without `-bench`. A cold path, such as a
   registration that runs once, has none.
-- `Test<Subject>Allocs` checks the same ceilings with `assert.MaxAllocs`
-  or `expect.MaxAllocs`, so `go test -count=1` enforces them without
-  `-bench`.
+- A budget applies to every input that the call generator generates. A
+  ceiling of a part of the domain, such as a call into a dst with room, is
+  a budget over the whole domain and a check of the part.
+- A ceiling of a steady state or of each element of an input is a check of
+  the consumer under `//dokimi:check` with `counted=true`. It counts with
+  `assert.MaxAllocs` in the allocation tests, which do not run in parallel.
+- Every other exported function on a hot or warm path has a hand-written
+  benchmark: one `b.Run` per method under `bench.Start(b).MaxAllocs(n)`,
+  with an assertion on the result after the loop. `Test<Subject>Allocs`
+  checks the same ceilings with `assert.MaxAllocs` or `expect.MaxAllocs`.
 - A ceiling equals the count that a profile shows. A run over a corpus
   that allocates millions of times has a budget about 5% above one
   measurement.

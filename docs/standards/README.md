@@ -30,7 +30,10 @@ A tool checks a rule wherever one can. Review checks every other rule.
 | A test file declares the package `x_test` | `testpackage`, through `make lint` |
 | A test and its subtests run in parallel | `paralleltest` and `tparallel`, through `make lint` |
 | A test takes its context from the test | `usetesting`, through `make lint` |
-| A call does not allocate in steady state | the `Allocs` test of the call |
+| A call does not allocate in steady state | the budget of a callable of a suite, through the allocation test that dokimi generates, and the `Allocs` test of any other call |
+| The request of a call does not escape the frame of its caller | the hand-written allocation spec of the call |
+| Each law of a kit can fail | the test of its suite that dokimi generates |
+| The generated files match their directives | `make verify-generate-go` |
 | Every package covers 100% of its statements | `go test -cover`, before review |
 | Every mutant is detected | `dokimi-mutate-go`, before review |
 | Every other rule of these standards | review |

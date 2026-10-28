@@ -4,7 +4,7 @@ title: Config and budget declare only the capabilities of the support matrix
 status: Accepted
 date: 2026-10-11
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0045 in part
 rfc: RFC-0002, RFC-0005, RFC-0008
 ---
 
@@ -17,7 +17,7 @@ rfc: RFC-0002, RFC-0005, RFC-0008
 
 ## Status
 
-Accepted
+Accepted. [ADR-0045](0045-dokimi-generates-the-test-code.md) supersedes it in part.
 
 ## Context
 
