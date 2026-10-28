@@ -46,6 +46,9 @@ type Effect interface {
 // a machine while it runs, such as the fencing tokens of an agent or the routes of a
 // router. The machine publishes each such value through an atomic pointer during Step, so
 // a reader does not wait for a step.
+//
+//dokimi:stub
+//dokimi:out path=machinetest/
 type Machine interface {
 	// Step applies ev to the machine and appends the effects of ev to out. It returns the
 	// extended slice, as append does. It does not modify the elements of out, and it does

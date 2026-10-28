@@ -7,7 +7,6 @@ import (
 	"context"
 	"iter"
 	"log/slog"
-	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -21,6 +20,7 @@ import (
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/streamtest"
 	"go.thesmos.sh/sharder/membership"
+	"go.thesmos.sh/sharder/membership/membershiptest"
 	"go.thesmos.sh/sharder/ownership"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store/memory"
@@ -41,58 +41,10 @@ var (
 	otherNode = shard.Node{ID: "node-b", Address: "node-b:7000"}
 )
 
-// session is a membership.Session whose Leave calls its function.
-type session struct {
-	done        chan struct{}
-	leave       func(ctx context.Context) error
-	incarnation epoch.Epoch
-}
-
-var _ membership.Session = (*session)(nil)
-
-// Incarnation returns the incarnation of s.
-func (s *session) Incarnation() epoch.Epoch {
-	return s.incarnation
-}
-
-// Done returns the channel of s that closes when the session ends.
-func (s *session) Done() <-chan struct{} {
-	return s.done
-}
-
-// Leave calls the function of s.
-func (s *session) Leave(ctx context.Context) error {
-	return s.leave(ctx)
-}
-
-// members is a membership.Membership whose Join and Watch call its functions.
-type members struct {
-	join  func(ctx context.Context) (membership.Session, error)
-	watch func(ctx context.Context) iter.Seq2[membership.View, error]
-}
-
-var _ membership.Membership = (*members)(nil)
-
-// Join calls the join function of m.
-func (m *members) Join(ctx context.Context, _ shard.Scope, _ shard.NamespaceIncarnation, _ *shard.Node,
-	_ ownership.Lease,
-) (membership.Session, error) {
-	return m.join(ctx)
-}
-
-// Watch calls the watch function of m.
-func (m *members) Watch(
-	ctx context.Context,
-	_ shard.Scope,
-	_ shard.NamespaceIncarnation,
-) iter.Seq2[membership.View, error] {
-	return m.watch(ctx)
-}
-
 // join is the Join of the node of the tests in the scope of the tests.
 var join = machine.Join{Node: &node, Scope: scope, Token: 1, Lease: lease, Incarnation: inc}
 
-// leaving is the script of a probe that joins at Started, and leaves at the event of a
+// leaving is the script of a machine that joins at Started, and leaves at the event of a
 // call.
 func leaving(ev machine.Event) []machine.Effect {
 	switch ev := ev.(type) {
@@ -157,22 +109,20 @@ func TestMembership(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(join))
-				joins := make(chan context.Context, 1)
 				done := make(chan struct{})
-				f.cfg.Membership = &members{join: func(ctx context.Context) (membership.Session, error) {
-					joins <- ctx
-					return &session{incarnation: 1, done: done}, nil
-				}}
+				m := membershiptest.NewMembershipStub(t)
+				m.OnJoin.Returns(session(t, 1, done), nil)
+				f.cfg.Membership = m
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
-				received(t, f.probe.events, "the run passes the session")
+				received(t, f.events, "the run passes Started")
+				received(t, f.events, "the run passes the session")
 				close(done)
-				received(t, f.probe.events, "the run passes the end of the session")
+				received(t, f.events, "the run passes the end of the session")
 				synctest.Wait()
 				assert.ErrorIs(
 					t,
-					received(t, joins, "the membership receives the join").Err(),
+					m.OnJoin.AssertCalledOnce(t, "the membership receives one join").Ctx.Err(),
 					context.Canceled,
 					"the run must cancel the context of the join once its session ends",
 				)
@@ -225,21 +175,21 @@ func TestMembership(t *testing.T) {
 				})
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				assert.Equal(
 					t,
-					received(t, f.probe.events, "the run passes Joined"),
+					received(t, f.events, "the run passes Joined"),
 					machine.Event(
 						machine.Joined{Incarnation: 1, Token: 1},
 					),
 					"the run must pass the session of the Join",
 				)
-				received(t, f.probe.events, "the run passes the result of the Leave")
+				received(t, f.events, "the run passes the result of the Leave")
 				synctest.Wait()
 				f.clock.Advance(time.Duration(lease.TTL))
 				assert.Equal(
 					t,
-					received(t, f.probe.events, "the run passes the end of the session"),
+					received(t, f.events, "the run passes the end of the session"),
 					machine.Event(
 						machine.SessionEnded{Token: 1},
 					),
@@ -283,20 +233,26 @@ func TestMembership(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, leaving)
-				f.cfg.Membership = &members{join: func(ctx context.Context) (membership.Session, error) {
+				f.cfg.Membership = membershiptest.NewMembershipStub(t, membershiptest.WithMembershipJoin(func(
+					ctx context.Context,
+					_ shard.Scope,
+					_ shard.NamespaceIncarnation,
+					_ *shard.Node,
+					_ ownership.Lease,
+				) (membership.Session, error) {
 					<-ctx.Done()
 					return nil, context.Cause(ctx)
-				}}
+				}))
 				d := f.driver(t)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				_, err := d.Call[struct{}](t.Context(), func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
 				})
 				assert.NoError(t, err, "the call returns its reply")
-				received(t, f.probe.events, "the run passes the event of the call")
-				got, ok := received(t, f.probe.events, "the run passes the result of the join").(machine.Joined)
+				received(t, f.events, "the run passes the event of the call")
+				got, ok := received(t, f.events, "the run passes the result of the join").(machine.Joined)
 				assert.True(t, ok, "the run must pass a Joined")
 				expect.That(t, got.Err).ErrorIs(context.Canceled, "the Joined must have the error of the ended wait")
 				expect.Equal(t, got.Token, machine.Token(1), "the Joined must have the token of the Join")
@@ -308,38 +264,44 @@ func TestMembership(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, leaving)
-				var left atomic.Bool
-				f.cfg.Membership = &members{join: func(ctx context.Context) (membership.Session, error) {
+				done := make(chan struct{})
+				s := session(t, 3, done)
+				s.OnLeave.Func(func(context.Context) error {
+					close(done)
+					return nil
+				})
+				f.cfg.Membership = membershiptest.NewMembershipStub(t, membershiptest.WithMembershipJoin(func(
+					ctx context.Context,
+					_ shard.Scope,
+					_ shard.NamespaceIncarnation,
+					_ *shard.Node,
+					_ ownership.Lease,
+				) (membership.Session, error) {
 					<-ctx.Done()
-					done := make(chan struct{})
-					return &session{incarnation: 3, done: done, leave: func(context.Context) error {
-						left.Store(true)
-						close(done)
-						return nil
-					}}, nil
-				}}
+					return s, nil
+				}))
 				d := f.driver(t)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				_, err := d.Call[struct{}](t.Context(), func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
 				})
 				assert.NoError(t, err, "the call returns its reply")
-				received(t, f.probe.events, "the run passes the event of the call")
+				received(t, f.events, "the run passes the event of the call")
 				assert.Equal(
 					t,
-					received(t, f.probe.events, "the run passes the session"),
+					received(t, f.events, "the run passes the session"),
 					machine.Event(
 						machine.Joined{Incarnation: 3, Token: 1},
 					),
 					"the run must pass the session that the membership returned",
 				)
-				assert.Equal(t, received(t, f.probe.events, "the run passes the result of the Leave"),
+				assert.Equal(t, received(t, f.events, "the run passes the result of the Leave"),
 					machine.Event(machine.Left{Token: 1}), "the run must pass the result of the Leave")
-				assert.Equal(t, received(t, f.probe.events, "the run passes the end of the session"),
+				assert.Equal(t, received(t, f.events, "the run passes the end of the session"),
 					machine.Event(machine.SessionEnded{Token: 1}), "the run must pass the end of the session")
-				assert.True(t, left.Load(), "the run must leave the session")
+				s.OnLeave.AssertCalledOnce(t, "the run must leave the session")
 				stopped(t, cancel, errc)
 			})
 		})
@@ -382,9 +344,10 @@ func TestMembership(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.WatchViews{Scope: scope, Token: 1}))
-				f.cfg.Membership = &members{watch: func(context.Context) iter.Seq2[membership.View, error] {
-					return func(func(membership.View, error) bool) {}
-				}}
+				f.cfg.Membership = membershiptest.NewMembershipStub(t, membershiptest.WithMembershipWatch(
+					func(context.Context, shard.Scope, shard.NamespaceIncarnation) iter.Seq2[membership.View, error] {
+						return func(func(membership.View, error) bool) {}
+					}))
 				got, ok := f.results(t, 1)[0].(machine.Viewed)
 				assert.True(t, ok, "the run must pass a Viewed")
 				expect.That(t, got.Err).ErrorIs(driver.ErrEnded, "the Viewed must have ErrEnded")
@@ -409,16 +372,24 @@ func TestMembership(t *testing.T) {
 				})
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
-				_, ok := received(t, f.probe.events, "the run passes the current view").(machine.Viewed)
+				received(t, f.events, "the run passes Started")
+				_, ok := received(t, f.events, "the run passes the current view").(machine.Viewed)
 				assert.True(t, ok, "the run must pass the current view")
 				synctest.Wait()
 				_, err := f.store.Membership().Join(t.Context(), scope, inc, &otherNode, lease)
 				assert.NoError(t, err, "a node joins the scope")
 				synctest.Wait()
-				streamtest.Blocks(t, f.probe.events, "the run must not pass a view after the Unwatch of the watch")
+				streamtest.Blocks(t, f.events, "the run must not pass a view after the Unwatch of the watch")
 				stopped(t, cancel, errc)
 			})
 		})
 	})
+}
+
+// session returns a double of a session of the incarnation inc, which ends when done closes.
+func session(tb assert.TB, inc epoch.Epoch, done <-chan struct{}) *membershiptest.SessionStub {
+	tb.Helper()
+	return membershiptest.NewSessionStub(tb,
+		membershiptest.WithSessionIncarnation(func() epoch.Epoch { return inc }),
+		membershiptest.WithSessionDone(func() <-chan struct{} { return done }))
 }

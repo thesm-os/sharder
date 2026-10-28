@@ -19,69 +19,11 @@ import (
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
+	"go.thesmos.sh/sharder/store/storetest"
 )
 
-// leadership is a store.Leadership whose Resign calls its function.
-type leadership struct {
-	done   chan struct{}
-	resign func(ctx context.Context) error
-	term   epoch.Epoch
-}
-
-var _ store.Leadership = (*leadership)(nil)
-
-// Term returns the term of l.
-func (l *leadership) Term() epoch.Epoch {
-	return l.term
-}
-
-// Done returns the channel of l that closes when the term ends.
-func (l *leadership) Done() <-chan struct{} {
-	return l.done
-}
-
-// Resign calls the function of l.
-func (l *leadership) Resign(ctx context.Context) error {
-	return l.resign(ctx)
-}
-
-// elector is a store.Store whose Campaign calls its function. Its other methods are those
-// of Store.
-type elector struct {
-	store.Store
-	campaign func(ctx context.Context) (store.Leadership, error)
-}
-
-var _ store.Store = (*elector)(nil)
-
-// Campaign calls the function of e.
-func (e *elector) Campaign(ctx context.Context, _ shard.Scope) (store.Leadership, error) {
-	return e.campaign(ctx)
-}
-
-// grantor is a store.Store whose Campaign grants the term 1, which ends when the test closes
-// done. It passes the context of each campaign to campaigns, and counts the calls of Resign
-// in resigns. Its other methods are those of Store.
-type grantor struct {
-	store.Store
-	campaigns chan context.Context
-	done      chan struct{}
-	resigns   atomic.Int64
-}
-
-var _ store.Store = (*grantor)(nil)
-
-// Campaign passes ctx to the campaigns of g, and returns the term 1 of g.
-func (g *grantor) Campaign(ctx context.Context, _ shard.Scope) (store.Leadership, error) {
-	g.campaigns <- ctx
-	return &leadership{term: 1, done: g.done, resign: func(context.Context) error {
-		g.resigns.Add(1)
-		return nil
-	}}, nil
-}
-
-// resigning is the script of a probe that campaigns at Started, and resigns the campaign at
-// the event of a call.
+// resigning is the script of a machine that campaigns at Started, and resigns the campaign
+// at the event of a call.
 func resigning(ev machine.Event) []machine.Effect {
 	switch ev := ev.(type) {
 	case machine.Started:
@@ -159,18 +101,19 @@ func TestElection(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Campaign{Scope: scope, Token: 1}))
-				g := &grantor{Store: f.store, campaigns: make(chan context.Context, 1), done: make(chan struct{})}
-				f.cfg.Store = g
+				done := make(chan struct{})
+				s := grantor(t, f.store, granted(t, done))
+				f.cfg.Store = s
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
-				received(t, f.probe.events, "the run passes the term")
-				close(g.done)
-				received(t, f.probe.events, "the run passes the end of the term")
+				received(t, f.events, "the run passes Started")
+				received(t, f.events, "the run passes the term")
+				close(done)
+				received(t, f.events, "the run passes the end of the term")
 				synctest.Wait()
 				assert.ErrorIs(
 					t,
-					received(t, g.campaigns, "the store receives the campaign").Err(),
+					s.OnCampaign.AssertCalledOnce(t, "the store receives one campaign").Ctx.Err(),
 					context.Canceled,
 					"the run must cancel the context of the campaign once the store ends its term",
 				)
@@ -182,16 +125,17 @@ func TestElection(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Campaign{Scope: scope, Token: 1}))
-				g := &grantor{Store: f.store, campaigns: make(chan context.Context, 1), done: make(chan struct{})}
-				f.cfg.Store = g
+				done := make(chan struct{})
+				term := granted(t, done)
+				f.cfg.Store = grantor(t, f.store, term)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
-				received(t, f.probe.events, "the run passes the term")
-				close(g.done)
-				received(t, f.probe.events, "the run passes the end of the term")
+				received(t, f.events, "the run passes Started")
+				received(t, f.events, "the run passes the term")
+				close(done)
+				received(t, f.events, "the run passes the end of the term")
 				synctest.Wait()
-				assert.Equal(t, g.resigns.Load(), int64(0), "the run must not resign a term that the store has ended")
+				term.OnResign.AssertNotCalled(t, "the run must not resign a term that the store has ended")
 				stopped(t, cancel, errc)
 			})
 		})
@@ -200,14 +144,14 @@ func TestElection(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Campaign{Scope: scope, Token: 1}))
-				g := &grantor{Store: f.store, campaigns: make(chan context.Context, 1), done: make(chan struct{})}
-				f.cfg.Store = g
+				term := granted(t, make(chan struct{}))
+				f.cfg.Store = grantor(t, f.store, term)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
-				received(t, f.probe.events, "the run passes the term")
+				received(t, f.events, "the run passes Started")
+				received(t, f.events, "the run passes the term")
 				stopped(t, cancel, errc)
-				assert.Equal(t, g.resigns.Load(), int64(0), "the run must not resign a term when it stops")
+				term.OnResign.AssertNotCalled(t, "the run must not resign a term when it stops")
 			})
 		})
 
@@ -228,13 +172,13 @@ func TestElection(t *testing.T) {
 				})
 				var resigned atomic.Bool
 				done := make(chan struct{})
-				f.cfg.Store = &elector{Store: f.store, campaign: func(context.Context) (store.Leadership, error) {
-					return &leadership{term: 1, done: done, resign: func(ctx context.Context) error {
-						resigned.Store(ctx.Err() == nil)
-						close(done)
-						return nil
-					}}, nil
-				}}
+				term := granted(t, done)
+				term.OnResign.Func(func(ctx context.Context) error {
+					resigned.Store(ctx.Err() == nil)
+					close(done)
+					return nil
+				})
+				f.cfg.Store = grantor(t, f.store, term)
 				assert.Equal(t, f.results(t, 2), []machine.Event{
 					machine.Campaigned{Term: 1, Token: 1},
 					machine.TermEnded{Token: 1},
@@ -258,15 +202,14 @@ func TestElection(t *testing.T) {
 					}
 					return nil
 				})
-				f.cfg.Store = &elector{Store: f.store, campaign: func(ctx context.Context) (store.Leadership, error) {
-					done := make(chan struct{})
-					context.AfterFunc(ctx, func() { close(done) })
-					return &leadership{
-						term:   1,
-						done:   done,
-						resign: func(context.Context) error { return errBroken },
-					}, nil
-				}}
+				done := make(chan struct{})
+				term := granted(t, done)
+				term.OnResign.Returns(errBroken)
+				f.cfg.Store = storetest.NewStoreStub(t, storetest.StoreStubDelegateTo(f.store),
+					storetest.WithStoreCampaign(func(ctx context.Context, _ shard.Scope) (store.Leadership, error) {
+						context.AfterFunc(ctx, func() { close(done) })
+						return term, nil
+					}))
 				assert.Equal(t, f.results(t, 2), []machine.Event{
 					machine.Campaigned{Term: 1, Token: 1},
 					machine.TermEnded{Token: 1},
@@ -292,14 +235,14 @@ func TestElection(t *testing.T) {
 				d := f.driver(t)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				synctest.Wait()
 				_, err = d.Call[struct{}](t.Context(), func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
 				})
 				assert.NoError(t, err, "the call returns its reply")
-				received(t, f.probe.events, "the run passes the event of the call")
-				got, ok := received(t, f.probe.events, "the run passes the result of the campaign").(machine.Campaigned)
+				received(t, f.events, "the run passes the event of the call")
+				got, ok := received(t, f.events, "the run passes the result of the campaign").(machine.Campaigned)
 				assert.True(t, ok, "the run must pass a Campaigned")
 				expect.That(t, got.Err).
 					ErrorIs(context.Canceled, "the Campaigned must have the error of the ended wait")
@@ -312,38 +255,51 @@ func TestElection(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, resigning)
-				var resigned atomic.Bool
-				f.cfg.Store = &elector{Store: f.store, campaign: func(ctx context.Context) (store.Leadership, error) {
-					<-ctx.Done()
-					done := make(chan struct{})
-					close(done)
-					return &leadership{term: 1, done: done, resign: func(context.Context) error {
-						resigned.Store(true)
-						return nil
-					}}, nil
-				}}
+				done := make(chan struct{})
+				close(done)
+				term := granted(t, done)
+				f.cfg.Store = storetest.NewStoreStub(t, storetest.StoreStubDelegateTo(f.store),
+					storetest.WithStoreCampaign(func(ctx context.Context, _ shard.Scope) (store.Leadership, error) {
+						<-ctx.Done()
+						return term, nil
+					}))
 				d := f.driver(t)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				_, err := d.Call[struct{}](t.Context(), func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
 				})
 				assert.NoError(t, err, "the call returns its reply")
-				received(t, f.probe.events, "the run passes the event of the call")
+				received(t, f.events, "the run passes the event of the call")
 				assert.Equal(
 					t,
-					received(t, f.probe.events, "the run passes the term"),
+					received(t, f.events, "the run passes the term"),
 					machine.Event(
 						machine.Campaigned{Term: 1, Token: 1},
 					),
 					"the run must pass the term that the store granted",
 				)
-				assert.Equal(t, received(t, f.probe.events, "the run passes the end of the term"),
+				assert.Equal(t, received(t, f.events, "the run passes the end of the term"),
 					machine.Event(machine.TermEnded{Token: 1}), "the run must pass the end of the term")
-				assert.True(t, resigned.Load(), "the run must resign the term")
+				term.OnResign.AssertCalledOnce(t, "the run must resign the term")
 				stopped(t, cancel, errc)
 			})
 		})
 	})
+}
+
+// granted returns a double of the term 1, which ends when done closes.
+func granted(tb assert.TB, done <-chan struct{}) *storetest.LeadershipStub {
+	tb.Helper()
+	return storetest.NewLeadershipStub(tb,
+		storetest.WithLeadershipTerm(func() epoch.Epoch { return 1 }),
+		storetest.WithLeadershipDone(func() <-chan struct{} { return done }))
+}
+
+// grantor returns a double of s whose Campaign grants term. Its other methods call s.
+func grantor(tb assert.TB, s store.Store, term store.Leadership) *storetest.StoreStub {
+	tb.Helper()
+	return storetest.NewStoreStub(tb, storetest.StoreStubDelegateTo(s),
+		storetest.WithStoreCampaign(func(context.Context, shard.Scope) (store.Leadership, error) { return term, nil }))
 }

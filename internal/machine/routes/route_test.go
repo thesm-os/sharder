@@ -8,12 +8,10 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
 	"go.thesmos.sh/core/epoch"
-	"go.thesmos.sh/core/telemetry/noop"
 
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/machine/routes"
@@ -191,59 +189,6 @@ func TestRoute(t *testing.T) {
 			t.Parallel()
 			prop.ForAll(t, "Route returns the route that a step of the router published for the slot", race)
 		})
-	})
-}
-
-// TestRouteAllocs checks that Route does not allocate.
-func TestRouteAllocs(t *testing.T) {
-	h := newHarness(t, func(s *setup) { s.cfg.Reporter = noop.New() })
-	h.commit(t, cellScope, &store.Mutation{Put: []shard.Placement{h.placement(2, noNode, firstEpoch)}})
-	h.start(t)
-	m := h.machine
-
-	t.Run("Route", func(t *testing.T) {
-		t.Run("of a shard with a route", func(t *testing.T) {
-			var err error
-			ctx, key := t.Context(), h.keys[1]
-			expect.MaxAllocs(
-				t,
-				func() { _, err = m.Route(ctx, key) },
-				0,
-				"Route of a shard with a route must not allocate",
-			)
-			expect.NoError(t, err, "the measurement must take a shard with a route")
-		})
-
-		t.Run("of a shard without a route", func(t *testing.T) {
-			var err error
-			ctx, key := t.Context(), h.keys[2]
-			expect.MaxAllocs(
-				t,
-				func() { _, err = m.Route(ctx, key) },
-				0,
-				"Route of a shard without a route must not allocate",
-			)
-			expect.ErrorIs(t, err, routes.ErrNoRoute, "the measurement must take a shard without a route")
-		})
-	})
-}
-
-// BenchmarkRoute measures Route.
-func BenchmarkRoute(b *testing.B) {
-	h := newHarness(b, func(s *setup) { s.cfg.Reporter = noop.New() })
-	h.start(b)
-	ctx, m, key := b.Context(), h.machine, h.keys[1]
-
-	b.Run("Route", func(b *testing.B) {
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-		var got routes.Route
-		var err error
-		for c.Loop() {
-			got, err = m.Route(ctx, key)
-		}
-		assert.NoError(b, err, "the benchmark must measure a shard with a route")
-		assert.Equal(b, got.Shard, shards[1], "the benchmark must return the route of the shard of the key")
 	})
 }
 

@@ -193,8 +193,9 @@ type setup struct {
 	// root is the mutation that creates the root scope, which newHarness completes with the
 	// spec and the mapping.
 	root store.Mutation
-	// extend registers more strategies in the registry of the agent, or is nil.
-	extend func(r *config.Registry) error
+	// extend registers more strategies in the registry of the agent, or is nil. The doubles
+	// of the strategies report to tb.
+	extend func(tb assert.TB, r *config.Registry) error
 	// support is the support matrix of the registry of the agent.
 	support config.Support
 	// create is true when the root has created the namespace before the agent starts.
@@ -348,7 +349,7 @@ func newHarness(tb testCase, opts ...option) *harness {
 	r := config.NewRegistry(s.support)
 	assert.NoError(tb, builtin.Register(r), "the built-ins must register")
 	if s.extend != nil {
-		assert.NoError(tb, s.extend(r), "the strategies of the test must register")
+		assert.NoError(tb, s.extend(tb, r), "the strategies of the test must register")
 	}
 	res, err := config.Resolve(r, &s.spec, provided)
 	assert.NoError(tb, err, "the spec of the tests must resolve")

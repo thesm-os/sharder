@@ -25,7 +25,6 @@ import (
 
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
-	"go.thesmos.sh/sharder/handoff"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/partition"
 	"go.thesmos.sh/sharder/partition/fixedslots"
@@ -745,12 +744,8 @@ func TestPlan(t *testing.T) {
 
 		t.Run("logs a move that the protocol cannot script", func(t *testing.T) {
 			t.Parallel()
-			h := served(t, selects(config.Handoff, "", func(r *config.Registry) error {
-				return config.Register[handoff.Protocol](
-					r,
-					config.Handoff,
-					refusing{Factory: builtin.BreakBeforeMake()},
-				)
+			h := served(t, selects(config.Handoff, "", func(tb assert.TB, r *config.Registry) error {
+				return config.Register(r, config.Handoff, refusing(tb, builtin.BreakBeforeMake()))
 			}))
 			sid := h.shardOn(t, nodeA.ID)
 			h.disrupt(t, disruption(1, nodeA.ID), operator)

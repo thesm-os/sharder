@@ -13,6 +13,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/config/configtest"
 	"go.thesmos.sh/sharder/handoff"
 	"go.thesmos.sh/sharder/internal/machine/agent"
 	"go.thesmos.sh/sharder/ownership"
@@ -50,48 +51,6 @@ type none struct{}
 // Validate returns nil.
 func (none) Validate() error { return nil }
 
-// staticProtocol is the factory of a handoff protocol other than break-before-make. It
-// provides the capability of exclusive ownership, so a spec with it resolves.
-type staticProtocol struct{}
-
-var _ config.Factory[handoff.Protocol] = staticProtocol{}
-
-// Name returns staticName.
-func (staticProtocol) Name() shard.StrategyName { return staticName }
-
-// Parse returns the configuration without settings.
-func (staticProtocol) Parse(json.RawMessage) (config.Parsed, error) { return none{}, nil }
-
-// Capabilities provides the capability exclusive-safe.
-func (staticProtocol) Capabilities(config.Parsed) config.Capabilities {
-	return config.Capabilities{Provides: []config.Capability{config.ExclusiveSafe}}
-}
-
-// New returns errStatic.
-func (staticProtocol) New(config.Parsed) (handoff.Protocol, error) { return nil, errStatic }
-
-// staticOwnership is the factory of an ownership mode whose New fails. It provides the
-// capability fenced, so a spec with it resolves.
-type staticOwnership struct{}
-
-var _ config.Factory[ownership.Config] = staticOwnership{}
-
-// Name returns staticName.
-func (staticOwnership) Name() shard.StrategyName { return staticName }
-
-// Parse returns the configuration without settings.
-func (staticOwnership) Parse(json.RawMessage) (config.Parsed, error) { return none{}, nil }
-
-// Capabilities provides the capability fenced.
-func (staticOwnership) Capabilities(config.Parsed) config.Capabilities {
-	return config.Capabilities{Provides: []config.Capability{config.Fenced}}
-}
-
-// New returns errStatic.
-func (staticOwnership) New(config.Parsed) (ownership.Config, error) {
-	return ownership.Config{}, errStatic
-}
-
 // TestSpec checks the parts of the spec of the namespace that an agent applies.
 func TestSpec(t *testing.T) {
 	t.Parallel()
@@ -120,8 +79,8 @@ func TestSpec(t *testing.T) {
 				name: "stops with ErrConfig for a handoff protocol other than break-before-make",
 				give: func(s *setup) {
 					s.support.Strategies[config.Handoff] = append(s.support.Strategies[config.Handoff], staticName)
-					s.extend = func(r *config.Registry) error {
-						return config.Register[handoff.Protocol](r, config.Handoff, staticProtocol{})
+					s.extend = func(tb assert.TB, r *config.Registry) error {
+						return config.Register(r, config.Handoff, static[handoff.Protocol](tb, config.ExclusiveSafe))
 					}
 					s.spec.Handoff = config.Selection{Name: staticName}
 				},
@@ -130,8 +89,8 @@ func TestSpec(t *testing.T) {
 				name: "stops with ErrConfig for an ownership mode that does not build",
 				give: func(s *setup) {
 					s.support.Strategies[config.Ownership] = append(s.support.Strategies[config.Ownership], staticName)
-					s.extend = func(r *config.Registry) error {
-						return config.Register[ownership.Config](r, config.Ownership, staticOwnership{})
+					s.extend = func(tb assert.TB, r *config.Registry) error {
+						return config.Register(r, config.Ownership, static[ownership.Config](tb, config.Fenced))
 					}
 					s.spec.Ownership = config.Selection{Name: staticName}
 				},
@@ -173,4 +132,21 @@ func TestSpec(t *testing.T) {
 			assert.Length(t, h.reports, 2, "the agent must report again after the load window of the spec")
 		})
 	})
+}
+
+// static returns a double of the factory of a strategy named staticName. Its Parse returns
+// the configuration without settings, its Capabilities provides capability, and its New
+// returns errStatic. A spec that selects the strategy therefore resolves.
+func static[T any](tb assert.TB, capability config.Capability) *configtest.FactoryStub[T] {
+	tb.Helper()
+	return configtest.NewFactoryStub(tb,
+		configtest.WithFactoryName[T](func() shard.StrategyName { return staticName }),
+		configtest.WithFactoryParse[T](func(json.RawMessage) (config.Parsed, error) { return none{}, nil }),
+		configtest.WithFactoryCapabilities[T](func(config.Parsed) config.Capabilities {
+			return config.Capabilities{Provides: []config.Capability{capability}}
+		}),
+		configtest.WithFactoryNew(func(config.Parsed) (T, error) {
+			var zero T
+			return zero, errStatic
+		}))
 }

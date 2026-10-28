@@ -12,51 +12,24 @@ import (
 	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/sharder/fence"
+	"go.thesmos.sh/sharder/fence/fencetest"
 	"go.thesmos.sh/sharder/internal/driver"
+	"go.thesmos.sh/sharder/internal/driver/drivertest"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/protocol"
 )
 
-// handler is a driver.Handler whose methods call its functions.
-type handler struct {
-	add  func(ctx context.Context, r *protocol.Request, t *fence.Token) error
-	drop func(ctx context.Context, r *protocol.Request) error
-}
-
-var _ driver.Handler = (*handler)(nil)
-
-// AddShard calls the add function of h.
-func (h *handler) AddShard(ctx context.Context, r *protocol.Request, t *fence.Token) error {
-	return h.add(ctx, r, t)
-}
-
-// DropShard calls the drop function of h.
-func (h *handler) DropShard(ctx context.Context, r *protocol.Request) error {
-	return h.drop(ctx, r)
-}
-
-// revoker is a driver.Revoker whose RevokeShard calls its function.
+// revoker is a handler that implements driver.Revoker. It embeds the double of each
+// interface.
 type revoker struct {
-	handler
-	revoke func(ctx context.Context, t *fence.Token) error
+	*drivertest.HandlerStub
+	*drivertest.RevokerStub
 }
 
-var _ driver.Revoker = (*revoker)(nil)
-
-// RevokeShard calls the revoke function of r.
-func (r *revoker) RevokeShard(ctx context.Context, t *fence.Token) error {
-	return r.revoke(ctx, t)
-}
-
-// acquirer is a fence.Acquirer whose Acquire calls the function.
-type acquirer func(ctx context.Context, t fence.Token) error
-
-var _ fence.Acquirer = acquirer(nil)
-
-// Acquire calls f.
-func (f acquirer) Acquire(ctx context.Context, t fence.Token) error {
-	return f(ctx, t)
-}
+var (
+	_ driver.Handler = (*revoker)(nil)
+	_ driver.Revoker = (*revoker)(nil)
+)
 
 // The names of the methods of a handler, which the tests record for each call.
 const (
@@ -91,16 +64,16 @@ func TestApplication(t *testing.T) {
 					f := newFixture(t, performing(machine.Handle{Request: r, Token: 1}))
 					var method string
 					var gotRequest *protocol.Request
-					f.cfg.Handler = &handler{
-						add: func(_ context.Context, req *protocol.Request, _ *fence.Token) error {
-							method, gotRequest = addShard, req
-							return errBusy
-						},
-						drop: func(_ context.Context, req *protocol.Request) error {
-							method, gotRequest = dropShard, req
-							return errBusy
-						},
+					add := func(_ context.Context, req *protocol.Request, _ *fence.Token) error {
+						method, gotRequest = addShard, req
+						return errBusy
 					}
+					drop := func(_ context.Context, req *protocol.Request) error {
+						method, gotRequest = dropShard, req
+						return errBusy
+					}
+					f.cfg.Handler = drivertest.NewHandlerStub(t, drivertest.WithHandlerAddShard(add),
+						drivertest.WithHandlerDropShard(drop))
 					got, ok := f.results(t, 1)[0].(machine.Handled)
 					assert.True(t, ok, "the run must pass a Handled")
 					expect.That(t, got.Err).ErrorIs(errBusy, "the Handled must have the error of the handler")
@@ -120,12 +93,11 @@ func TestApplication(t *testing.T) {
 					Token:   1,
 				}))
 				var gotToken fence.Token
-				f.cfg.Handler = &handler{
-					add: func(_ context.Context, _ *protocol.Request, ft *fence.Token) error {
+				f.cfg.Handler = drivertest.NewHandlerStub(t,
+					drivertest.WithHandlerAddShard(func(_ context.Context, _ *protocol.Request, ft *fence.Token) error {
 						gotToken = *ft
 						return nil
-					},
-				}
+					}))
 				_, ok := f.results(t, 1)[0].(machine.Handled)
 				assert.True(t, ok, "the run must pass a Handled")
 				assert.Equal(t, gotToken, fencing, "the run must pass the fencing token of the Handle")
@@ -136,7 +108,7 @@ func TestApplication(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Handle{Request: &protocol.Request{}, Token: 1}))
-				f.cfg.Handler = &handler{}
+				f.cfg.Handler = drivertest.NewHandlerStub(t)
 				got, ok := f.results(t, 1)[0].(machine.Handled)
 				assert.True(t, ok, "the run must pass a Handled")
 				expect.That(t, got.Err).ErrorIs(protocol.ErrUnsupported, "the Handled must have ErrUnsupported")
@@ -153,9 +125,8 @@ func TestApplication(t *testing.T) {
 						machine.Handle{Request: &protocol.Request{Call: protocol.Add}, Token: 1, Timeout: timeout},
 					),
 				)
-				f.cfg.Handler = &handler{
-					add: func(ctx context.Context, _ *protocol.Request, _ *fence.Token) error { return blocked(ctx) },
-				}
+				add := func(ctx context.Context, _ *protocol.Request, _ *fence.Token) error { return blocked(ctx) }
+				f.cfg.Handler = drivertest.NewHandlerStub(t, drivertest.WithHandlerAddShard(add))
 				got, ok := f.results(t, 1)[0].(machine.Handled)
 				assert.True(t, ok, "the run must pass a Handled")
 				assert.ErrorIs(
@@ -183,10 +154,11 @@ func TestApplication(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Acquire{Fence: fencing, Token: 1}))
 				var gotToken fence.Token
-				f.cfg.Guard = acquirer(func(_ context.Context, ft fence.Token) error {
-					gotToken = ft
-					return errBusy
-				})
+				f.cfg.Guard = fencetest.NewAcquirerStub(t,
+					fencetest.WithAcquirerAcquire(func(_ context.Context, ft fence.Token) error {
+						gotToken = ft
+						return errBusy
+					}))
 				got, ok := f.results(t, 1)[0].(machine.Acquired)
 				assert.True(t, ok, "the run must pass an Acquired")
 				expect.That(t, got.Err).ErrorIs(errBusy, "the Acquired must have the error of the guard")
@@ -199,7 +171,8 @@ func TestApplication(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Acquire{Fence: fencing, Token: 1, Timeout: timeout}))
-				f.cfg.Guard = acquirer(func(ctx context.Context, _ fence.Token) error { return blocked(ctx) })
+				acquire := func(ctx context.Context, _ fence.Token) error { return blocked(ctx) }
+				f.cfg.Guard = fencetest.NewAcquirerStub(t, fencetest.WithAcquirerAcquire(acquire))
 				got, ok := f.results(t, 1)[0].(machine.Acquired)
 				assert.True(t, ok, "the run must pass an Acquired")
 				assert.ErrorIs(
@@ -227,10 +200,14 @@ func TestApplication(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Revoke{Fence: fencing, Token: 1}))
 				var gotToken fence.Token
-				f.cfg.Handler = &revoker{revoke: func(_ context.Context, ft *fence.Token) error {
-					gotToken = *ft
-					return errBusy
-				}}
+				f.cfg.Handler = &revoker{
+					HandlerStub: drivertest.NewHandlerStub(t),
+					RevokerStub: drivertest.NewRevokerStub(t,
+						drivertest.WithRevokerRevokeShard(func(_ context.Context, ft *fence.Token) error {
+							gotToken = *ft
+							return errBusy
+						})),
+				}
 				got, ok := f.results(t, 1)[0].(machine.Revoked)
 				assert.True(t, ok, "the run must pass a Revoked")
 				expect.That(t, got.Err).ErrorIs(errBusy, "the Revoked must have the error of RevokeShard")
@@ -243,7 +220,7 @@ func TestApplication(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Revoke{Fence: fencing, Token: 1}))
-				f.cfg.Handler = &handler{}
+				f.cfg.Handler = drivertest.NewHandlerStub(t)
 				got, ok := f.results(t, 1)[0].(machine.Revoked)
 				assert.True(t, ok, "the run must pass a Revoked")
 				expect.NoError(t, got.Err, "the Revoked of a handler without RevokeShard must have no error")
@@ -256,7 +233,11 @@ func TestApplication(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Revoke{Fence: fencing, Token: 1, Timeout: timeout}))
 				f.cfg.Handler = &revoker{
-					revoke: func(ctx context.Context, _ *fence.Token) error { return blocked(ctx) },
+					HandlerStub: drivertest.NewHandlerStub(t),
+					RevokerStub: drivertest.NewRevokerStub(t,
+						drivertest.WithRevokerRevokeShard(func(ctx context.Context, _ *fence.Token) error {
+							return blocked(ctx)
+						})),
 				}
 				got, ok := f.results(t, 1)[0].(machine.Revoked)
 				assert.True(t, ok, "the run must pass a Revoked")

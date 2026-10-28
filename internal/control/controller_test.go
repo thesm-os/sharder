@@ -243,8 +243,9 @@ type setup struct {
 	prior []*store.Mutation
 	// fits is the bound of a commit, and nil for the bound of the store.
 	fits func(m *store.Mutation) error
-	// extend registers more strategies in the registry of the controller, or is nil.
-	extend func(r *config.Registry) error
+	// extend registers more strategies in the registry of the controller, or is nil. The
+	// doubles of the strategies report to tb.
+	extend func(tb assert.TB, r *config.Registry) error
 	// support is the support matrix of the registry of the controller.
 	support config.Support
 	// accepted is the accepted spec that the acquisition of a controller of spec proposals
@@ -361,7 +362,7 @@ func newHarness(tb testCase, opts ...option) *harness {
 	h.registry = config.NewRegistry(s.support)
 	assert.NoError(tb, builtin.Register(h.registry), "the built-ins must register")
 	if s.extend != nil {
-		assert.NoError(tb, s.extend(h.registry), "the strategies of the test must register")
+		assert.NoError(tb, s.extend(tb, h.registry), "the strategies of the test must register")
 	}
 	res, err := config.Resolve(h.registry, &s.spec, provided)
 	assert.NoError(tb, err, "the spec of the tests must resolve")

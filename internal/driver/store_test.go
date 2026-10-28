@@ -23,6 +23,7 @@ import (
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
+	"go.thesmos.sh/sharder/store/storetest"
 )
 
 // lateWatches is the number of watches of the test that drops the items of ended watches.
@@ -77,34 +78,6 @@ func (*cursor) NextPage() string {
 func (c *cursor) Close() error {
 	c.closed.Store(true)
 	return c.closeErr
-}
-
-// reader is a store.Reader whose Read returns its cursor and whose Watch returns the
-// iteration of its function. Its Head is that of Reader.
-type reader struct {
-	store.Reader
-	cursor *cursor
-	watch  func(ctx context.Context, from epoch.Epoch) iter.Seq2[store.Event, error]
-}
-
-var _ store.Reader = (*reader)(nil)
-
-// Read returns the zero State and the cursor of r.
-func (r *reader) Read(context.Context, shard.Scope, shard.NamespaceIncarnation, store.Query, page.Page) (
-	store.State, page.Cursor[shard.Placement], error,
-) {
-	return store.State{}, r.cursor, nil
-}
-
-// Watch returns the iteration of the function of r for ctx and from.
-func (r *reader) Watch(
-	ctx context.Context,
-	_ shard.Scope,
-	_ shard.NamespaceIncarnation,
-	from epoch.Epoch,
-	_ shard.NodeID,
-) iter.Seq2[store.Event, error] {
-	return r.watch(ctx, from)
 }
 
 // TestStore checks the effects of the store that Run performs: Head, Read, Watch, Unwatch,
@@ -180,7 +153,9 @@ func TestStore(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Read{Scope: scope, Token: 1}))
 				c := &cursor{items: []shard.Placement{first}, err: errBusy}
-				f.cfg.Reader = &reader{cursor: c}
+				r := storetest.NewReaderStub(t)
+				r.OnRead.Returns(store.State{}, c, nil)
+				f.cfg.Reader = r
 				expect.Equal(t, f.results(t, 1)[0], machine.Event(machine.PageRead{Err: errBusy, Token: 1}),
 					"the PageRead must have only the error of the cursor")
 				expect.True(t, c.closed.Load(), "the run must close the cursor of a page that fails")
@@ -191,7 +166,9 @@ func TestStore(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Read{Scope: scope, Token: 1}))
-				f.cfg.Reader = &reader{cursor: &cursor{items: []shard.Placement{first}, closeErr: errBroken}}
+				r := storetest.NewReaderStub(t)
+				r.OnRead.Returns(store.State{}, &cursor{items: []shard.Placement{first}, closeErr: errBroken}, nil)
+				f.cfg.Reader = r
 				got, ok := f.results(t, 1)[0].(machine.PageRead)
 				assert.True(t, ok, "the run must pass a PageRead")
 				expect.That(t, got.Err).
@@ -205,7 +182,9 @@ func TestStore(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Read{Scope: scope, Token: 1}))
 				c := &cursor{items: []shard.Placement{first, second}}
-				f.cfg.Reader = &reader{cursor: c}
+				r := storetest.NewReaderStub(t)
+				r.OnRead.Returns(store.State{}, c, nil)
+				f.cfg.Reader = r
 				assert.Equal(t, f.results(t, 1)[0],
 					machine.Event(machine.PageRead{Placements: []shard.Placement{first, second}, Token: 1}),
 					"the run must pass the placements of the page")
@@ -235,20 +214,22 @@ func TestStore(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Watch{Scope: scope, Token: 1}))
-				f.cfg.Reader = &reader{watch: func(context.Context, epoch.Epoch) iter.Seq2[store.Event, error] {
+				f.cfg.Reader = storetest.NewReaderStub(t, storetest.WithReaderWatch(func(
+					context.Context, shard.Scope, shard.NamespaceIncarnation, epoch.Epoch, shard.NodeID,
+				) iter.Seq2[store.Event, error] {
 					return func(yield func(store.Event, error) bool) {
 						if yield(store.Event{}, errBusy) {
 							yield(store.Event{Generation: 1}, nil)
 						}
 					}
-				}}
+				}))
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
-				assert.Equal(t, received(t, f.probe.events, "the run passes the item of the watch"),
+				received(t, f.events, "the run passes Started")
+				assert.Equal(t, received(t, f.events, "the run passes the item of the watch"),
 					machine.Event(machine.Watched{Err: errBusy, Token: 1}), "the run must pass the error of the watch")
 				synctest.Wait()
-				streamtest.Blocks(t, f.probe.events, "the run must not pass an item after the error of the watch")
+				streamtest.Blocks(t, f.events, "the run must not pass an item after the error of the watch")
 				stopped(t, cancel, errc)
 			})
 		})
@@ -257,9 +238,11 @@ func TestStore(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Watch{Scope: scope, Token: 1}))
-				f.cfg.Reader = &reader{watch: func(context.Context, epoch.Epoch) iter.Seq2[store.Event, error] {
+				f.cfg.Reader = storetest.NewReaderStub(t, storetest.WithReaderWatch(func(
+					context.Context, shard.Scope, shard.NamespaceIncarnation, epoch.Epoch, shard.NodeID,
+				) iter.Seq2[store.Event, error] {
 					return func(func(store.Event, error) bool) {}
-				}}
+				}))
 				got, ok := f.results(t, 1)[0].(machine.Watched)
 				assert.True(t, ok, "the run must pass a Watched")
 				expect.That(t, got.Err).ErrorIs(driver.ErrEnded, "the item must have ErrEnded")
@@ -289,21 +272,21 @@ func TestStore(t *testing.T) {
 					1: make(chan context.Context, 1),
 					2: make(chan context.Context, 1),
 				}
-				f.cfg.Reader = &reader{
-					watch: func(ctx context.Context, from epoch.Epoch) iter.Seq2[store.Event, error] {
-						ctxs[from] <- ctx
-						return func(yield func(store.Event, error) bool) {
-							if yield(store.Event{Generation: from}, nil) {
-								<-ctx.Done()
-							}
+				f.cfg.Reader = storetest.NewReaderStub(t, storetest.WithReaderWatch(func(
+					ctx context.Context, _ shard.Scope, _ shard.NamespaceIncarnation, from epoch.Epoch, _ shard.NodeID,
+				) iter.Seq2[store.Event, error] {
+					ctxs[from] <- ctx
+					return func(yield func(store.Event, error) bool) {
+						if yield(store.Event{Generation: from}, nil) {
+							<-ctx.Done()
 						}
-					},
-				}
+					}
+				}))
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				for range 2 {
-					_, ok := received(t, f.probe.events, "the run passes the item of a watch").(machine.Watched)
+					_, ok := received(t, f.events, "the run passes the item of a watch").(machine.Watched)
 					assert.True(t, ok, "the run must pass a Watched")
 				}
 				synctest.Wait()
@@ -320,16 +303,18 @@ func TestStore(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Watch{Scope: scope, Token: 1}))
 				ended := make(chan struct{}, 1)
-				f.cfg.Reader = &reader{watch: func(ctx context.Context, _ epoch.Epoch) iter.Seq2[store.Event, error] {
+				f.cfg.Reader = storetest.NewReaderStub(t, storetest.WithReaderWatch(func(
+					ctx context.Context, _ shard.Scope, _ shard.NamespaceIncarnation, _ epoch.Epoch, _ shard.NodeID,
+				) iter.Seq2[store.Event, error] {
 					context.AfterFunc(ctx, func() { ended <- struct{}{} })
 					return func(yield func(store.Event, error) bool) {
 						yield(store.Event{}, errBusy)
 					}
-				}}
+				}))
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
-				received(t, f.probe.events, "the run passes the error of the watch")
+				received(t, f.events, "the run passes Started")
+				received(t, f.events, "the run passes the error of the watch")
 				received(t, ended, "the run must end the context of a watch that an error has ended")
 				stopped(t, cancel, errc)
 			})
@@ -349,19 +334,21 @@ func TestStore(t *testing.T) {
 					}
 					return script(ev)
 				})
-				f.cfg.Reader = &reader{watch: func(ctx context.Context, _ epoch.Epoch) iter.Seq2[store.Event, error] {
+				f.cfg.Reader = storetest.NewReaderStub(t, storetest.WithReaderWatch(func(
+					ctx context.Context, _ shard.Scope, _ shard.NamespaceIncarnation, _ epoch.Epoch, _ shard.NodeID,
+				) iter.Seq2[store.Event, error] {
 					return func(yield func(store.Event, error) bool) {
 						if yield(store.Event{Generation: 1}, nil) {
 							<-ctx.Done()
 							yield(store.Event{Generation: 2}, nil)
 						}
 					}
-				}}
+				}))
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				for range lateWatches {
-					got, ok := received(t, f.probe.events, "the run passes the first item of a watch").(machine.Watched)
+					got, ok := received(t, f.events, "the run passes the first item of a watch").(machine.Watched)
 					assert.True(t, ok, "the run must pass a Watched")
 					assert.Equal(
 						t,
@@ -373,7 +360,7 @@ func TestStore(t *testing.T) {
 				synctest.Wait()
 				streamtest.Blocks(
 					t,
-					f.probe.events,
+					f.events,
 					"the run must not pass an item that a watch yields after its Unwatch",
 				)
 				stopped(t, cancel, errc)

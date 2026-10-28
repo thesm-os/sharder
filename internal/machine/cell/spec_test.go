@@ -12,6 +12,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/config/configtest"
 	"go.thesmos.sh/sharder/internal/control"
 	"go.thesmos.sh/sharder/internal/follow"
 	"go.thesmos.sh/sharder/internal/machine"
@@ -44,24 +45,6 @@ type none struct{}
 
 // Validate returns nil.
 func (none) Validate() error { return nil }
-
-// static is the factory of a placer other than the planner. A controller refuses such a
-// placer before it builds one, so its New returns an error.
-type static struct{}
-
-var _ config.Factory[placement.Placer] = static{}
-
-// Name returns staticName.
-func (static) Name() shard.StrategyName { return staticName }
-
-// Parse returns the configuration without settings.
-func (static) Parse(json.RawMessage) (config.Parsed, error) { return none{}, nil }
-
-// Capabilities returns no capabilities.
-func (static) Capabilities(config.Parsed) config.Capabilities { return config.Capabilities{} }
-
-// New returns errStatic.
-func (static) New(config.Parsed) (placement.Placer, error) { return nil, errStatic }
 
 // TestSpec checks the specs that a cell resolves from the root scope and passes to its
 // controller.
@@ -103,8 +86,13 @@ func TestSpec(t *testing.T) {
 				name: "stops with control.ErrSpec for a spec whose strategies do not build",
 				give: func(s *setup) {
 					s.support.Strategies[config.Placement] = append(s.support.Strategies[config.Placement], staticName)
-					s.extend = func(r *config.Registry) error {
-						return config.Register[placement.Placer](r, config.Placement, static{})
+					s.extend = func(tb assert.TB, r *config.Registry) error {
+						name := func() shard.StrategyName { return staticName }
+						parse := func(json.RawMessage) (config.Parsed, error) { return none{}, nil }
+						build := func(config.Parsed) (placement.Placer, error) { return nil, errStatic }
+						static := configtest.NewFactoryStub(tb, configtest.WithFactoryName[placement.Placer](name),
+							configtest.WithFactoryParse[placement.Placer](parse), configtest.WithFactoryNew(build))
+						return config.Register(r, config.Placement, static)
 					}
 					s.spec.Placement = config.Selection{Name: staticName}
 				},

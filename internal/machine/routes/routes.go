@@ -131,6 +131,11 @@ var lifecycle = fsm.Must(fsm.NewBuilder[state, event, struct{}](stateIdle).
 // A Machine is not safe for concurrent use. Its runtime calls Step from one goroutine at a
 // time. [Machine.Route] and [Machine.Err] are safe for concurrent use, also while Step
 // runs.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=routestest/
+//dokimi:subject Machine new=newServed
 type Machine struct {
 	// rand is the source of the jitter of each backoff.
 	rand rand.Rand

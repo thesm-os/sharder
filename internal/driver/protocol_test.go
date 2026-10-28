@@ -15,9 +15,10 @@ import (
 
 	"go.thesmos.sh/sharder/budget"
 	"go.thesmos.sh/sharder/internal/driver"
+	"go.thesmos.sh/sharder/internal/driver/drivertest"
 	"go.thesmos.sh/sharder/internal/machine"
-	"go.thesmos.sh/sharder/proposal"
 	"go.thesmos.sh/sharder/protocol"
+	"go.thesmos.sh/sharder/protocol/protocoltest"
 	"go.thesmos.sh/sharder/shard"
 )
 
@@ -47,57 +48,6 @@ var (
 	shardB = shard.ID{ID128: id.ID128{15: 0xb}}
 )
 
-// controllerClient is a protocol.ControllerClient whose Report, Disrupt and Done call its
-// functions. Its Submit returns ErrUnsupported, because the driver does not submit.
-type controllerClient struct {
-	report  func(ctx context.Context, cell *shard.Cell, r *protocol.Report) (protocol.Ack, error)
-	disrupt func(ctx context.Context, cell *shard.Cell, d *budget.Disruption) (budget.Decision, error)
-	done    func(ctx context.Context, cell *shard.Cell, a *protocol.DoneArgs) error
-}
-
-var _ protocol.ControllerClient = (*controllerClient)(nil)
-
-// Report calls the report function of c.
-func (c *controllerClient) Report(ctx context.Context, cell *shard.Cell, r *protocol.Report) (protocol.Ack, error) {
-	return c.report(ctx, cell, r)
-}
-
-// Submit returns protocol.ErrUnsupported.
-func (*controllerClient) Submit(context.Context, *shard.Cell, *proposal.Proposal) (protocol.Receipt, error) {
-	return protocol.Receipt{}, protocol.ErrUnsupported
-}
-
-// Disrupt calls the disrupt function of c.
-func (c *controllerClient) Disrupt(
-	ctx context.Context,
-	cell *shard.Cell,
-	d *budget.Disruption,
-) (budget.Decision, error) {
-	return c.disrupt(ctx, cell, d)
-}
-
-// Done calls the done function of c.
-func (c *controllerClient) Done(ctx context.Context, cell *shard.Cell, a *protocol.DoneArgs) error {
-	return c.done(ctx, cell, a)
-}
-
-// loadReporter is a driver.LoadReporter whose ShardLoad calls the function.
-type loadReporter func(id shard.ID) shard.Load
-
-var _ driver.LoadReporter = loadReporter(nil)
-
-// ShardLoad calls f.
-func (f loadReporter) ShardLoad(id shard.ID) shard.Load {
-	return f(id)
-}
-
-// blocked waits until ctx ends, and returns its cause. A double of a call that the
-// Timeout of its effect must end calls it.
-func blocked(ctx context.Context) error {
-	<-ctx.Done()
-	return context.Cause(ctx)
-}
-
 // TestProtocol checks the effects of the protocol that Run performs: Callback,
 // SendReport, SendDisrupt and SendDone.
 func TestProtocol(t *testing.T) {
@@ -113,10 +63,11 @@ func TestProtocol(t *testing.T) {
 				f := newFixture(t, performing(machine.Callback{Node: &node, Request: r, Token: 1}))
 				var gotNode *shard.Node
 				var gotRequest *protocol.Request
-				f.cfg.Agents = agentClient(func(_ context.Context, n *shard.Node, req *protocol.Request) error {
-					gotNode, gotRequest = n, req
-					return errBusy
-				})
+				f.cfg.Agents = protocoltest.NewAgentClientStub(t,
+					protocoltest.WithAgentClientDo(func(_ context.Context, n *shard.Node, req *protocol.Request) error {
+						gotNode, gotRequest = n, req
+						return errBusy
+					}))
 				got, ok := f.results(t, 1)[0].(machine.Called)
 				assert.True(t, ok, "the run must pass a Called")
 				expect.That(t, got.Err).ErrorIs(errBusy, "the Called must have the error of the agent client")
@@ -133,9 +84,10 @@ func TestProtocol(t *testing.T) {
 					t,
 					performing(machine.Callback{Node: &node, Request: &protocol.Request{}, Token: 1, Timeout: timeout}),
 				)
-				f.cfg.Agents = agentClient(func(ctx context.Context, _ *shard.Node, _ *protocol.Request) error {
-					return blocked(ctx)
-				})
+				f.cfg.Agents = protocoltest.NewAgentClientStub(t,
+					protocoltest.WithAgentClientDo(func(ctx context.Context, _ *shard.Node, _ *protocol.Request) error {
+						return blocked(ctx)
+					}))
 				got, ok := f.results(t, 1)[0].(machine.Called)
 				assert.True(t, ok, "the run must pass a Called")
 				assert.ErrorIs(t, got.Err, context.DeadlineExceeded, "the Called must have the error of the ended call")
@@ -160,12 +112,11 @@ func TestProtocol(t *testing.T) {
 				f := newFixture(t, performing(machine.SendReport{Cell: &cell, Report: r, Token: 1}))
 				var gotCell *shard.Cell
 				var gotReport *protocol.Report
-				f.cfg.Controllers = &controllerClient{
-					report: func(_ context.Context, c *shard.Cell, rep *protocol.Report) (protocol.Ack, error) {
+				f.cfg.Controllers = protocoltest.NewControllerClientStub(t, protocoltest.WithControllerClientReport(
+					func(_ context.Context, c *shard.Cell, rep *protocol.Report) (protocol.Ack, error) {
 						gotCell, gotReport = c, rep
 						return protocol.Ack{Sequence: 4}, errBusy
-					},
-				}
+					}))
 				got, ok := f.results(t, 1)[0].(machine.Reported)
 				assert.True(t, ok, "the run must pass a Reported")
 				expect.That(t, got.Err).ErrorIs(errBusy, "the Reported must have the error of the controller client")
@@ -187,18 +138,18 @@ func TestProtocol(t *testing.T) {
 				r := &protocol.Report{Sequence: 4, Replicas: []shard.Observed{{Shard: shardA}, {Shard: shardB}}}
 				f := newFixture(t, performing(machine.SendReport{Cell: &cell, Report: r, Token: 1}))
 				var gotReport *protocol.Report
-				f.cfg.Controllers = &controllerClient{
-					report: func(_ context.Context, _ *shard.Cell, rep *protocol.Report) (protocol.Ack, error) {
+				f.cfg.Controllers = protocoltest.NewControllerClientStub(t, protocoltest.WithControllerClientReport(
+					func(_ context.Context, _ *shard.Cell, rep *protocol.Report) (protocol.Ack, error) {
 						gotReport = rep
 						return protocol.Ack{}, nil
-					},
-				}
-				f.cfg.Loads = loadReporter(func(id shard.ID) shard.Load {
-					if id == shardA {
-						return load
-					}
-					return nil
-				})
+					}))
+				f.cfg.Loads = drivertest.NewLoadReporterStub(t,
+					drivertest.WithLoadReporterShardLoad(func(id shard.ID) shard.Load {
+						if id == shardA {
+							return load
+						}
+						return nil
+					}))
 				f.results(t, 1)
 				assert.Equal(t, gotReport, &protocol.Report{
 					Sequence: 4,
@@ -218,11 +169,10 @@ func TestProtocol(t *testing.T) {
 					t,
 					performing(machine.SendReport{Cell: &cell, Report: &protocol.Report{}, Token: 1, Timeout: timeout}),
 				)
-				f.cfg.Controllers = &controllerClient{
-					report: func(ctx context.Context, _ *shard.Cell, _ *protocol.Report) (protocol.Ack, error) {
+				f.cfg.Controllers = protocoltest.NewControllerClientStub(t, protocoltest.WithControllerClientReport(
+					func(ctx context.Context, _ *shard.Cell, _ *protocol.Report) (protocol.Ack, error) {
 						return protocol.Ack{}, blocked(ctx)
-					},
-				}
+					}))
 				got, ok := f.results(t, 1)[0].(machine.Reported)
 				assert.True(t, ok, "the run must pass a Reported")
 				assert.ErrorIs(
@@ -252,12 +202,11 @@ func TestProtocol(t *testing.T) {
 				f := newFixture(t, performing(machine.SendDisrupt{Cell: &cell, Disruption: d, Token: 1}))
 				var gotCell *shard.Cell
 				var gotDisruption *budget.Disruption
-				f.cfg.Controllers = &controllerClient{
-					disrupt: func(_ context.Context, c *shard.Cell, dis *budget.Disruption) (budget.Decision, error) {
+				f.cfg.Controllers = protocoltest.NewControllerClientStub(t, protocoltest.WithControllerClientDisrupt(
+					func(_ context.Context, c *shard.Cell, dis *budget.Disruption) (budget.Decision, error) {
 						gotCell, gotDisruption = c, dis
 						return budget.Decision{Allowed: true}, errBusy
-					},
-				}
+					}))
 				got, ok := f.results(t, 1)[0].(machine.Decided)
 				assert.True(t, ok, "the run must pass a Decided")
 				expect.That(t, got.Err).ErrorIs(errBusy, "the Decided must have the error of the controller client")
@@ -288,11 +237,10 @@ func TestProtocol(t *testing.T) {
 						machine.SendDisrupt{Cell: &cell, Disruption: &budget.Disruption{}, Token: 1, Timeout: timeout},
 					),
 				)
-				f.cfg.Controllers = &controllerClient{
-					disrupt: func(ctx context.Context, _ *shard.Cell, _ *budget.Disruption) (budget.Decision, error) {
+				f.cfg.Controllers = protocoltest.NewControllerClientStub(t, protocoltest.WithControllerClientDisrupt(
+					func(ctx context.Context, _ *shard.Cell, _ *budget.Disruption) (budget.Decision, error) {
 						return budget.Decision{}, blocked(ctx)
-					},
-				}
+					}))
 				got, ok := f.results(t, 1)[0].(machine.Decided)
 				assert.True(t, ok, "the run must pass a Decided")
 				assert.ErrorIs(
@@ -325,12 +273,11 @@ func TestProtocol(t *testing.T) {
 				f := newFixture(t, performing(machine.SendDone{Cell: &cell, Args: a, Token: 1}))
 				var gotCell *shard.Cell
 				var gotArgs *protocol.DoneArgs
-				f.cfg.Controllers = &controllerClient{
-					done: func(_ context.Context, c *shard.Cell, args *protocol.DoneArgs) error {
+				f.cfg.Controllers = protocoltest.NewControllerClientStub(t, protocoltest.WithControllerClientDone(
+					func(_ context.Context, c *shard.Cell, args *protocol.DoneArgs) error {
 						gotCell, gotArgs = c, args
 						return errBusy
-					},
-				}
+					}))
 				got, ok := f.results(t, 1)[0].(machine.Ended)
 				assert.True(t, ok, "the run must pass an Ended")
 				expect.That(t, got.Err).ErrorIs(errBusy, "the Ended must have the error of the controller client")
@@ -347,11 +294,10 @@ func TestProtocol(t *testing.T) {
 					t,
 					performing(machine.SendDone{Cell: &cell, Args: &protocol.DoneArgs{}, Token: 1, Timeout: timeout}),
 				)
-				f.cfg.Controllers = &controllerClient{
-					done: func(ctx context.Context, _ *shard.Cell, _ *protocol.DoneArgs) error {
+				f.cfg.Controllers = protocoltest.NewControllerClientStub(t, protocoltest.WithControllerClientDone(
+					func(ctx context.Context, _ *shard.Cell, _ *protocol.DoneArgs) error {
 						return blocked(ctx)
-					},
-				}
+					}))
 				got, ok := f.results(t, 1)[0].(machine.Ended)
 				assert.True(t, ok, "the run must pass an Ended")
 				assert.ErrorIs(t, got.Err, context.DeadlineExceeded, "the Ended must have the error of the ended call")

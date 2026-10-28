@@ -15,11 +15,13 @@ import (
 
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/config/configtest"
 	"go.thesmos.sh/sharder/handoff"
+	"go.thesmos.sh/sharder/handoff/handofftest"
 	"go.thesmos.sh/sharder/internal/control"
-	"go.thesmos.sh/sharder/ownership"
 	"go.thesmos.sh/sharder/partition/fixedslots"
 	"go.thesmos.sh/sharder/placement"
+	"go.thesmos.sh/sharder/placement/placementtest"
 	"go.thesmos.sh/sharder/placement/planner"
 	"go.thesmos.sh/sharder/shard"
 )
@@ -58,123 +60,12 @@ const (
 // errFragile is the error of each strategy that does not build.
 var errFragile = errors.New("test: the strategy does not build")
 
-// fragile is a factory of the name fragileName. Its New returns an error, and it parses
-// and declares its configuration as the factory base does.
-type fragile[T any] struct {
-	// base is the factory whose configuration fragile takes.
-	base config.Factory[T]
-}
-
-var _ config.Factory[placement.Placer] = (*fragile[placement.Placer])(nil)
-
-// Name returns fragileName.
-func (*fragile[T]) Name() shard.StrategyName { return fragileName }
-
-// Parse returns the configuration that base parses from raw.
-func (f *fragile[T]) Parse(raw json.RawMessage) (config.Parsed, error) {
-	return f.base.Parse(raw)
-}
-
-// Capabilities returns the capabilities of base with cfg.
-func (f *fragile[T]) Capabilities(cfg config.Parsed) config.Capabilities {
-	return f.base.Capabilities(cfg)
-}
-
-// New returns errFragile.
-func (*fragile[T]) New(config.Parsed) (T, error) {
-	var zero T
-	return zero, errFragile
-}
-
-// refusing is a factory of the name fragileName. It parses and declares its configuration as
-// its Factory does, and its protocols refuse every transfer with a source.
-type refusing struct {
-	config.Factory[handoff.Protocol]
-}
-
-var _ config.Factory[handoff.Protocol] = refusing{}
-
-// Name returns fragileName.
-func (refusing) Name() shard.StrategyName { return fragileName }
-
-// New returns the protocol of the Factory of r with cfg, behind a sourceless protocol.
-func (r refusing) New(cfg config.Parsed) (handoff.Protocol, error) {
-	p, err := r.Factory.New(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return sourceless{Protocol: p}, nil
-}
-
-// sourceless is a protocol that scripts a transfer without a source as its Protocol does, and
-// refuses a transfer with a source.
-type sourceless struct {
-	handoff.Protocol
-}
-
-// Script returns an error that wraps handoff.ErrTransfer for a transfer with a source, and
-// the script of the Protocol of s otherwise.
-func (s sourceless) Script(t handoff.Transfer) (handoff.Script, error) {
-	if t.From != "" {
-		return handoff.Script{}, fmt.Errorf("test: a transfer from %s: %w", t.From, handoff.ErrTransfer)
-	}
-	return s.Protocol.Script(t)
-}
-
-// none is the configuration of a strategy of the tests without settings.
+// none is the configuration of a strategy of the tests without settings. encoding/json
+// encodes it as an empty object, as the resolved spec contains it.
 type none struct{}
 
 // Validate returns nil.
 func (none) Validate() error { return nil }
-
-// static is the factory of a placer other than the planner. A controller refuses such a
-// placer before it builds one, so its New returns an error.
-type static struct{}
-
-var _ config.Factory[placement.Placer] = static{}
-
-// Name returns staticName.
-func (static) Name() shard.StrategyName { return staticName }
-
-// Parse returns the configuration without settings.
-func (static) Parse(json.RawMessage) (config.Parsed, error) { return none{}, nil }
-
-// Capabilities returns no capabilities.
-func (static) Capabilities(config.Parsed) config.Capabilities { return config.Capabilities{} }
-
-// New returns errFragile.
-func (static) New(config.Parsed) (placement.Placer, error) { return nil, errFragile }
-
-// badCost is a goal whose every cost is not a finite number, and the factory of the goal.
-type badCost struct {
-	// name is the name of the goal.
-	name shard.StrategyName
-	// cost is the cost of every state.
-	cost float64
-}
-
-var (
-	_ placement.Goal                 = badCost{}
-	_ config.Factory[placement.Goal] = badCost{}
-)
-
-// Name returns the name of g.
-func (g badCost) Name() shard.StrategyName { return g.name }
-
-// Cost returns the cost of g.
-func (g badCost) Cost(*placement.State) float64 { return g.cost }
-
-// Delta returns 0.
-func (badCost) Delta(*placement.State, placement.Move) float64 { return 0 }
-
-// Parse returns the configuration without settings.
-func (badCost) Parse(json.RawMessage) (config.Parsed, error) { return none{}, nil }
-
-// Capabilities returns no capabilities.
-func (badCost) Capabilities(config.Parsed) config.Capabilities { return config.Capabilities{} }
-
-// New returns g.
-func (g badCost) New(config.Parsed) (placement.Goal, error) { return g, nil }
 
 // TestSpec checks the resolution of the specs and the build of their strategies.
 func TestSpec(t *testing.T) {
@@ -221,8 +112,8 @@ func TestSpec(t *testing.T) {
 				name: "returns ErrSpec for a placer that is not the planner",
 				give: func(s *setup) {
 					s.support.Strategies[config.Placement] = append(s.support.Strategies[config.Placement], staticName)
-					s.extend = func(r *config.Registry) error {
-						return config.Register[placement.Placer](r, config.Placement, static{})
+					s.extend = func(tb assert.TB, r *config.Registry) error {
+						return config.Register(r, config.Placement, static(tb))
 					}
 					s.spec.Placement = config.Selection{Name: staticName}
 				},
@@ -230,9 +121,8 @@ func TestSpec(t *testing.T) {
 			{
 				name: "returns ErrSpec for a constraint that does not build",
 				give: func(s *setup) {
-					s.extend = func(r *config.Registry) error {
-						return config.Register[placement.Constraint](r, config.Constraint,
-							&fragile[placement.Constraint]{base: builtin.MaxPerNode()})
+					s.extend = func(tb assert.TB, r *config.Registry) error {
+						return config.Register(r, config.Constraint, fragile(tb, builtin.MaxPerNode()))
 					}
 					s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(fragileConstraint)}
 				},
@@ -240,32 +130,28 @@ func TestSpec(t *testing.T) {
 			{
 				name: "returns ErrSpec for a goal that does not build",
 				give: func(s *setup) {
-					s.extend = func(r *config.Registry) error {
-						return config.Register[placement.Goal](r, config.Goal,
-							&fragile[placement.Goal]{base: builtin.Count()})
+					s.extend = func(tb assert.TB, r *config.Registry) error {
+						return config.Register(r, config.Goal, fragile(tb, builtin.Count()))
 					}
 					s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(fragileGoal)}
 				},
 			},
 			{
 				name: "returns ErrSpec for a placer that does not build",
-				give: selects(config.Placement, countOnly, func(r *config.Registry) error {
-					return config.Register[placement.Placer](r, config.Placement,
-						&fragile[placement.Placer]{base: builtin.Planner(r)})
+				give: selects(config.Placement, countOnly, func(tb assert.TB, r *config.Registry) error {
+					return config.Register(r, config.Placement, fragile(tb, builtin.Planner(r)))
 				}),
 			},
 			{
 				name: "returns ErrSpec for a protocol that does not build",
-				give: selects(config.Handoff, "", func(r *config.Registry) error {
-					return config.Register[handoff.Protocol](r, config.Handoff,
-						&fragile[handoff.Protocol]{base: builtin.BreakBeforeMake()})
+				give: selects(config.Handoff, "", func(tb assert.TB, r *config.Registry) error {
+					return config.Register(r, config.Handoff, fragile(tb, builtin.BreakBeforeMake()))
 				}),
 			},
 			{
 				name: "returns ErrSpec for an ownership that does not build",
-				give: selects(config.Ownership, fencedOnly, func(r *config.Registry) error {
-					return config.Register[ownership.Config](r, config.Ownership,
-						&fragile[ownership.Config]{base: builtin.Exclusive()})
+				give: selects(config.Ownership, fencedOnly, func(tb assert.TB, r *config.Registry) error {
+					return config.Register(r, config.Ownership, fragile(tb, builtin.Exclusive()))
 				}),
 			},
 		}
@@ -276,7 +162,7 @@ func TestSpec(t *testing.T) {
 				tt.give(&s)
 				r := config.NewRegistry(s.support)
 				assert.NoError(t, builtin.Register(r), "the built-ins must register")
-				assert.NoError(t, s.extend(r), "the strategies of the test must register")
+				assert.NoError(t, s.extend(t, r), "the strategies of the test must register")
 				res, err := config.Resolve(r, &s.spec, provided)
 				assert.NoError(t, err, "the spec of the test must resolve")
 				_, err = control.Build(r, res)
@@ -298,7 +184,7 @@ func testSpec(v epoch.Epoch) config.Spec {
 
 // selects returns an option that registers a strategy with register, and selects it as
 // fragileName on axis with the configuration raw.
-func selects(axis config.Axis, raw string, register func(r *config.Registry) error) option {
+func selects(axis config.Axis, raw string, register func(tb assert.TB, r *config.Registry) error) option {
 	return func(s *setup) {
 		s.support.Strategies[axis] = append(s.support.Strategies[axis], fragileName)
 		s.extend = register
@@ -315,4 +201,67 @@ func selects(axis config.Axis, raw string, register func(r *config.Registry) err
 			s.spec.Ownership = sel
 		}
 	}
+}
+
+// fragile returns a double of a factory named fragileName whose New returns errFragile. It
+// parses and declares its configuration as the factory base does.
+func fragile[T any](tb assert.TB, base config.Factory[T]) *configtest.FactoryStub[T] {
+	tb.Helper()
+	return configtest.NewFactoryStub(tb, configtest.FactoryStubDelegateTo(base),
+		configtest.WithFactoryName[T](func() shard.StrategyName { return fragileName }),
+		configtest.WithFactoryNew(func(config.Parsed) (T, error) {
+			var zero T
+			return zero, errFragile
+		}))
+}
+
+// refusing returns a double of a factory of protocols named fragileName. It parses, declares
+// and builds as base does, and each protocol that it builds refuses every transfer with a
+// source with an error that wraps handoff.ErrTransfer.
+func refusing(tb assert.TB, base config.Factory[handoff.Protocol]) *configtest.FactoryStub[handoff.Protocol] {
+	tb.Helper()
+	return configtest.NewFactoryStub(tb, configtest.FactoryStubDelegateTo(base),
+		configtest.WithFactoryName[handoff.Protocol](func() shard.StrategyName { return fragileName }),
+		configtest.WithFactoryNew(func(cfg config.Parsed) (handoff.Protocol, error) {
+			p, err := base.New(cfg)
+			if err != nil {
+				return nil, err
+			}
+			return handofftest.NewProtocolStub(tb, handofftest.ProtocolStubDelegateTo(p),
+				handofftest.WithProtocolScript(func(t handoff.Transfer) (handoff.Script, error) {
+					if t.From != "" {
+						return handoff.Script{}, fmt.Errorf("test: a transfer from %s: %w", t.From, handoff.ErrTransfer)
+					}
+					return p.Script(t)
+				})), nil
+		}))
+}
+
+// static returns a double of the factory of a placer other than the planner, named
+// staticName. Its Parse returns the configuration without settings. A controller refuses
+// such a placer before it builds one, so its New returns errFragile.
+func static(tb assert.TB) *configtest.FactoryStub[placement.Placer] {
+	tb.Helper()
+	return configtest.NewFactoryStub(tb,
+		configtest.WithFactoryName[placement.Placer](func() shard.StrategyName { return staticName }),
+		configtest.WithFactoryParse[placement.Placer](func(json.RawMessage) (config.Parsed, error) {
+			return none{}, nil
+		}),
+		configtest.WithFactoryNew(func(config.Parsed) (placement.Placer, error) { return nil, errFragile }))
+}
+
+// badCost returns a double of the factory of a goal named name, whose every cost is cost
+// and whose every delta is 0. The Parse of the factory returns the configuration without
+// settings.
+func badCost(tb assert.TB, name shard.StrategyName, cost float64) *configtest.FactoryStub[placement.Goal] {
+	tb.Helper()
+	goal := placementtest.NewGoalStub(tb,
+		placementtest.WithGoalName(func() shard.StrategyName { return name }),
+		placementtest.WithGoalCost(func(*placement.State) float64 { return cost }))
+	return configtest.NewFactoryStub(tb,
+		configtest.WithFactoryName[placement.Goal](func() shard.StrategyName { return name }),
+		configtest.WithFactoryParse[placement.Goal](func(json.RawMessage) (config.Parsed, error) {
+			return none{}, nil
+		}),
+		configtest.WithFactoryNew(func(config.Parsed) (placement.Goal, error) { return goal, nil }))
 }

@@ -14,6 +14,7 @@ import (
 	"go.thesmos.sh/sharder/internal/driver"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/protocol"
+	"go.thesmos.sh/sharder/protocol/protocoltest"
 	"go.thesmos.sh/sharder/shard"
 )
 
@@ -97,7 +98,7 @@ func TestDriver(t *testing.T) {
 				d := f.driver(t)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				assert.ErrorIs(t, d.Run(ctx), driver.ErrRun, "a second Run must return ErrRun")
 				stopped(t, cancel, errc)
 			})
@@ -113,16 +114,17 @@ func TestDriver(t *testing.T) {
 				machine.Timer{Token: 5, Duration: timeout},
 				machine.Callback{Node: &node, Request: &protocol.Request{}, Token: 6},
 			))
-			f.cfg.Agents = agentClient(func(ctx context.Context, _ *shard.Node, _ *protocol.Request) error {
-				return blocked(ctx)
-			})
+			f.cfg.Agents = protocoltest.NewAgentClientStub(t,
+				protocoltest.WithAgentClientDo(func(ctx context.Context, _ *shard.Node, _ *protocol.Request) error {
+					return blocked(ctx)
+				}))
 			d := f.driver(t)
 			check := assert.NoGoroutineLeaks(t, "the run must leave no goroutine once it returns")
 			ctx, cancel := context.WithCancel(t.Context())
 			errc := start(ctx, d)
-			received(t, f.probe.events, "the run passes Started")
+			received(t, f.events, "the run passes Started")
 			for granted := 0; granted < 2; {
-				switch received(t, f.probe.events, "the run passes a result of an effect").(type) {
+				switch received(t, f.events, "the run passes a result of an effect").(type) {
 				case machine.Campaigned, machine.Joined:
 					granted++
 				}
@@ -137,12 +139,13 @@ func TestDriver(t *testing.T) {
 				f := newFixture(t, performing(machine.Callback{Node: &node, Request: &protocol.Request{}, Token: 1}))
 				calling := make(chan struct{}, 1)
 				var done atomic.Bool
-				f.cfg.Agents = agentClient(func(ctx context.Context, _ *shard.Node, _ *protocol.Request) error {
-					calling <- struct{}{}
-					<-ctx.Done()
-					done.Store(true)
-					return context.Cause(ctx)
-				})
+				f.cfg.Agents = protocoltest.NewAgentClientStub(t,
+					protocoltest.WithAgentClientDo(func(ctx context.Context, _ *shard.Node, _ *protocol.Request) error {
+						calling <- struct{}{}
+						<-ctx.Done()
+						done.Store(true)
+						return context.Cause(ctx)
+					}))
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
 				received(t, calling, "the run performs the callback")
@@ -201,7 +204,7 @@ func TestDriver(t *testing.T) {
 				d := f.driver(t)
 				run, stop := context.WithCancel(t.Context())
 				errc := start(run, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				ctx, cancel := context.WithCancelCause(t.Context())
 				cancel(errCause)
 				assert.ErrorIs(t, d.Ready(ctx), errCause, "Ready must return the cause of its context")
@@ -216,7 +219,7 @@ func TestDriver(t *testing.T) {
 				d := f.driver(t)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				stopped(t, cancel, errc)
 				assert.ErrorIs(t, d.Ready(t.Context()), driver.ErrStopped,
 					"Ready must return ErrStopped after a run without a reply to Started")

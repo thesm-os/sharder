@@ -280,34 +280,6 @@ func TestCell(t *testing.T) {
 	})
 }
 
-// TestCellAllocs checks the allocations of a view of a cell of four slots. MaxAllocs counts
-// the allocations of the whole process, so the test does not run in parallel.
-func TestCellAllocs(t *testing.T) {
-	t.Run("Step", func(t *testing.T) {
-		tests := []struct {
-			name     string
-			affected int
-			want     uint64
-		}{
-			{name: "of a view that moves no node with a replica", affected: 0, want: viewAllocs},
-			{name: "of a view that moves the node of every slot", affected: slots, want: viewAllocs + 2*slots},
-		}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				h := sized(t, slots, tt.affected)
-				views := moves(h, tt.affected)
-				out := make([]machine.Effect, 0, 1)
-				i := 0
-				expect.MaxAllocs(t, func() {
-					out = h.machine.Step(views[i%2], out[:0])
-					i++
-				}, tt.want, "a view must allocate its addresses and the route of each slot that it moves")
-				expect.Empty(t, out, "the measurement must take views that the router applies")
-			})
-		}
-	})
-}
-
 // BenchmarkCell measures the step of a view over cells of 1,000 and 100,000 slots. The view
 // moves no node with a replica, the node of one slot, or the node of every slot.
 func BenchmarkCell(b *testing.B) {

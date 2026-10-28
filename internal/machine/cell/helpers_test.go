@@ -134,8 +134,8 @@ type setup struct {
 	// fits is the bound of a commit. A nil fits takes the bound of the store.
 	fits func(m *store.Mutation) error
 	// extend registers more strategies in the registry of the machine. A nil extend
-	// registers none.
-	extend func(r *config.Registry) error
+	// registers none. The doubles of the strategies report to tb.
+	extend func(tb assert.TB, r *config.Registry) error
 	// remap changes the mapping that the root records after the spec resolves. A nil remap
 	// keeps the mapping.
 	remap func(m *shard.Mapping)
@@ -223,7 +223,7 @@ func newHarness(tb testCase, opts ...option) *harness {
 	r := config.NewRegistry(s.support)
 	assert.NoError(tb, builtin.Register(r), "the built-ins must register")
 	if s.extend != nil {
-		assert.NoError(tb, s.extend(r), "the strategies of the test must register")
+		assert.NoError(tb, s.extend(tb, r), "the strategies of the test must register")
 	}
 	res, err := config.Resolve(r, &s.spec, provided)
 	assert.NoError(tb, err, "the spec of the tests must resolve")

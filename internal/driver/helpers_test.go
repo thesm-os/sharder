@@ -19,8 +19,8 @@ import (
 
 	"go.thesmos.sh/sharder/internal/driver"
 	"go.thesmos.sh/sharder/internal/machine"
+	"go.thesmos.sh/sharder/internal/machine/machinetest"
 	"go.thesmos.sh/sharder/internal/streamtest"
-	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
@@ -30,8 +30,9 @@ import (
 // testing/synctest, the wait runs on the virtual time of the bubble.
 const waitFor = 10 * time.Second
 
-// probeEvents is the capacity of the channel on which a probe passes its events.
-const probeEvents = 64
+// machineEvents is the capacity of the channel on which the machine of a fixture passes its
+// events.
+const machineEvents = 64
 
 // namespace is the namespace of the tests.
 const namespace shard.Namespace = "orders"
@@ -59,32 +60,6 @@ var (
 	errCause = errors.New("test: the test ends the context")
 )
 
-// probe is a machine that passes each event to its test, and returns the effects that its
-// script returns for the event. The script runs on the goroutine of the run.
-type probe struct {
-	events chan machine.Event
-	script func(ev machine.Event) []machine.Effect
-	// failure returns the error with which the machine has stopped itself. It is nil for a
-	// machine that does not stop itself. The run calls it on its own goroutine.
-	failure func() error
-}
-
-var _ machine.Machine = (*probe)(nil)
-
-// Step passes ev to the test, and appends the effects of the script for ev to out.
-func (p *probe) Step(ev machine.Event, out []machine.Effect) []machine.Effect {
-	p.events <- ev
-	return append(out, p.script(ev)...)
-}
-
-// Err returns the error of failure, and nil without failure.
-func (p *probe) Err() error {
-	if p.failure == nil {
-		return nil
-	}
-	return p.failure()
-}
-
 // cleaner is an assert.TB that runs functions when its test ends, such as a
 // *testing.T or a *prop.Case.
 type cleaner interface {
@@ -93,10 +68,15 @@ type cleaner interface {
 	Cleanup(f func())
 }
 
-// fixture is a probe and the configuration of a driver that runs it.
+// fixture is a double of a machine and the configuration of a driver that runs it.
 type fixture struct {
-	// probe is the machine of the configuration.
-	probe *probe
+	// machine is the machine of the configuration. Its Step passes each event to events, and
+	// appends the effects that the script of the fixture returns for the event. The script
+	// runs on the goroutine of the run. The double records no call, so it keeps no event and
+	// no effect alive.
+	machine *machinetest.MachineStub
+	// events receives each event that the run passes to the machine.
+	events chan machine.Event
 	// cfg is the configuration of the driver.
 	cfg *driver.Config
 	// store is the store of the configuration, and its membership is the membership of the
@@ -108,18 +88,25 @@ type fixture struct {
 	logs *telemetrytest.Records
 }
 
-// newFixture returns the fixture of a probe of script. The store closes when tb ends.
+// newFixture returns the fixture of a machine whose Step runs script. The store closes when
+// tb ends.
 func newFixture(tb cleaner, script func(ev machine.Event) []machine.Effect) *fixture {
 	tb.Helper()
 	clk := fake.New(origin)
 	s := memory.New(clk)
 	tb.Cleanup(func() { assert.NoError(tb, s.Close(), "the store closes") })
 	logs := telemetrytest.NewRecords(slog.LevelDebug)
-	p := &probe{events: make(chan machine.Event, probeEvents), script: script}
+	events := make(chan machine.Event, machineEvents)
+	m := machinetest.NewMachineStub(tb, machinetest.MachineStubBenchMode(), machinetest.WithMachineStep(
+		func(ev machine.Event, out []machine.Effect) []machine.Effect {
+			events <- ev
+			return append(out, script(ev)...)
+		}))
 	return &fixture{
-		probe: p,
+		machine: m,
+		events:  events,
 		cfg: &driver.Config{
-			Machine:    p,
+			Machine:    m,
 			Reader:     s,
 			Store:      s,
 			Membership: s.Membership(),
@@ -146,10 +133,10 @@ func (f *fixture) results(t *testing.T, n int) []machine.Event {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	errc := start(ctx, f.driver(t))
-	received(t, f.probe.events, "the run passes Started")
+	received(t, f.events, "the run passes Started")
 	evs := make([]machine.Event, 0, n)
 	for range n {
-		evs = append(evs, received(t, f.probe.events, "the run passes the result of an effect"))
+		evs = append(evs, received(t, f.events, "the run passes the result of an effect"))
 	}
 	stopped(t, cancel, errc)
 	return evs
@@ -201,14 +188,11 @@ func received[T any](tb assert.TB, ch <-chan T, msg string) T {
 	return v
 }
 
-// agentClient is a protocol.AgentClient whose Do calls the function.
-type agentClient func(ctx context.Context, node *shard.Node, r *protocol.Request) error
-
-var _ protocol.AgentClient = agentClient(nil)
-
-// Do calls f.
-func (f agentClient) Do(ctx context.Context, node *shard.Node, r *protocol.Request) error {
-	return f(ctx, node, r)
+// blocked waits until ctx ends, and returns its cause. A double of a call that the
+// Timeout of its effect must end calls it.
+func blocked(ctx context.Context) error {
+	<-ctx.Done()
+	return context.Cause(ctx)
 }
 
 // serve is the script of a probe that replies to Started without an error, and returns no

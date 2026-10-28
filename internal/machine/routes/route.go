@@ -101,6 +101,9 @@ type cache struct {
 // # Allocation contract
 //
 // Zero alloc. It takes the buffer of the position from a pool.
+//
+//dokimi:budget allocs=0
+//dokimi:mixin concurrent
 func (m *Machine) Route(ctx context.Context, key []byte) (Route, error) {
 	t := m.published.Load()
 	if t.err != nil {

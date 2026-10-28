@@ -6,7 +6,6 @@ package driver_test
 import (
 	"context"
 	"runtime"
-	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"weak"
@@ -17,6 +16,7 @@ import (
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/streamtest"
 	"go.thesmos.sh/sharder/protocol"
+	"go.thesmos.sh/sharder/protocol/protocoltest"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 )
@@ -44,9 +44,9 @@ func TestRun(t *testing.T) {
 				synctest.Wait()
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, d)
-				_, ok := received(t, f.probe.events, "the run passes its first event").(machine.Started)
+				_, ok := received(t, f.events, "the run passes its first event").(machine.Started)
 				assert.True(t, ok, "the first event must be Started")
-				_, ok = received(t, f.probe.events, "the run passes the event of the call").(machine.Recovered)
+				_, ok = received(t, f.events, "the run passes the event of the call").(machine.Recovered)
 				assert.True(t, ok, "the second event must be the event of the call")
 				stopped(t, cancel, errc)
 				received(t, calls, "the call returns")
@@ -59,11 +59,11 @@ func TestRun(t *testing.T) {
 				f := newFixture(t, serve)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				stopped(t, cancel, errc)
-				assert.Equal(t, received(t, f.probe.events, "the run passes Stopped"), machine.Event(machine.Stopped{}),
+				assert.Equal(t, received(t, f.events, "the run passes Stopped"), machine.Event(machine.Stopped{}),
 					"the run must pass Stopped once its context ends")
-				streamtest.Blocks(t, f.probe.events, "the run must not pass an event after Stopped")
+				streamtest.Blocks(t, f.events, "the run must not pass an event after Stopped")
 			})
 		})
 
@@ -73,7 +73,7 @@ func TestRun(t *testing.T) {
 				f := newFixture(t, serve)
 				ctx, cancel := context.WithCancelCause(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				cancel(errCause)
 				assert.ErrorIs(t, received(t, errc, "Run returns"), errCause,
 					"Run must return the cause of its context")
@@ -90,7 +90,7 @@ func TestRun(t *testing.T) {
 					return nil
 				})
 				errc := start(t.Context(), f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				assert.ErrorIs(t, received(t, errc, "Run returns"), errBroken,
 					"Run must return the error of the reply to Started")
 			})
@@ -106,8 +106,8 @@ func TestRun(t *testing.T) {
 					return nil
 				})
 				errc := start(t.Context(), f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
-				assert.Equal(t, received(t, f.probe.events, "the run passes Stopped"), machine.Event(machine.Stopped{}),
+				received(t, f.events, "the run passes Started")
+				assert.Equal(t, received(t, f.events, "the run passes Stopped"), machine.Event(machine.Stopped{}),
 					"the run must pass Stopped after a reply to Started with an error")
 				assert.ErrorIs(t, received(t, errc, "Run returns"), errBroken,
 					"Run must return the error of the reply to Started")
@@ -128,7 +128,7 @@ func TestRun(t *testing.T) {
 					}
 					return nil
 				})
-				f.probe.failure = func() error { return failure }
+				f.machine.OnErr.Func(func() error { return failure })
 				d := f.driver(t)
 				errc := start(t.Context(), d)
 				_, err := d.Call[struct{}](t.Context(), func(tok machine.ReplyToken) machine.Event {
@@ -153,14 +153,14 @@ func TestRun(t *testing.T) {
 					}
 					return nil
 				})
-				f.probe.failure = func() error { return failure }
+				f.machine.OnErr.Func(func() error { return failure })
 				d := f.driver(t)
 				errc := start(t.Context(), d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				calls := call[struct{}](t.Context(), d, func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
 				})
-				received(t, f.probe.events, "the run passes the event of the call")
+				received(t, f.events, "the run passes the event of the call")
 				_, err := d.Call[protocol.Ack](t.Context(), func(tok machine.ReplyToken) machine.Event {
 					return machine.Report{Report: &protocol.Report{}, Reply: tok}
 				})
@@ -191,15 +191,15 @@ func TestRun(t *testing.T) {
 					}
 					return nil
 				})
-				f.probe.failure = func() error { return failure }
+				f.machine.OnErr.Func(func() error { return failure })
 				d := f.driver(t)
 				errc := start(t.Context(), d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				calls := call[struct{}](t.Context(), d, func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
 				})
-				received(t, f.probe.events, "the run passes the event of the call")
-				assert.Equal(t, received(t, f.probe.events, "the run passes Stopped"), machine.Event(machine.Stopped{}),
+				received(t, f.events, "the run passes the event of the call")
+				assert.Equal(t, received(t, f.events, "the run passes Stopped"), machine.Event(machine.Stopped{}),
 					"the run must pass Stopped after the machine has stopped itself")
 				received(t, calls, "the call returns")
 				assert.ErrorIs(t, received(t, errc, "Run returns"), errBroken,
@@ -217,7 +217,7 @@ func TestRun(t *testing.T) {
 					return nil
 				})
 				errc := start(t.Context(), f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				assert.ErrorIs(t, received(t, errc, "Run returns"), driver.ErrReply,
 					"Run must return ErrReply for a reply to Started of another type")
 			})
@@ -228,8 +228,8 @@ func TestRun(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(foreign{}))
 				errc := start(t.Context(), f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
-				assert.Equal(t, received(t, f.probe.events, "the run passes Stopped"), machine.Event(machine.Stopped{}),
+				received(t, f.events, "the run passes Started")
+				assert.Equal(t, received(t, f.events, "the run passes Stopped"), machine.Event(machine.Stopped{}),
 					"the run must pass Stopped after an effect that it does not perform")
 				assert.ErrorIs(t, received(t, errc, "Run returns"), driver.ErrEffect,
 					"Run must return ErrEffect for an effect that it does not perform")
@@ -263,11 +263,11 @@ func TestRun(t *testing.T) {
 				d := f.driver(t)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				calls := call[struct{}](t.Context(), d, func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
 				})
-				received(t, f.probe.events, "the run passes the event of the call")
+				received(t, f.events, "the run passes the event of the call")
 				stopped(t, cancel, errc)
 				assert.ErrorIs(t, received(t, calls, "the call returns").err, errBroken,
 					"the call must return the reply that the machine returns for Stopped")
@@ -287,16 +287,17 @@ func TestRun(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Callback{Node: &node, Request: &protocol.Request{}, Token: 1}))
 				ctxs := make(chan context.Context, 1)
-				f.cfg.Agents = agentClient(func(ctx context.Context, _ *shard.Node, _ *protocol.Request) error {
-					ctxs <- ctx
-					return blocked(ctx)
-				})
+				f.cfg.Agents = protocoltest.NewAgentClientStub(t,
+					protocoltest.WithAgentClientDo(func(ctx context.Context, _ *shard.Node, _ *protocol.Request) error {
+						ctxs <- ctx
+						return blocked(ctx)
+					}))
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				callback := received(t, ctxs, "the run performs the callback")
 				cancel()
-				received(t, f.probe.events, "the run passes Stopped")
+				received(t, f.events, "the run passes Stopped")
 				assert.ErrorIs(
 					t,
 					callback.Err(),
@@ -328,12 +329,13 @@ func TestRun(t *testing.T) {
 						}
 						return nil
 					})
-					f.cfg.Agents = agentClient(func(ctx context.Context, _ *shard.Node, _ *protocol.Request) error {
+					do := func(ctx context.Context, _ *shard.Node, _ *protocol.Request) error {
 						ctxs <- ctx
 						return blocked(ctx)
-					})
+					}
+					f.cfg.Agents = protocoltest.NewAgentClientStub(t, protocoltest.WithAgentClientDo(do))
 					errc := start(t.Context(), f.driver(t))
-					received(t, f.probe.events, "the run passes Started")
+					received(t, f.events, "the run passes Started")
 					assert.ErrorIs(
 						t,
 						received(t, ended, "the machine reads the context of the callback at Stopped"),
@@ -360,15 +362,12 @@ func TestRun(t *testing.T) {
 					}
 					return nil
 				})
-				var calls atomic.Int64
-				f.cfg.Agents = agentClient(func(context.Context, *shard.Node, *protocol.Request) error {
-					calls.Add(1)
-					return nil
-				})
+				agents := protocoltest.NewAgentClientStub(t)
+				f.cfg.Agents = agents
 				errc := start(ctx, f.driver(t))
 				assert.ErrorIs(t, received(t, errc, "Run returns"), errCause,
 					"Run must return the cause of its context")
-				assert.Equal(t, calls.Load(), int64(0), "the run must not perform the callback after its context ended")
+				agents.OnDo.AssertNotCalled(t, "the run must not perform the callback after its context ended")
 			})
 		})
 
@@ -378,7 +377,7 @@ func TestRun(t *testing.T) {
 				f := newFixture(t, performing(machine.Unwatch{Token: 1}))
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				stopped(t, cancel, errc)
 			})
 		})
@@ -390,19 +389,16 @@ func TestRun(t *testing.T) {
 					t,
 					performing(machine.Callback{Node: &node, Request: &protocol.Request{}, Token: 1, Timeout: timeout}),
 				)
-				ctxs := make(chan context.Context, 1)
-				f.cfg.Agents = agentClient(func(ctx context.Context, _ *shard.Node, _ *protocol.Request) error {
-					ctxs <- ctx
-					return nil
-				})
+				agents := protocoltest.NewAgentClientStub(t)
+				f.cfg.Agents = agents
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
-				received(t, f.probe.events, "the run passes the result of the callback")
+				received(t, f.events, "the run passes Started")
+				received(t, f.events, "the run passes the result of the callback")
 				synctest.Wait()
 				assert.ErrorIs(
 					t,
-					received(t, ctxs, "the run performs the callback").Err(),
+					agents.OnDo.AssertCalledOnce(t, "the run performs the callback").Ctx.Err(),
 					context.Canceled,
 					"the run must cancel the context of the callback once the callback returns",
 				)
@@ -428,20 +424,21 @@ func TestRun(t *testing.T) {
 				})
 				calling := make(chan struct{}, 1)
 				release := make(chan struct{})
-				f.cfg.Agents = agentClient(func(context.Context, *shard.Node, *protocol.Request) error {
-					calling <- struct{}{}
-					<-release
-					return nil
-				})
+				f.cfg.Agents = protocoltest.NewAgentClientStub(t,
+					protocoltest.WithAgentClientDo(func(context.Context, *shard.Node, *protocol.Request) error {
+						calling <- struct{}{}
+						<-release
+						return nil
+					}))
 				d := f.driver(t)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				received(t, calling, "the run performs the callback")
 				calls := call[struct{}](t.Context(), d, func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
 				})
-				received(t, f.probe.events, "the run passes the event of the call")
+				received(t, f.events, "the run passes the event of the call")
 				close(release)
 				synctest.Wait()
 				cancel()
@@ -449,7 +446,7 @@ func TestRun(t *testing.T) {
 				close(gate)
 				assert.Equal(
 					t,
-					received(t, f.probe.events, "the run passes its next event"),
+					received(t, f.events, "the run passes its next event"),
 					machine.Event(machine.Stopped{}),
 					"the run must drop the result of an effect that waits for the run when the run stops",
 				)
@@ -472,7 +469,7 @@ func TestRun(t *testing.T) {
 					}
 					return nil
 				})
-				f.cfg.Agents = agentClient(func(context.Context, *shard.Node, *protocol.Request) error { return nil })
+				f.cfg.Agents = protocoltest.NewAgentClientStub(t, protocoltest.AgentClientStubBenchMode())
 				gone := func() weak.Pointer[protocol.Request] {
 					r := &protocol.Request{Call: protocol.Add}
 					requests <- r
@@ -480,8 +477,8 @@ func TestRun(t *testing.T) {
 				}()
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, f.driver(t))
-				received(t, f.probe.events, "the run passes Started")
-				received(t, f.probe.events, "the run passes the result of the callback")
+				received(t, f.events, "the run passes Started")
+				received(t, f.events, "the run passes the result of the callback")
 				synctest.Wait()
 				runtime.GC()
 				runtime.GC()

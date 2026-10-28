@@ -19,6 +19,7 @@ import (
 
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/config/configtest"
 	"go.thesmos.sh/sharder/internal/control"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/machine/root"
@@ -55,24 +56,6 @@ type none struct{}
 // Validate returns nil.
 func (none) Validate() error { return nil }
 
-// static is the factory of a placer other than the planner. A controller refuses such a
-// placer before it builds one, so its New returns an error.
-type static struct{}
-
-var _ config.Factory[placement.Placer] = static{}
-
-// Name returns staticName.
-func (static) Name() shard.StrategyName { return staticName }
-
-// Parse returns the configuration without settings.
-func (static) Parse(json.RawMessage) (config.Parsed, error) { return none{}, nil }
-
-// Capabilities returns no capabilities.
-func (static) Capabilities(config.Parsed) config.Capabilities { return config.Capabilities{} }
-
-// New returns errStatic.
-func (static) New(config.Parsed) (placement.Placer, error) { return nil, errStatic }
-
 // TestSpec checks the namespace that the root creates, the strategies with which it places
 // the cell, and the spec proposals that it applies.
 func TestSpec(t *testing.T) {
@@ -96,7 +79,13 @@ func TestSpec(t *testing.T) {
 			support.Strategies[config.Placement] = append(support.Strategies[config.Placement], staticName)
 			cfg.Registry = config.NewRegistry(support)
 			assert.NoError(t, builtin.Register(cfg.Registry), "the built-ins must register")
-			assert.NoError(t, config.Register[placement.Placer](cfg.Registry, config.Placement, static{}),
+			static := configtest.NewFactoryStub(t,
+				configtest.WithFactoryName[placement.Placer](func() shard.StrategyName { return staticName }),
+				configtest.WithFactoryParse[placement.Placer](func(json.RawMessage) (config.Parsed, error) {
+					return none{}, nil
+				}),
+				configtest.WithFactoryNew(func(config.Parsed) (placement.Placer, error) { return nil, errStatic }))
+			assert.NoError(t, config.Register(cfg.Registry, config.Placement, static),
 				"the placer of the test must register")
 			cfg.Spec.Placement = config.Selection{Name: staticName}
 			_, err := root.New(&cfg)

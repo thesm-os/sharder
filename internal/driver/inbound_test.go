@@ -17,6 +17,7 @@ import (
 	"go.thesmos.sh/sharder/budget"
 	"go.thesmos.sh/sharder/internal/driver"
 	"go.thesmos.sh/sharder/internal/machine"
+	"go.thesmos.sh/sharder/internal/machine/machinetest"
 	"go.thesmos.sh/sharder/proposal"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
@@ -50,26 +51,6 @@ const labelModes = "modes of the calls"
 // event of the call and the reply of the machine. The channel of the reply comes from a
 // pool.
 const callAllocs = 2
-
-// echo is a machine that replies at once to Started and to every Recovered, without an
-// error.
-type echo struct{}
-
-var _ machine.Machine = echo{}
-
-// Step appends the reply to ev when ev is Started or a Recovered.
-func (echo) Step(ev machine.Event, out []machine.Effect) []machine.Effect {
-	switch ev := ev.(type) {
-	case machine.Started:
-		return append(out, machine.Reply[struct{}]{To: ev.Reply})
-	case machine.Recovered:
-		return append(out, machine.Reply[struct{}]{To: ev.Reply})
-	}
-	return out
-}
-
-// Err returns nil, because echo does not stop itself.
-func (echo) Err() error { return nil }
 
 // TestInbound checks Call.
 func TestInbound(t *testing.T) {
@@ -160,14 +141,14 @@ func TestInbound(t *testing.T) {
 				d := f.driver(t)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				tokens := make(chan machine.ReplyToken, 1)
 				calls := call[struct{}](t.Context(), d, func(tok machine.ReplyToken) machine.Event {
 					tokens <- tok
 					return machine.Recovered{Reply: tok}
 				})
 				tok := received(t, tokens, "Call passes a token to event")
-				assert.Equal(t, received(t, f.probe.events, "the run passes the event of the call"),
+				assert.Equal(t, received(t, f.events, "the run passes the event of the call"),
 					machine.Event(machine.Recovered{Reply: tok}), "the run must pass the event that event returns")
 				stopped(t, cancel, errc)
 				received(t, calls, "the call returns")
@@ -181,7 +162,7 @@ func TestInbound(t *testing.T) {
 				d := f.driver(t)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, d)
-				started, ok := received(t, f.probe.events, "the run passes Started").(machine.Started)
+				started, ok := received(t, f.events, "the run passes Started").(machine.Started)
 				assert.True(t, ok, "the first event is Started")
 				tokens := make(chan machine.ReplyToken, 2)
 				event := func(tok machine.ReplyToken) machine.Event {
@@ -210,12 +191,12 @@ func TestInbound(t *testing.T) {
 				d := f.driver(t)
 				run, stop := context.WithCancel(t.Context())
 				errc := start(run, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				ctx, cancel := context.WithCancelCause(t.Context())
 				calls := call[struct{}](ctx, d, func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
 				})
-				received(t, f.probe.events, "the run passes the event of the call")
+				received(t, f.events, "the run passes the event of the call")
 				cancel(errCause)
 				assert.ErrorIs(t, received(t, calls, "the call returns").err, errCause,
 					"Call must return the cause of its context")
@@ -230,16 +211,16 @@ func TestInbound(t *testing.T) {
 				d := f.driver(t)
 				run, stop := context.WithCancel(t.Context())
 				errc := start(run, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				ctx, cancel := context.WithCancel(t.Context())
 				calls := call[struct{}](ctx, d, func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
 				})
-				ev, ok := received(t, f.probe.events, "the run passes the event of the call").(machine.Recovered)
+				ev, ok := received(t, f.events, "the run passes the event of the call").(machine.Recovered)
 				assert.True(t, ok, "the event of the call is a Recovered")
 				cancel()
 				received(t, calls, "the call returns")
-				assert.Equal(t, received(t, f.probe.events, "the run passes Cancelled"),
+				assert.Equal(t, received(t, f.events, "the run passes Cancelled"),
 					machine.Event(machine.Cancelled{Reply: ev.Reply}), "the run must pass Cancelled for the call")
 				stopped(t, stop, errc)
 			})
@@ -264,16 +245,16 @@ func TestInbound(t *testing.T) {
 				d := f.driver(t)
 				run, stop := context.WithCancel(t.Context())
 				errc := start(run, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				ctx, cancel := context.WithCancel(t.Context())
 				first := call[struct{}](ctx, d, func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
 				})
-				received(t, f.probe.events, "the run passes the event of the first call")
+				received(t, f.events, "the run passes the event of the first call")
 				cancel()
 				assert.ErrorIs(t, received(t, first, "the first call returns").err, context.Canceled,
 					"the cancelled call must return the error of its context")
-				received(t, f.probe.events, "the run passes Cancelled")
+				received(t, f.events, "the run passes Cancelled")
 				got, err := d.Call[protocol.Ack](t.Context(), func(tok machine.ReplyToken) machine.Event {
 					return machine.Report{Report: &protocol.Report{}, Reply: tok}
 				})
@@ -311,16 +292,16 @@ func TestInbound(t *testing.T) {
 				d := f.driver(t)
 				run, stop := context.WithCancel(t.Context())
 				errc := start(run, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				ctx, cancel := context.WithCancel(t.Context())
 				first := call[struct{}](ctx, d, func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
 				})
-				received(t, f.probe.events, "the run passes the event of the first call")
+				received(t, f.events, "the run passes the event of the first call")
 				second := call[protocol.Ack](t.Context(), d, func(tok machine.ReplyToken) machine.Event {
 					return machine.Report{Report: &protocol.Report{}, Reply: tok}
 				})
-				received(t, f.probe.events, "the run passes the event of the second call")
+				received(t, f.events, "the run passes the event of the second call")
 				cancel()
 				synctest.Wait()
 				close(gate)
@@ -334,7 +315,7 @@ func TestInbound(t *testing.T) {
 				stop()
 				assert.Equal(
 					t,
-					received(t, f.probe.events, "the run passes its next event"),
+					received(t, f.events, "the run passes its next event"),
 					machine.Event(machine.Stopped{}),
 					"the run must not pass Cancelled for a call that the machine has replied to",
 				)
@@ -354,7 +335,7 @@ func TestInbound(t *testing.T) {
 				d := f.driver(t)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				stopped(t, cancel, errc)
 				_, err := d.Call[struct{}](t.Context(), func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
@@ -370,11 +351,11 @@ func TestInbound(t *testing.T) {
 				d := f.driver(t)
 				ctx, cancel := context.WithCancel(t.Context())
 				errc := start(ctx, d)
-				received(t, f.probe.events, "the run passes Started")
+				received(t, f.events, "the run passes Started")
 				calls := call[struct{}](t.Context(), d, func(tok machine.ReplyToken) machine.Event {
 					return machine.Recovered{Reply: tok}
 				})
-				received(t, f.probe.events, "the run passes the event of the call")
+				received(t, f.events, "the run passes the event of the call")
 				stopped(t, cancel, errc)
 				assert.ErrorIs(t, received(t, calls, "the call returns").err, driver.ErrStopped,
 					"Call must return ErrStopped when the run returns without a reply")
@@ -501,7 +482,7 @@ func TestInbound(t *testing.T) {
 // TestInboundAllocs checks the allocations of a call that the machine replies to at once.
 func TestInboundAllocs(t *testing.T) {
 	f := newFixture(t, serve)
-	f.cfg.Machine = echo{}
+	f.cfg.Machine = machinetest.NewMachineStub(t, machinetest.MachineStubBenchMode(), machinetest.WithMachineStep(echo))
 	d := f.driver(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	errc := start(ctx, d)
@@ -523,7 +504,7 @@ func TestInboundAllocs(t *testing.T) {
 // BenchmarkInbound measures a call that the machine replies to at once.
 func BenchmarkInbound(b *testing.B) {
 	f := newFixture(b, serve)
-	f.cfg.Machine = echo{}
+	f.cfg.Machine = machinetest.NewMachineStub(b, machinetest.MachineStubBenchMode(), machinetest.WithMachineStep(echo))
 	d := f.driver(b)
 	ctx, cancel := context.WithCancel(b.Context())
 	errc := start(ctx, d)
@@ -541,4 +522,16 @@ func BenchmarkInbound(b *testing.B) {
 	})
 
 	stopped(b, cancel, errc)
+}
+
+// echo is the Step of a machine that replies at once to Started and to every Recovered,
+// without an error. It appends the reply to out, so a step allocates nothing.
+func echo(ev machine.Event, out []machine.Effect) []machine.Effect {
+	switch ev := ev.(type) {
+	case machine.Started:
+		return append(out, machine.Reply[struct{}]{To: ev.Reply})
+	case machine.Recovered:
+		return append(out, machine.Reply[struct{}]{To: ev.Reply})
+	}
+	return out
 }

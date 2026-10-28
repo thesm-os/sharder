@@ -4,7 +4,6 @@
 package driver_test
 
 import (
-	"context"
 	"testing"
 	"testing/synctest"
 
@@ -16,6 +15,7 @@ import (
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/partition"
 	"go.thesmos.sh/sharder/placement"
+	"go.thesmos.sh/sharder/placement/placementtest"
 	"go.thesmos.sh/sharder/replication"
 	"go.thesmos.sh/sharder/shard"
 )
@@ -25,39 +25,6 @@ const refusingName shard.StrategyName = "refusing"
 
 // planned is the one shard of the cell of the planning passes of the tests.
 var planned = shard.ID{ID128: id.ID128{15: 0x51}}
-
-// placer is a placement.Placer whose Place returns its plan and its error.
-type placer struct {
-	err  error
-	plan placement.Plan
-}
-
-var _ placement.Placer = (*placer)(nil)
-
-// Place returns the plan and the error of p.
-func (p *placer) Place(context.Context, *placement.Input) (placement.Plan, error) {
-	return p.plan, p.err
-}
-
-// Schedule returns the zero Schedule.
-func (*placer) Schedule() placement.Schedule {
-	return placement.Schedule{}
-}
-
-// refusing is a placement.Constraint that refuses every move with errBroken.
-type refusing struct{}
-
-var _ placement.Constraint = refusing{}
-
-// Name returns refusingName.
-func (refusing) Name() shard.StrategyName {
-	return refusingName
-}
-
-// Check returns errBroken.
-func (refusing) Check(*placement.State, placement.Move) error {
-	return errBroken
-}
 
 // input returns the input of the planning passes of the tests: a cell of the model
 // primary-only with one node and one shard, whose writer is on the node.
@@ -84,11 +51,13 @@ func TestPlan(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				plan := placement.Plan{RepairNext: planned}
 				in := input()
-				cs := []placement.Constraint{refusing{}}
-				f := newFixture(
-					t,
-					performing(machine.Plan{Placer: &placer{plan: plan}, Input: in, Constraints: cs, Token: 1}),
-				)
+				refusing := placementtest.NewConstraintStub(t)
+				refusing.OnName.Returns(refusingName)
+				refusing.OnCheck.Returns(errBroken)
+				cs := []placement.Constraint{refusing}
+				p := placementtest.NewPlacerStub(t)
+				p.OnPlace.Returns(plan, nil)
+				f := newFixture(t, performing(machine.Plan{Placer: p, Input: in, Constraints: cs, Token: 1}))
 				violations, err := placement.Validate(input(), plan, cs)
 				assert.NoError(t, err, "Validate accepts the plan")
 				assert.NotEmpty(t, violations, "the constraint refuses the replica that the plan keeps")
@@ -105,10 +74,9 @@ func TestPlan(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				plan := placement.Plan{Incomplete: true}
-				f := newFixture(
-					t,
-					performing(machine.Plan{Placer: &placer{plan: plan, err: errBusy}, Input: input(), Token: 1}),
-				)
+				p := placementtest.NewPlacerStub(t)
+				p.OnPlace.Returns(plan, errBusy)
+				f := newFixture(t, performing(machine.Plan{Placer: p, Input: input(), Token: 1}))
 				assert.Equal(t, f.results(t, 1)[0], machine.Event(machine.Planned{Plan: plan, Err: errBusy, Token: 1}),
 					"the run must pass the error of Place with its plan")
 			})
@@ -118,7 +86,9 @@ func TestPlan(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				plan := placement.Plan{Targets: map[shard.ID]placement.Target{shardA: {Deficit: 1}}}
-				f := newFixture(t, performing(machine.Plan{Placer: &placer{plan: plan}, Input: input(), Token: 1}))
+				p := placementtest.NewPlacerStub(t)
+				p.OnPlace.Returns(plan, nil)
+				f := newFixture(t, performing(machine.Plan{Placer: p, Input: input(), Token: 1}))
 				got, ok := f.results(t, 1)[0].(machine.Planned)
 				assert.True(t, ok, "the run must pass a Planned")
 				expect.That(t, got.Err).ErrorIs(placement.ErrPlan, "the Planned must have the error of Validate")

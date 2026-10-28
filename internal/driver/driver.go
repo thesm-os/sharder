@@ -26,6 +26,9 @@ import (
 // machine.Handle of a request whose Call is protocol.Add, and DropShard for a request whose
 // Call is protocol.Drop. AddShard and DropShard do not modify the request or the token, and
 // do not keep them after they return.
+//
+//dokimi:stub
+//dokimi:out path=drivertest/
 type Handler interface {
 	// AddShard starts serving r.Shard in r.Role. t is the fencing token of the tenure that r
 	// starts.
@@ -37,6 +40,9 @@ type Handler interface {
 // Revoker is a Handler that ends the tenure of a fencing token. The driver calls RevokeShard
 // for a machine.Revoke when its Handler implements Revoker. RevokeShard does not modify the
 // token, and does not keep it after it returns.
+//
+//dokimi:stub
+//dokimi:out path=drivertest/
 type Revoker interface {
 	// RevokeShard ends the work of the tenure of t, whose session has ended.
 	RevokeShard(ctx context.Context, t *fence.Token) error
@@ -44,6 +50,9 @@ type Revoker interface {
 
 // LoadReporter reports the load of the replicas of an application. The driver sends each
 // report of an agent with the loads that it reports.
+//
+//dokimi:stub
+//dokimi:out path=drivertest/
 type LoadReporter interface {
 	// ShardLoad returns the load of the replica of the shard id, or nil for a replica
 	// without a load.

@@ -24,6 +24,7 @@ import (
 
 	"go.thesmos.sh/sharder/handoff"
 	"go.thesmos.sh/sharder/handoff/breakbeforemake"
+	"go.thesmos.sh/sharder/handoff/handofftest"
 	"go.thesmos.sh/sharder/internal/engine"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/membership"
@@ -303,22 +304,6 @@ type call struct {
 	node shard.NodeID
 }
 
-// scripted is a handoff.Protocol with the name and the version of break-before-make. Its
-// script is the same for every transfer.
-type scripted struct {
-	// script is the script of every transfer.
-	script handoff.Script
-}
-
-// Name returns the name of break-before-make, so the records of scripted look like its own.
-func (scripted) Name() shard.StrategyName { return breakbeforemake.Name }
-
-// Version returns 1.
-func (scripted) Version() uint32 { return 1 }
-
-// Script returns the script of s.
-func (s scripted) Script(handoff.Transfer) (handoff.Script, error) { return s.script, nil }
-
 // TestEngine checks the construction, the transitions, the batches and the steps of an
 // Engine against a memory store.
 func TestEngine(t *testing.T) {
@@ -537,7 +522,7 @@ func TestEngine(t *testing.T) {
 		t.Run("returns ErrMove for a script that Validate refuses", func(t *testing.T) {
 			t.Parallel()
 			p := placement(1, nodeA)
-			h := newHarness(t, []shard.Placement{p}, func(s *setup) { s.cfg.Protocol = scripted{script: unabortable} })
+			h := newHarness(t, []shard.Placement{p}, func(s *setup) { s.cfg.Protocol = scripted(t, unabortable) })
 			m := moveOf(p, nodeA, nodeB, nodeA)
 			_, err := h.engine.Start(&m)
 			expect.That(t, err).ErrorIs(engine.ErrMove, "Start must refuse a move with an invalid script").
@@ -581,7 +566,7 @@ func TestEngine(t *testing.T) {
 		t.Run("runs the abort path of the failed step of a record", func(t *testing.T) {
 			t.Parallel()
 			p := placement(1, nodeA)
-			h := newHarness(t, []shard.Placement{p}, func(s *setup) { s.cfg.Protocol = scripted{script: abortable} })
+			h := newHarness(t, []shard.Placement{p}, func(s *setup) { s.cfg.Protocol = scripted(t, abortable) })
 			rec := record(p, nodeA, nodeB, nodeC)
 			rec.Phase = shard.PhaseAborting
 			h.resume(t, &rec, &p)
@@ -1374,7 +1359,7 @@ func TestEngine(t *testing.T) {
 			h := newHarness(t, []shard.Placement{p})
 			h.view(t, nodeA, nodeB)
 			s := settings(t)
-			s.Protocol = scripted{script: abortable}
+			s.Protocol = scripted(t, abortable)
 			_, err := h.engine.Configure(&s, nil)
 			assert.NoError(t, err, "Configure must take valid settings")
 			h.start(t, moveOf(p, nodeA, nodeB, nodeA))
@@ -1811,6 +1796,17 @@ func settings(tb assert.TB) engine.Settings {
 		MaxNodeTransitions: maxNodeTransitions,
 		NodeCallbacks:      nodeCallbacks,
 	}
+}
+
+// scripted returns a double of a protocol with the name and the version of
+// break-before-make, so the records of its moves look like the records of break-before-make.
+// Its Script returns script for every transfer.
+func scripted(tb assert.TB, script handoff.Script) *handofftest.ProtocolStub {
+	tb.Helper()
+	return handofftest.NewProtocolStub(tb,
+		handofftest.WithProtocolName(func() shard.StrategyName { return breakbeforemake.Name }),
+		handofftest.WithProtocolVersion(func() uint32 { return 1 }),
+		handofftest.WithProtocolScript(func(handoff.Transfer) (handoff.Script, error) { return script, nil }))
 }
 
 // placement returns the placement of the shard n of the tests with its writer on the

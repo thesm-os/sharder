@@ -268,12 +268,8 @@ func TestProposal(t *testing.T) {
 
 		t.Run("returns ErrStale for a move that the protocol cannot script", func(t *testing.T) {
 			t.Parallel()
-			h := served(t, selects(config.Handoff, "", func(r *config.Registry) error {
-				return config.Register[handoff.Protocol](
-					r,
-					config.Handoff,
-					refusing{Factory: builtin.BreakBeforeMake()},
-				)
+			h := served(t, selects(config.Handoff, "", func(tb assert.TB, r *config.Registry) error {
+				return config.Register(r, config.Handoff, refusing(tb, builtin.BreakBeforeMake()))
 			}))
 			sid := h.shardOn(t, nodeA.ID)
 			p := proposalOf(t, 1, proposal.Move, h.placements(t)[sid].Epoch,
@@ -574,19 +570,20 @@ func TestProposal(t *testing.T) {
 		})
 
 		costs := []struct {
-			goal badCost
 			name string
+			goal shard.StrategyName
+			cost float64
 		}{
-			{name: "returns ErrCall for an explanation whose cost is not a number", goal: badCost{nanName, math.NaN()}},
-			{name: "returns ErrCall for an explanation whose cost is infinite", goal: badCost{infName, math.Inf(1)}},
+			{name: "returns ErrCall for an explanation whose cost is not a number", goal: nanName, cost: math.NaN()},
+			{name: "returns ErrCall for an explanation whose cost is infinite", goal: infName, cost: math.Inf(1)},
 		}
 		for _, tt := range costs {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				raw := fmt.Sprintf(`{"goals":[{"name":%q,"tier":0,"weight":1}]}`, tt.goal.name)
+				raw := fmt.Sprintf(`{"goals":[{"name":%q,"tier":0,"weight":1}]}`, tt.goal)
 				h := newHarness(t, crowded(t, nodeA), func(s *setup) {
-					s.extend = func(r *config.Registry) error {
-						return config.Register[placement.Goal](r, config.Goal, tt.goal)
+					s.extend = func(tb assert.TB, r *config.Registry) error {
+						return config.Register(r, config.Goal, badCost(tb, tt.goal, tt.cost))
 					}
 					s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(raw)}
 				})
@@ -843,9 +840,8 @@ func TestProposal(t *testing.T) {
 					p.Body = specBody(t, s)
 				},
 				setup: func(s *setup) {
-					s.extend = func(r *config.Registry) error {
-						return config.Register[placement.Constraint](r, config.Constraint,
-							&fragile[placement.Constraint]{base: builtin.MaxPerNode()})
+					s.extend = func(tb assert.TB, r *config.Registry) error {
+						return config.Register(r, config.Constraint, fragile(tb, builtin.MaxPerNode()))
 					}
 				},
 				want: control.ErrSpec,
