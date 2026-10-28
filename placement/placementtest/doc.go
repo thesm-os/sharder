@@ -18,7 +18,8 @@
 // labels, loads, transitions in flight and faults. A test configures a constraint or a
 // goal with the names of their metrics and labels, such as [CPU] and [Zone]. [Moves]
 // lists the moves that a state accepts. [States] generates the states of the cells, and
-// [CellMoves] the moves between their nodes.
+// [CellMoves] the moves between their nodes. An application of the suite of Placer passes
+// [PlacerCells] to draw the input of each generated call of Place from the cells.
 //
 // # Budgets
 //

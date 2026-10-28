@@ -30,6 +30,8 @@ const Name shard.StrategyName = "planner"
 //
 // A pass allocates its State, its plan, and a fixed amount for each step of its
 // search, so its allocations grow with the cell and with its work limits.
+//
+//dokimi:subject placement.Placer new=newConstrained options=cells
 type Planner struct {
 	// constraints lists the hard rules in the order in which a pass checks them.
 	constraints []placement.Constraint

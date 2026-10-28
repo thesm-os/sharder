@@ -108,6 +108,21 @@ func (p constrainedPlanner) Constraints() []placement.Constraint {
 	return p.constraints
 }
 
+// newConstrained returns a planner with every built-in constraint but match-label and
+// every built-in goal, the subject of the suite of placement.Placer. It stops h when New
+// returns an error.
+func newConstrained(h *placementtest.PlacerHandle) constrainedPlanner {
+	cs, gs := everyStrategy(h)
+	return constrainedPlanner{Planner: newPlanner(h, defaults(), cs, gs...), constraints: cs}
+}
+
+// cells returns the options of the suite of placement.Placer that draw the input of each
+// call of Place from the cells of placementtest.Inputs. The directive subject of the
+// planner passes them to its generated tests.
+func cells() []placementtest.PlacerOption {
+	return placementtest.PlacerCells
+}
+
 // TestPlanner checks New, Schedule, and the input that Place refuses.
 func TestPlanner(t *testing.T) {
 	t.Parallel()
@@ -232,17 +247,6 @@ func TestPlanner(t *testing.T) {
 			_, err := newPlanner(t, defaults(), nil).Place(ctx, cell(n0))
 			assert.ErrorIs(t, err, errStopped, "Place must return the cause of the context")
 		})
-	})
-}
-
-// TestPlannerConformance checks that a planner with every built-in constraint but
-// match-label and every built-in goal passes the checks of the suite of
-// placement.Placer.
-func TestPlannerConformance(t *testing.T) {
-	t.Parallel()
-	placementtest.RunPlacerSuiteFromHandle(t, func(h *placementtest.PlacerHandle) constrainedPlanner {
-		cs, gs := everyStrategy(h)
-		return constrainedPlanner{Planner: newPlanner(h, defaults(), cs, gs...), constraints: cs}
 	})
 }
 

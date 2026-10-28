@@ -15,6 +15,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/conform"
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/rand"
@@ -36,6 +37,17 @@ const parallelism = 4
 
 // unknownShard is a shard that no layout of Inputs lists.
 var unknownShard = shard.ID{ID128: id.ID128{15: 0xff}}
+
+// PlacerCells are the options of an application of the suite of placement.Placer that
+// draw the input of each call of Place from the cells that Inputs generates. The suite
+// draws each field of an Input at random, and a placer refuses such an input, so the
+// generated tests and benchmarks of a planner take these options. The caller must not
+// modify the slice.
+var PlacerCells = []PlacerOption{
+	conform.Using[placement.Placer](prop.Composite(func(c *prop.Case) placement.Input {
+		return *c.Draw(Inputs(), labelInput)
+	})),
+}
 
 // fakeConstraints are the constraints of the verified fake of the planted defects of
 // Placer.
