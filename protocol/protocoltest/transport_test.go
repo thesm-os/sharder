@@ -6,8 +6,6 @@ package protocoltest_test
 import (
 	"testing"
 
-	"go.dokimi.dev/assert"
-
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/protocol/local"
 	"go.thesmos.sh/sharder/protocol/protocoltest"
@@ -17,25 +15,26 @@ import (
 // local.
 const controllerAddress = "controller-1:7000"
 
-// TestTransport runs the suite against the transport of package local.
+// connector connects a client of a local network of its own to the servers of a check.
+type connector struct{}
+
+// Connect returns the client of a process with the metadata md on a network with the agent
+// and the controller of e, at controllerAddress.
+func (connector) Connect(md protocol.Metadata, e *protocoltest.Endpoints) (
+	protocol.AgentClient, protocol.ControllerClient,
+) {
+	n := local.NewNetwork()
+	n.AddAgent(e.Scope.Namespace, e.Node.ID, e.Agent)
+	e.Cell.Controller = controllerAddress
+	n.AddController(controllerAddress, e.Controller)
+	l := n.Local(md)
+	return l, l
+}
+
+// TestTransport checks that the transport of package local passes the checks of the suite
+// of protocoltest.Connector.
 func TestTransport(t *testing.T) {
 	t.Parallel()
 
-	t.Run("AssertTransport", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the transport of package local", func(t *testing.T) {
-			t.Parallel()
-			protocoltest.AssertTransport(t, func(_ assert.TB, md protocol.Metadata, e *protocoltest.Endpoints) (
-				protocol.AgentClient, protocol.ControllerClient,
-			) {
-				n := local.NewNetwork()
-				n.AddAgent(e.Scope.Namespace, e.Node.ID, e.Agent)
-				e.Cell.Controller = controllerAddress
-				n.AddController(controllerAddress, e.Controller)
-				l := n.Local(md)
-				return l, l
-			})
-		})
-	})
+	protocoltest.RunConnectorSuite(t, func() connector { return connector{} })
 }

@@ -46,6 +46,9 @@ type ControllerServer interface {
 // # Concurrency
 //
 // A ControllerClient is safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:out path=protocoltest/
 type ControllerClient interface {
 	// Report sends r to the controller of cell, and returns its ack.
 	Report(ctx context.Context, cell *shard.Cell, r *Report) (Ack, error)

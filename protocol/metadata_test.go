@@ -8,8 +8,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
-	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/sharder/protocol"
@@ -59,36 +57,5 @@ func TestMetadata(t *testing.T) {
 			md := protocol.Metadata{Version: protocol.Current, Requires: []protocol.Feature{futureFeature}}
 			assert.ErrorIs(t, md.Check(), protocol.ErrUnsupported, "Check must refuse a call that requires a feature")
 		})
-	})
-}
-
-// TestMetadataAllocs checks the allocation contract of Check. MaxAllocs counts the
-// allocations of the whole process, so the test does not run in parallel.
-func TestMetadataAllocs(t *testing.T) {
-	md := protocol.Metadata{Version: protocol.Current}
-
-	t.Run("Check", func(t *testing.T) {
-		var err error
-		expect.MaxAllocs(t, func() { err = md.Check() }, 0, "Check of a supported call must not allocate")
-		assert.NoError(t, err, "the test must measure a supported call")
-	})
-}
-
-// BenchmarkMetadata reports the cost of Check, which every server and every transport
-// calls for every call, and fails when it allocates.
-func BenchmarkMetadata(b *testing.B) {
-	md := protocol.Metadata{Version: protocol.Current}
-
-	b.Run("Check", func(b *testing.B) {
-		var err error
-
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		for c.Loop() {
-			err = md.Check()
-		}
-
-		assert.NoError(b, err, "the benchmark must measure a supported call")
 	})
 }

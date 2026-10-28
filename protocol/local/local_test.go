@@ -17,6 +17,23 @@ import (
 	"go.thesmos.sh/sharder/shard"
 )
 
+// connector connects a Local of a network of its own to the servers of a check of the
+// suite of protocoltest.Connector.
+type connector struct{}
+
+// Connect returns the Local of a process with the metadata md on a network with the agent
+// and the controller of e, at controllerA.
+func (connector) Connect(md protocol.Metadata, e *protocoltest.Endpoints) (
+	protocol.AgentClient, protocol.ControllerClient,
+) {
+	n := local.NewNetwork()
+	n.AddAgent(e.Scope.Namespace, e.Node.ID, e.Agent)
+	e.Cell.Controller = controllerA
+	n.AddController(controllerA, e.Controller)
+	l := n.Local(md)
+	return l, l
+}
+
 // TestLocal checks the laws of the protocol against Local, the route of each call of a
 // controller to the address in the record of its cell, and the calls of a Local to a server
 // that its network does not contain.
@@ -25,16 +42,7 @@ func TestLocal(t *testing.T) {
 
 	t.Run("passes the laws of the protocol", func(t *testing.T) {
 		t.Parallel()
-		protocoltest.AssertTransport(t, func(_ assert.TB, md protocol.Metadata, e *protocoltest.Endpoints) (
-			protocol.AgentClient, protocol.ControllerClient,
-		) {
-			n := local.NewNetwork()
-			n.AddAgent(e.Scope.Namespace, e.Node.ID, e.Agent)
-			e.Cell.Controller = controllerA
-			n.AddController(controllerA, e.Controller)
-			l := n.Local(md)
-			return l, l
-		})
+		protocoltest.RunConnectorSuite(t, func() connector { return connector{} })
 	})
 
 	t.Run("New", func(t *testing.T) {

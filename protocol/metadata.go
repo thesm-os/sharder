@@ -31,6 +31,10 @@ type Feature string
 // # Concurrency
 //
 // A copy of a Metadata shares the elements of Requires with the original.
+//
+//dokimi:suite
+//dokimi:out path=protocoltest/
+//dokimi:subject Metadata new=newMetadata
 type Metadata struct {
 	// Caller is the identity that the transport authenticated, or empty when the transport
 	// authenticates no caller. A transport takes it from the connection, never from a value
@@ -54,6 +58,8 @@ type Metadata struct {
 // # Allocation contract
 //
 // Zero alloc for metadata that this release implements.
+//
+//dokimi:budget allocs=0
 func (md Metadata) Check() error {
 	if md.Version != Current {
 		return fmt.Errorf("%w: the call has the major version %d, and this release implements %d",

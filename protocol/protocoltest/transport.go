@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"slices"
 	"sync"
-	"testing"
 	"time"
 
 	"go.dokimi.dev/assert"
@@ -21,6 +20,7 @@ import (
 	"go.thesmos.sh/sharder/budget"
 	"go.thesmos.sh/sharder/proposal"
 	"go.thesmos.sh/sharder/protocol"
+	"go.thesmos.sh/sharder/protocol/local"
 	"go.thesmos.sh/sharder/shard"
 )
 
@@ -34,6 +34,9 @@ const (
 	node shard.NodeID = "node-a"
 	// feature is a feature that no release of the protocol defines.
 	feature protocol.Feature = "protocoltest-unknown"
+	// fakeAddress is the address of the controller of the verified fake of the planted
+	// defects of Connector.
+	fakeAddress = "protocoltest-controller:7000"
 )
 
 // The names of the methods of the clients of a transport.
@@ -44,6 +47,9 @@ const (
 	methodDisrupt = "Disrupt"
 	methodDone    = "Done"
 )
+
+// labelMethod labels the method of the clients that a check calls.
+const labelMethod = "method"
 
 // The bounds of the generated messages.
 const (
@@ -57,7 +63,7 @@ const (
 	maxList = 3
 )
 
-// errServer is the error of the servers of the law of error classes.
+// errServer is the error of the servers of the check of error classes.
 var errServer = errors.New("protocoltest: the server failed")
 
 // scope is the scope of the messages of the suite.
@@ -184,6 +190,26 @@ var (
 	})
 )
 
+// Connector connects the clients of a transport to the servers of a check. The suite of
+// a transport is the suite of a Connector over the transport, so each check chooses the
+// metadata of the calls before the transport connects. Each check connects clients and
+// servers of its own.
+//
+// # Concurrency
+//
+// A Connector is safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:suite
+type Connector interface {
+	// Connect returns the agent client and the controller client of a process whose calls
+	// have the metadata md. The transport passes each callback for e.Node in the namespace
+	// of e.Scope to e.Agent, and each call of the controller of e.Scope to e.Controller.
+	// Connect can set the address of e.Node, and the address and the identity of the
+	// controller of e.Cell.
+	Connect(md protocol.Metadata, e *Endpoints) (protocol.AgentClient, protocol.ControllerClient)
+}
+
 // Endpoints are the servers of one case of the suite, and the node and cell records that a
 // client uses to call them.
 type Endpoints struct {
@@ -193,9 +219,9 @@ type Endpoints struct {
 	Controller protocol.ControllerServer
 	// Scope is the scope of the messages of the suite.
 	Scope shard.Scope
-	// Node is the node of Agent. connect sets its Address when its transport dials one.
+	// Node is the node of Agent. Connect sets its Address when its transport dials one.
 	Node shard.Node
-	// Cell is the record of Controller. connect sets its Controller and its
+	// Cell is the record of Controller. Connect sets its Controller and its
 	// ControllerIdentity when its transport dials and authenticates the controller.
 	Cell shard.Cell
 }
@@ -212,7 +238,7 @@ type received struct {
 
 // servers is the agent and the controller of one case of the suite. They record each call
 // that they receive, and return the results and the error of the case. They do not check
-// the metadata of a call, so a law observes each call that the transport passes.
+// the metadata of a call, so a check observes each call that the transport passes.
 //
 // # Concurrency
 //
@@ -275,13 +301,13 @@ func (s *servers) calls() []received {
 	return slices.Clone(s.received)
 }
 
-// clients are the clients that the connect of AssertTransport returns.
+// clients are the clients that Connect of a subject returns.
 type clients struct {
 	agent      protocol.AgentClient
 	controller protocol.ControllerClient
 }
 
-// method is one method of the clients of a transport, as the laws of the suite call it.
+// method is one method of the clients of a transport, as the checks of the suite call it.
 type method struct {
 	// messages generates the message of a call.
 	messages prop.Generator[any]
@@ -345,16 +371,158 @@ var methods = []method{
 	},
 }
 
-// suite is one run of AssertTransport: the transports that connect returns.
-type suite struct {
-	// connect returns the clients of a process whose calls have the metadata md, over a
-	// transport to the servers of e.
-	connect func(tb assert.TB, md protocol.Metadata, e *Endpoints) (protocol.AgentClient, protocol.ControllerClient)
+// localConnector connects a client of a local network to the servers of a check. It is
+// the verified fake of the planted defects of Connector.
+type localConnector struct{}
+
+// Connect returns the client of a process with the metadata md on a local network with
+// the agent and the controller of e. It sets the address of the controller of e.Cell to
+// fakeAddress.
+func (localConnector) Connect(md protocol.Metadata, e *Endpoints) (protocol.AgentClient, protocol.ControllerClient) {
+	n := local.NewNetwork()
+	n.AddAgent(e.Scope.Namespace, e.Node.ID, e.Agent)
+	e.Cell.Controller = fakeAddress
+	n.AddController(fakeAddress, e.Controller)
+	l := n.Local(md)
+	return l, l
+}
+
+// ClientsPassMessages checks that a client passes each message with the metadata of the
+// caller to the server, and returns the result of the server.
+//
+//dokimi:check Connector.Connect defect=stripsCallers
+func ClientsPassMessages(h *ConnectorHandle, c *prop.Case) {
+	m := c.Draw(prop.SampledFrom(methods...), labelMethod)
+	md := protocol.Metadata{Caller: c.Draw(identities, "caller"), Version: protocol.Current}
+	s, e, cl := open(h, c, md)
+	message := c.Draw(m.messages, "message")
+	got, err := m.call(h.Context(), cl, e, message)
+	assert.NoError(h, err, h.Statement())
+	assert.Equal(h, got, m.result(s), h.Statement(), assert.EquateEmpty())
+	calls := s.calls()
+	assert.Length(h, calls, 1, h.Statement())
+	assert.Equal(h, calls[0].method, m.name, h.Statement())
+	assert.Equal(h, calls[0].md, md, h.Statement(), assert.EquateEmpty())
+	assert.Equal(h, calls[0].message, message, h.Statement(), assert.EquateEmpty())
+}
+
+// stripsCallers returns a planted defect over the local transport whose clients send the
+// metadata of the caller without its Caller.
+func stripsCallers(h *ConnectorHandle) Connector {
+	return metadataDefect(h, func(md *protocol.Metadata) { md.Caller = "" })
+}
+
+// ClientsKeepErrorClasses checks that a client returns an error of the class of the error
+// of the server.
+//
+//dokimi:check Connector.Connect defect=declassifiesErrors
+func ClientsKeepErrorClasses(h *ConnectorHandle, c *prop.Case) {
+	m := c.Draw(prop.SampledFrom(methods...), labelMethod)
+	s, e, cl := open(h, c, protocol.Metadata{Version: protocol.Current})
+	class := c.Draw(classes, "class")
+	s.err = errs.WithClass(errServer, class)
+	_, err := m.call(h.Context(), cl, e, c.Draw(m.messages, "message"))
+	assert.HasError(h, err, h.Statement())
+	assert.Equal(h, errs.Classify(err), class, h.Statement())
+}
+
+// declassifiesErrors returns a planted defect over the local transport whose clients
+// return the text of an error of the server without its class.
+func declassifiesErrors(h *ConnectorHandle) Connector {
+	return NewConnectorStub(h, ConnectorStubDelegateTo(localConnector{}), WithConnectorConnect(
+		func(md protocol.Metadata, e *Endpoints) (protocol.AgentClient, protocol.ControllerClient) {
+			agent, controller := localConnector{}.Connect(md, e)
+			return declassifiedAgent(h, agent), declassifiedController(h, controller)
+		}))
+}
+
+// declassifiedAgent returns the double of agent whose Do returns the text of an error of
+// the server without its class.
+func declassifiedAgent(h *ConnectorHandle, agent protocol.AgentClient) protocol.AgentClient {
+	return NewAgentClientStub(h, AgentClientStubDelegateTo(agent), WithAgentClientDo(
+		func(ctx context.Context, n *shard.Node, r *protocol.Request) error {
+			return declassify(agent.Do(ctx, n, r))
+		}))
+}
+
+// declassifiedController returns the double of controller whose methods return the text
+// of an error of the server without its class.
+func declassifiedController(h *ConnectorHandle, controller protocol.ControllerClient) protocol.ControllerClient {
+	return NewControllerClientStub(h, ControllerClientStubDelegateTo(controller),
+		WithControllerClientReport(
+			func(ctx context.Context, c *shard.Cell, r *protocol.Report) (protocol.Ack, error) {
+				ack, err := controller.Report(ctx, c, r)
+				return ack, declassify(err)
+			}),
+		WithControllerClientSubmit(
+			func(ctx context.Context, c *shard.Cell, p *proposal.Proposal) (protocol.Receipt, error) {
+				receipt, err := controller.Submit(ctx, c, p)
+				return receipt, declassify(err)
+			}),
+		WithControllerClientDisrupt(
+			func(ctx context.Context, c *shard.Cell, d *budget.Disruption) (budget.Decision, error) {
+				decision, err := controller.Disrupt(ctx, c, d)
+				return decision, declassify(err)
+			}),
+		WithControllerClientDone(
+			func(ctx context.Context, c *shard.Cell, a *protocol.DoneArgs) error {
+				return declassify(controller.Done(ctx, c, a))
+			}))
+}
+
+// ClientsRefuseOtherVersions checks that a client refuses a call of another major version
+// before the server receives it.
+//
+//dokimi:check Connector.Connect defect=passesOtherVersions
+func ClientsRefuseOtherVersions(h *ConnectorHandle, c *prop.Case) {
+	m := c.Draw(prop.SampledFrom(methods...), labelMethod)
+	md := protocol.Metadata{Version: c.Draw(prop.Integer(protocol.Current+1, protocol.Current+maxList), "version")}
+	s, e, cl := open(h, c, md)
+	_, err := m.call(h.Context(), cl, e, c.Draw(m.messages, "message"))
+	assert.Equal(h, errs.Classify(err), errs.Unsupported, h.Statement())
+	assert.ErrorIs(h, err, errors.ErrUnsupported, h.Statement())
+	assert.Empty(h, s.calls(), h.Statement())
+}
+
+// passesOtherVersions returns a planted defect over the local transport whose clients
+// send the metadata of the caller at the current major version.
+func passesOtherVersions(h *ConnectorHandle) Connector {
+	return metadataDefect(h, func(md *protocol.Metadata) { md.Version = protocol.Current })
+}
+
+// ClientsRefuseFeatures checks that a client refuses a call that requires a feature before
+// the server receives it.
+//
+//dokimi:check Connector.Connect defect=dropsFeatures
+func ClientsRefuseFeatures(h *ConnectorHandle, c *prop.Case) {
+	m := c.Draw(prop.SampledFrom(methods...), labelMethod)
+	md := protocol.Metadata{Version: protocol.Current, Requires: []protocol.Feature{feature}}
+	s, e, cl := open(h, c, md)
+	_, err := m.call(h.Context(), cl, e, c.Draw(m.messages, "message"))
+	assert.Equal(h, errs.Classify(err), errs.Unsupported, h.Statement())
+	assert.ErrorIs(h, err, errors.ErrUnsupported, h.Statement())
+	assert.Empty(h, s.calls(), h.Statement())
+}
+
+// dropsFeatures returns a planted defect over the local transport whose clients send the
+// metadata of the caller without the features that it requires.
+func dropsFeatures(h *ConnectorHandle) Connector {
+	return metadataDefect(h, func(md *protocol.Metadata) { md.Requires = nil })
+}
+
+// metadataDefect returns a planted defect over the local transport whose clients send the
+// metadata of the caller after change.
+func metadataDefect(h *ConnectorHandle, change func(md *protocol.Metadata)) Connector {
+	return NewConnectorStub(h, ConnectorStubDelegateTo(localConnector{}), WithConnectorConnect(
+		func(md protocol.Metadata, e *Endpoints) (protocol.AgentClient, protocol.ControllerClient) {
+			change(&md)
+			return localConnector{}.Connect(md, e)
+		}))
 }
 
 // open returns the servers of one case with generated results, the endpoints of the
-// servers, and the clients that connect returns for the metadata md.
-func (su *suite) open(c *prop.Case, md protocol.Metadata) (*servers, *Endpoints, clients) {
+// servers, and the clients that the subject of h connects for the metadata md.
+func open(h *ConnectorHandle, c *prop.Case, md protocol.Metadata) (*servers, *Endpoints, clients) {
 	s := &servers{
 		ack: protocol.Ack{
 			Sequence:        uint64(c.Draw(epochs, "acked sequence")),
@@ -380,135 +548,17 @@ func (su *suite) open(c *prop.Case, md protocol.Metadata) (*servers, *Endpoints,
 		Cell:       shard.Cell{ID: cell},
 		Scope:      scope,
 	}
-	agent, controller := su.connect(c, md, e)
+	agent, controller := h.Subject().Connect(md, e)
 	return s, e, clients{agent: agent, controller: controller}
 }
 
-// methodLaws runs the laws of the method m.
-func (su *suite) methodLaws(t *testing.T, m *method) {
-	t.Helper()
-	t.Run("passes each message with the metadata of the caller to the server", func(t *testing.T) {
-		t.Parallel()
-		prop.ForAll(
-			t,
-			m.name+" passes each message with the metadata of the caller, and returns the result of the server",
-			func(c *prop.Case) {
-				md := protocol.Metadata{Caller: c.Draw(identities, "caller"), Version: protocol.Current}
-				s, e, cl := su.open(c, md)
-				message := c.Draw(m.messages, "message")
-				got, err := m.call(c.Context(), cl, e, message)
-				assert.NoError(c, err, "the client returns the result of the server")
-				assert.Equal(c, got, m.result(s), "the client returns the result of the server", assert.EquateEmpty())
-				calls := s.calls()
-				assert.Length(c, calls, 1, "the server receives the call once")
-				assert.Equal(c, calls[0].method, m.name, "the server receives the call of the method of the client")
-				assert.Equal(c, calls[0].md, md, "the server receives the metadata of the caller", assert.EquateEmpty())
-				assert.Equal(c, calls[0].message, message, "the server receives the message of the caller",
-					assert.EquateEmpty())
-			},
-		)
-	})
-	t.Run("returns an error of the class of the error of the server", func(t *testing.T) {
-		t.Parallel()
-		prop.ForAll(t, m.name+" returns an error of the class of the error of the server", func(c *prop.Case) {
-			s, e, cl := su.open(c, protocol.Metadata{Version: protocol.Current})
-			class := c.Draw(classes, "class")
-			s.err = errs.WithClass(errServer, class)
-			_, err := m.call(c.Context(), cl, e, c.Draw(m.messages, "message"))
-			assert.HasError(c, err, "the client returns the error of the server")
-			assert.Equal(
-				c,
-				errs.Classify(err),
-				class,
-				"the client returns an error of the class of the error of the server",
-			)
-		})
-	})
-	t.Run("returns ErrUnsupported before the server for a call of another major version", func(t *testing.T) {
-		t.Parallel()
-		prop.ForAll(
-			t,
-			m.name+" refuses a call of another major version before the server receives it",
-			func(c *prop.Case) {
-				md := protocol.Metadata{
-					Version: c.Draw(prop.Integer(protocol.Current+1, protocol.Current+maxList), "version"),
-				}
-				s, e, cl := su.open(c, md)
-				_, err := m.call(c.Context(), cl, e, c.Draw(m.messages, "message"))
-				assert.Equal(
-					c,
-					errs.Classify(err),
-					errs.Unsupported,
-					"the client returns an error of the class Unsupported",
-				)
-				assert.ErrorIs(
-					c,
-					err,
-					errors.ErrUnsupported,
-					"the client returns an error that matches errors.ErrUnsupported",
-				)
-				assert.Empty(c, s.calls(), "the server receives no call of another major version")
-			},
-		)
-	})
-	t.Run("returns ErrUnsupported before the server for a call that requires a feature", func(t *testing.T) {
-		t.Parallel()
-		prop.ForAll(
-			t,
-			m.name+" refuses a call that requires a feature before the server receives it",
-			func(c *prop.Case) {
-				md := protocol.Metadata{Version: protocol.Current, Requires: []protocol.Feature{feature}}
-				s, e, cl := su.open(c, md)
-				_, err := m.call(c.Context(), cl, e, c.Draw(m.messages, "message"))
-				assert.Equal(
-					c,
-					errs.Classify(err),
-					errs.Unsupported,
-					"the client returns an error of the class Unsupported",
-				)
-				assert.ErrorIs(
-					c,
-					err,
-					errors.ErrUnsupported,
-					"the client returns an error that matches errors.ErrUnsupported",
-				)
-				assert.Empty(c, s.calls(), "the server receives no call that requires a feature")
-			},
-		)
-	})
-}
-
-// AssertTransport checks the laws of package protocol against the transports that connect
-// returns. connect returns the agent client and the controller client of a process whose
-// calls have the metadata md, over a transport whose agent of e.Node in the namespace of
-// e.Scope is e.Agent, and whose controller of e.Scope is e.Controller. It can set the
-// address of e.Node and the address and the identity of e.Cell, and it fails tb when it
-// cannot connect. Each case connects clients and servers of its own. A case can call
-// connect on a goroutine other than the goroutine of the test, with an assert.TB that is
-// not a *testing.T.
-//
-// The suite runs one subtest per method of the clients: Do, Report, Submit, Disrupt and
-// Done. For each, properties over generated messages check that the transport passes the
-// message and the metadata of the caller to the server and returns the result of the
-// server, that the client returns an error of the class of the error of the server, and
-// that the transport refuses a call of another major version or one that requires a
-// feature with an error of the class Unsupported before the server receives it.
-//
-// # Concurrency
-//
-// The subtests of the suite run in parallel.
-func AssertTransport(t *testing.T,
-	connect func(tb assert.TB, md protocol.Metadata, e *Endpoints) (protocol.AgentClient, protocol.ControllerClient),
-) {
-	t.Helper()
-	su := &suite{connect: connect}
-	for i := range methods {
-		m := &methods[i]
-		t.Run(m.name, func(t *testing.T) {
-			t.Parallel()
-			su.methodLaws(t, m)
-		})
+// declassify returns an error with the text of err and without its class when err wraps
+// errServer, and err otherwise.
+func declassify(err error) error {
+	if errors.Is(err, errServer) {
+		return errors.New(err.Error())
 	}
+	return err
 }
 
 // returned returns the result and the error of a call of the method of a client, with the

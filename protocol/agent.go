@@ -28,6 +28,9 @@ type AgentServer interface {
 // # Concurrency
 //
 // An AgentClient is safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:out path=protocoltest/
 type AgentClient interface {
 	// Do sends r to the agent of node.
 	Do(ctx context.Context, node *shard.Node, r *Request) error
