@@ -65,17 +65,16 @@ var _ partition.Partitioner = (*Partitioner)(nil)
 // Error modes:
 //   - an error that wraps ErrConfig for each problem that cfg.Validate reports.
 //   - an error that wraps ErrConfig when hash is nil.
+//   - the error of encoding/json when it does not encode cfg.
 func New(cfg Config, hash partition.Hash) (*Partitioner, error) {
-	err := cfg.Validate()
+	config, merr := json.Marshal(&cfg)
+	err := errors.Join(cfg.Validate(), merr)
 	if hash == nil {
 		err = errors.Join(err, fmt.Errorf("%w: hash function is nil", ErrConfig))
 	}
 	if err != nil {
 		return nil, err
 	}
-
-	// json.Marshal of a string, an int and a bool returns no error.
-	config, _ := json.Marshal(&cfg)
 
 	return &Partitioner{
 		hash: hash,
