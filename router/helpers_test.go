@@ -30,6 +30,7 @@ import (
 	"go.thesmos.sh/sharder/partition/fixedslots"
 	"go.thesmos.sh/sharder/router"
 	"go.thesmos.sh/sharder/shard"
+	"go.thesmos.sh/sharder/shard/shardtest"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
 	"go.thesmos.sh/sharder/store/storetest"
@@ -154,11 +155,7 @@ type fixture struct {
 func newFixture(tb cleaner) *fixture {
 	tb.Helper()
 	f := bare(tb)
-	f.write(tb, rootScope, &store.Mutation{
-		Spec:    f.spec,
-		Mapping: &f.mapping,
-		Put:     []shard.Placement{{Shard: shard.ID{ID128: cellKey}}},
-	})
+	f.write(tb, rootScope, f.creation(cellKey))
 	f.placed = f.write(tb, cellScope, &store.Mutation{Put: f.placements(nodeA.ID, firstEpoch)})
 	f.join(tb, cellScope, nodeA, nodeB)
 	return f
@@ -245,11 +242,26 @@ func (f *fixture) placements(n shard.NodeID, e epoch.Epoch) []shard.Placement {
 // placement returns the placement of slot i on the node n at the epoch e, and a placement
 // without replicas for an empty n.
 func (f *fixture) placement(i int, n shard.NodeID, e epoch.Epoch) shard.Placement {
-	p := shard.Placement{Shard: shards[i], Range: f.spans[i].Range, Epoch: e, Reserved: e, Sequence: uint64(e)}
+	b := shardtest.NewPlacementBuilder().
+		WithShard(shards[i]).
+		WithRange(f.spans[i].Range).
+		WithEpoch(e).
+		WithReserved(e).
+		WithSequence(uint64(e))
 	if n != "" {
-		p.Replicas = []shard.Replica{{Node: n, Role: shard.RolePrimary}}
+		b.WithReplicas(shard.Replica{Node: n, Role: shard.RolePrimary})
 	}
-	return p
+	return b.Build()
+}
+
+// creation returns the mutation of the root that creates the namespace of the tests with the
+// spec and the mapping of f, and with the cell whose shard in the root scope is key.
+func (f *fixture) creation(key id.ID128) *store.Mutation {
+	return new(storetest.NewMutationBuilder().
+		WithSpec(f.spec).
+		WithMapping(f.mapping).
+		WithPut(shard.Placement{Shard: shard.ID{ID128: key}}).
+		Build())
 }
 
 // write commits m to the scope s as its writer, and returns the generation of the commit.

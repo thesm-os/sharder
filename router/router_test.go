@@ -414,11 +414,7 @@ func (f *fixture) recreate(tb cleaner) {
 	f.st.Delete(rootScope)
 	f.incarnation = incB
 	clear(f.seqs)
-	f.write(tb, rootScope, &store.Mutation{
-		Spec:    f.spec,
-		Mapping: &f.mapping,
-		Put:     []shard.Placement{{Shard: shard.ID{ID128: otherKey}}},
-	})
+	f.write(tb, rootScope, f.creation(otherKey))
 	f.cell = shard.Scope{Namespace: namespace, Cell: otherCell}
 	f.placed = f.write(tb, f.cell, &store.Mutation{Put: f.placements(nodeA.ID, firstEpoch)})
 	f.join(tb, f.cell, nodeA, nodeB)
