@@ -18,7 +18,7 @@ The root module contains the in-memory store and membership of `store/memory`, a
 
 ## Packages of the root module
 
-A contract is an interface together with the package that declares it. Each built-in implementation of a contract is a subpackage of the contract's package. Each contract with more than one implementation has a conformance kit in the subpackage that adds `test` to the package's name, such as `store/storetest`. The same subpackage contains the generated doubles of the interfaces of the package, also for a package without a conformance kit, such as `config/configtest`.
+A contract is an interface together with the package that declares it. Each built-in implementation of a contract is a subpackage of the contract's package. Each contract with more than one implementation has a conformance kit in the subpackage that adds `test` to the package's name, such as `store/storetest`. The same subpackage contains the generated doubles of the interfaces of the package and the generated builders of its structs, also for a package without a conformance kit, such as `config/configtest`.
 
 A package may import the packages in its row, and every package that those packages import.
 
@@ -27,10 +27,10 @@ A package may import the packages in its row, and every package that those packa
 | Package | Contains | Imports from sharder |
 |---|---|---|
 | `shard` | The value types that every package shares, such as scopes, nodes, placements and the cell map | Nothing |
-| `shard/shardtest` | The suite of the cell map | `shard` |
+| `shard/shardtest` | The suite of the cell map, and the builders of `Placement` and `Node` | `shard` |
 | `proposal` | The proposals of operators, their kinds and their IDs | `shard` |
 | `config` | Specs, the strategy registry, the support matrix type, presets, `Resolve` and `Change` | `shard`, `proposal` |
-| `config/configtest` | The doubles of `Parsed`, `Factory` and `Provider` | `shard`, `config` |
+| `config/configtest` | The doubles of `Parsed`, `Factory` and `Provider`, and the builders of `Spec` and `Selection` | `shard`, `config` |
 | `builtin` | `Support`, `Register`, `Presets`, a constructor of the factory of each built-in strategy that the support matrix contains, and the names of `exclusive`, `embedded`, `watch` and the four presets | `config` and the built-in strategies |
 
 ### Strategies, fencing and budgets
@@ -62,7 +62,7 @@ A package may import the packages in its row, and every package that those packa
 |---|---|---|
 | `store` | The `Reader`, `Store` and `Writer` contracts, the records of a scope, and the errors of a commit | `shard`, `budget`, `proposal` |
 | `store/memory` | The in-memory store and membership, with fault hooks for tests and simulations | `store`, `membership`, `config` |
-| `store/storetest` | The conformance suite of stores with the operations of the kit that its checks call, and the doubles of the interfaces of `store` | `shard`, `budget`, `proposal`, `store`, `store/memory`, `internal/streamtest` |
+| `store/storetest` | The conformance suite of stores with the operations of the kit that its checks call, the doubles of the interfaces of `store`, and the builder of `Mutation` | `shard`, `budget`, `proposal`, `store`, `store/memory`, `internal/streamtest` |
 | `membership` | The `Membership` contract, views and sessions | `shard`, `ownership` |
 | `membership/membershiptest` | The conformance suite of memberships with the operations of the kit that its checks call, and the doubles of the interfaces of `membership` | `shard`, `ownership`, `membership`, `store`, `store/memory`, `internal/streamtest` |
 | `protocol` | Messages, metadata, the server and client contracts, and `Dispatch` | `shard`, `proposal`, `budget` |
