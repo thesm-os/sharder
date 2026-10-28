@@ -8,7 +8,6 @@ import (
 	"errors"
 	"math"
 	"slices"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -136,294 +135,178 @@ var (
 	onN3 = placement.Target{Replicas: []shard.Replica{{Node: n3, Role: shard.RolePrimary}}}
 )
 
-// ticking is a constraint that admits every move and advances a fake clock by an hour
-// on each check, so a pass ends at its timeout.
-type ticking struct {
-	// clock is the clock of the input of the pass.
-	clock *fake.Clock
+// ticking returns a constraint named tickingName that admits every move and advances clock
+// by an hour on each check, so a pass ends at its timeout.
+func ticking(tb assert.TB, clock *fake.Clock) *placementtest.ConstraintStub {
+	tb.Helper()
+	return placementtest.NewConstraintStub(tb,
+		placementtest.WithConstraintName(func() shard.StrategyName { return tickingName }),
+		placementtest.WithConstraintCheck(func(*placement.State, placement.Move) error {
+			clock.Advance(time.Hour)
+			return nil
+		}))
 }
 
-// Name returns the name ticking.
-func (ticking) Name() shard.StrategyName {
-	return tickingName
+// cancelling returns a constraint named cancellingName that admits every move and ends a
+// context with errStopped on each check.
+func cancelling(tb assert.TB, cancel context.CancelCauseFunc) *placementtest.ConstraintStub {
+	tb.Helper()
+	return placementtest.NewConstraintStub(tb,
+		placementtest.WithConstraintName(func() shard.StrategyName { return cancellingName }),
+		placementtest.WithConstraintCheck(func(*placement.State, placement.Move) error {
+			cancel(errStopped)
+			return nil
+		}))
 }
 
-// Check advances the clock by an hour, and returns nil.
-func (c ticking) Check(*placement.State, placement.Move) error {
-	c.clock.Advance(time.Hour)
-	return nil
+// meddling returns a constraint named meddlingName that changes the state, although the
+// contract of a constraint does not allow it. It applies the first move whose From differs
+// from its To and returns the error of the state. It returns nil for every other move.
+func meddling(tb assert.TB) *placementtest.ConstraintStub {
+	tb.Helper()
+	applied := false
+	return placementtest.NewConstraintStub(tb,
+		placementtest.WithConstraintName(func() shard.StrategyName { return meddlingName }),
+		placementtest.WithConstraintCheck(func(st *placement.State, m placement.Move) error {
+			if applied || m.From == m.To {
+				return nil
+			}
+			applied = true
+			return st.Apply(m)
+		}))
 }
 
-// cancelling is a constraint that admits every move and ends a context with
-// errStopped on each check.
-type cancelling struct {
-	// cancel ends the context of the pass.
-	cancel context.CancelCauseFunc
+// faulty returns a goal named faultyName with fixed costs and a fixed delta. Its cost is
+// start before the first move of a pass and moved after it. Its delta is delta for every
+// move.
+func faulty(tb assert.TB, start, moved, delta float64) *placementtest.GoalStub {
+	tb.Helper()
+	return placementtest.NewGoalStub(tb,
+		placementtest.WithGoalName(func() shard.StrategyName { return faultyName }),
+		placementtest.WithGoalCost(func(st *placement.State) float64 {
+			if st.Moved() > 0 {
+				return moved
+			}
+			return start
+		}),
+		placementtest.WithGoalDelta(func(*placement.State, placement.Move) float64 { return delta }))
 }
 
-// Name returns the name cancelling.
-func (cancelling) Name() shard.StrategyName {
-	return cancellingName
+// first returns a goal named firstName with a cost of 1 until the pass applies its first
+// move, and 0 after it. The delta of a move before the first move of the pass is -1. The
+// delta of a later move, and of a move whose From equals its To, is 0.
+func first(tb assert.TB) *placementtest.GoalStub {
+	tb.Helper()
+	return placementtest.NewGoalStub(tb,
+		placementtest.WithGoalName(func() shard.StrategyName { return firstName }),
+		placementtest.WithGoalCost(func(st *placement.State) float64 {
+			if st.Moved() > 0 {
+				return 0
+			}
+			return 1
+		}),
+		placementtest.WithGoalDelta(func(st *placement.State, m placement.Move) float64 {
+			if m.From == m.To || st.Moved() > 0 {
+				return 0
+			}
+			return -1
+		}))
 }
 
-// Check ends the context, and returns nil.
-func (c cancelling) Check(*placement.State, placement.Move) error {
-	c.cancel(errStopped)
-	return nil
+// scripted returns a goal named scriptedName with a cost of 0. The delta of a move of a
+// shard to a node is the delta of the shard in deltas, and the delta of every other move is
+// 0.
+func scripted(tb assert.TB, deltas map[shard.ID]float64) *placementtest.GoalStub {
+	tb.Helper()
+	return placementtest.NewGoalStub(tb,
+		placementtest.WithGoalName(func() shard.StrategyName { return scriptedName }),
+		placementtest.WithGoalDelta(func(_ *placement.State, m placement.Move) float64 {
+			if m.To == "" || m.From == m.To {
+				return 0
+			}
+			return deltas[m.Shard]
+		}))
 }
 
-// meddling is a constraint that changes the state, although the contract of a
-// constraint does not allow it. It applies the first move whose From differs from its
-// To.
-type meddling struct {
-	// applied reports that the constraint applied a move.
-	applied *bool
+// nudge returns a goal named nudgeName whose cost is start before the first move of a pass,
+// and after once a move applied. Before the first move, the delta of a move to the node n
+// is after minus start plus the delta of n in earlier. After it, the delta of a move to n is
+// the delta of n in later. The delta of a move whose From equals its To is 0.
+func nudge(tb assert.TB, start, after float64, earlier, later map[shard.NodeID]float64) *placementtest.GoalStub {
+	tb.Helper()
+	return placementtest.NewGoalStub(tb,
+		placementtest.WithGoalName(func() shard.StrategyName { return nudgeName }),
+		placementtest.WithGoalCost(func(st *placement.State) float64 {
+			if st.Moved() > 0 {
+				return after
+			}
+			return start
+		}),
+		placementtest.WithGoalDelta(func(st *placement.State, m placement.Move) float64 {
+			if m.From == m.To {
+				return 0
+			}
+			if st.Moved() > 0 {
+				return later[m.To]
+			}
+			return after - start + earlier[m.To]
+		}))
 }
 
-// Name returns the name meddling.
-func (meddling) Name() shard.StrategyName {
-	return meddlingName
+// poisoned returns a goal named poisonedName with a cost of 0, whose delta of a move to the
+// node n is +Inf. The delta of every other move is 0.
+func poisoned(tb assert.TB, n shard.NodeID) *placementtest.GoalStub {
+	tb.Helper()
+	return placementtest.NewGoalStub(tb,
+		placementtest.WithGoalName(func() shard.StrategyName { return poisonedName }),
+		placementtest.WithGoalDelta(func(_ *placement.State, m placement.Move) float64 {
+			if m.To == n && m.From != m.To {
+				return math.Inf(1)
+			}
+			return 0
+		}))
 }
 
-// Check applies the first move whose From differs from its To and returns the error
-// of the state. It returns nil for every other move.
-func (c meddling) Check(st *placement.State, m placement.Move) error {
-	if *c.applied || m.From == m.To {
-		return nil
-	}
-	*c.applied = true
-	return st.Apply(m)
+// avoid returns a constraint named avoidName that rejects with errAvoided each move of the
+// shard sh to the node n whose From differs from its To.
+func avoid(tb assert.TB, n shard.NodeID, sh shard.ID) *placementtest.ConstraintStub {
+	tb.Helper()
+	return placementtest.NewConstraintStub(tb,
+		placementtest.WithConstraintName(func() shard.StrategyName { return avoidName }),
+		placementtest.WithConstraintCheck(func(_ *placement.State, m placement.Move) error {
+			if m.Shard == sh && m.To == n && m.From != m.To {
+				return errAvoided
+			}
+			return nil
+		}))
 }
 
-// faulty is a goal with fixed costs and a fixed delta. Its cost is the field start
-// before the first move of a pass, and the field moved after it. Its delta is the field
-// delta for every move.
-type faulty struct {
-	// start is the cost of a state before its first move.
-	start float64
-	// moved is the cost of a state after its first move.
-	moved float64
-	// delta is the delta of every move.
-	delta float64
+// rejecting returns a constraint named rejectingName that rejects each move to a node with
+// the error of the node in errs. It admits a move whose From equals its To.
+func rejecting(tb assert.TB, errs map[shard.NodeID]error) *placementtest.ConstraintStub {
+	tb.Helper()
+	return placementtest.NewConstraintStub(tb,
+		placementtest.WithConstraintName(func() shard.StrategyName { return rejectingName }),
+		placementtest.WithConstraintCheck(func(_ *placement.State, m placement.Move) error {
+			if m.From == m.To {
+				return nil
+			}
+			return errs[m.To]
+		}))
 }
 
-// Name returns the name faulty.
-func (faulty) Name() shard.StrategyName {
-	return faultyName
-}
-
-// Cost returns start before the first move of st, and moved after it.
-func (g faulty) Cost(st *placement.State) float64 {
-	if st.Moved() > 0 {
-		return g.moved
-	}
-	return g.start
-}
-
-// Delta returns delta.
-func (g faulty) Delta(*placement.State, placement.Move) float64 {
-	return g.delta
-}
-
-// first is a goal with a cost of 1 until the pass applies its first move, and 0 after
-// it. Any first move lowers its cost, and a later move does not change it.
-type first struct{}
-
-// Name returns the name first.
-func (first) Name() shard.StrategyName {
-	return firstName
-}
-
-// Cost returns 1 before the first move of st, and 0 after it.
-func (first) Cost(st *placement.State) float64 {
-	if st.Moved() > 0 {
-		return 0
-	}
-	return 1
-}
-
-// Delta returns -1 for a move before the first move of st, and 0 for every other move
-// and for a move whose From equals its To.
-func (first) Delta(st *placement.State, m placement.Move) float64 {
-	if m.From == m.To || st.Moved() > 0 {
-		return 0
-	}
-	return -1
-}
-
-// scripted is a goal with a cost of 0, whose delta of a move of a shard to a node is
-// the delta of the shard in deltas. The delta of every other move is 0.
-type scripted struct {
-	// deltas maps a shard to the delta of each move of the shard to a node.
-	deltas map[shard.ID]float64
-}
-
-// Name returns the name scripted.
-func (scripted) Name() shard.StrategyName {
-	return scriptedName
-}
-
-// Cost returns 0.
-func (scripted) Cost(*placement.State) float64 {
-	return 0
-}
-
-// Delta returns the delta of the shard of m when m moves a replica to a node, and 0
-// otherwise.
-func (g scripted) Delta(_ *placement.State, m placement.Move) float64 {
-	if m.To == "" || m.From == m.To {
-		return 0
-	}
-	return g.deltas[m.Shard]
-}
-
-// nudge is a goal whose cost is start before the first move of a pass and after once a
-// move applied. Before the first move, the delta of a move to node n is after minus
-// start plus the delta of n in first. After it, the delta of a move to n is the delta
-// of n in later.
-type nudge struct {
-	// first maps a node to the part of the delta of a move to it before the first move.
-	first map[shard.NodeID]float64
-	// later maps a node to the delta of a move to it after the first move.
-	later map[shard.NodeID]float64
-	// start is the cost before the first move.
-	start float64
-	// after is the cost once a move applied.
-	after float64
-}
-
-// Name returns the name nudge.
-func (nudge) Name() shard.StrategyName {
-	return nudgeName
-}
-
-// Cost returns start before the first move of st, and after once a move applied.
-func (g nudge) Cost(st *placement.State) float64 {
-	if st.Moved() > 0 {
-		return g.after
-	}
-	return g.start
-}
-
-// Delta returns the delta of m by the rules of nudge.
-func (g nudge) Delta(st *placement.State, m placement.Move) float64 {
-	if m.From == m.To {
-		return 0
-	}
-	if st.Moved() > 0 {
-		return g.later[m.To]
-	}
-	return g.after - g.start + g.first[m.To]
-}
-
-// poisoned is a goal with a cost of 0, whose delta of a move to node is +Inf. The
-// delta of every other move is 0.
-type poisoned struct {
-	// node is the node of the infinite deltas.
-	node shard.NodeID
-}
-
-// Name returns the name poisoned.
-func (poisoned) Name() shard.StrategyName {
-	return poisonedName
-}
-
-// Cost returns 0.
-func (poisoned) Cost(*placement.State) float64 {
-	return 0
-}
-
-// Delta returns +Inf for a move to node, and 0 for every other move.
-func (g poisoned) Delta(_ *placement.State, m placement.Move) float64 {
-	if m.To == g.node && m.From != m.To {
-		return math.Inf(1)
-	}
-	return 0
-}
-
-// avoid is a constraint that rejects a move of one shard to one node with errAvoided.
-type avoid struct {
-	// node is the node that the constraint avoids.
-	node shard.NodeID
-	// shard is the shard that the constraint keeps off node.
-	shard shard.ID
-}
-
-// Name returns the name avoid.
-func (avoid) Name() shard.StrategyName {
-	return avoidName
-}
-
-// Check returns errAvoided for a move of shard to node whose From differs from its To.
-func (c avoid) Check(_ *placement.State, m placement.Move) error {
-	if m.Shard == c.shard && m.To == c.node && m.From != m.To {
-		return errAvoided
-	}
-	return nil
-}
-
-// rejecting is a constraint that rejects each move to a node with the error of the
-// node in errs.
-type rejecting struct {
-	// errs maps a node to the error of each move to it.
-	errs map[shard.NodeID]error
-}
-
-// Name returns the name rejecting.
-func (rejecting) Name() shard.StrategyName {
-	return rejectingName
-}
-
-// Check returns the error of the destination of m when the From of m differs from its
-// To, and nil otherwise.
-func (c rejecting) Check(_ *placement.State, m placement.Move) error {
-	if m.From == m.To {
-		return nil
-	}
-	return c.errs[m.To]
-}
-
-// roles is a constraint that rejects each move of a replica in a role with the error
-// of the role in errs.
-type roles struct {
-	// errs maps a role to the error of each move of a replica in it.
-	errs map[shard.Role]error
-}
-
-// Name returns the name roles.
-func (roles) Name() shard.StrategyName {
-	return rolesName
-}
-
-// Check returns the error of the role of m when the From of m differs from its To, and
-// nil otherwise.
-func (c roles) Check(_ *placement.State, m placement.Move) error {
-	if m.From == m.To {
-		return nil
-	}
-	return c.errs[m.Role]
-}
-
-// counted is a goal with a cost of 0 and a delta of 0 that counts the calls of Cost.
-type counted struct {
-	// calls counts the calls of Cost.
-	calls *atomic.Int32
-}
-
-// Name returns the name counted.
-func (counted) Name() shard.StrategyName {
-	return countedName
-}
-
-// Cost counts the call, and returns 0.
-func (g counted) Cost(*placement.State) float64 {
-	g.calls.Add(1)
-	return 0
-}
-
-// Delta returns 0.
-func (counted) Delta(*placement.State, placement.Move) float64 {
-	return 0
+// roles returns a constraint named rolesName that rejects each move of a replica in a role
+// with the error of the role in errs. It admits a move whose From equals its To.
+func roles(tb assert.TB, errs map[shard.Role]error) *placementtest.ConstraintStub {
+	tb.Helper()
+	return placementtest.NewConstraintStub(tb,
+		placementtest.WithConstraintName(func() shard.StrategyName { return rolesName }),
+		placementtest.WithConstraintCheck(func(_ *placement.State, m placement.Move) error {
+			if m.From == m.To {
+				return nil
+			}
+			return errs[m.Role]
+		}))
 }
 
 // cell returns the input of a cell under primary-only on the accepting nodes n0 to n3
@@ -514,12 +397,13 @@ func TestPass(t *testing.T) {
 	// crowded puts six shards on n0.
 	crowded := []shard.NodeID{n0, n0, n0, n0, n0, n0}
 	// everyMove is a goal under which every move of every shard lowers the cost by 1.
-	everyMove := scripted{deltas: map[shard.ID]float64{}}
+	lowered := map[shard.ID]float64{}
 	for _, id := range ids {
-		everyMove.deltas[id] = -1
+		lowered[id] = -1
 	}
+	everyMove := scripted(t, lowered)
 	// still is a goal whose delta is 0 for every move.
-	still := scripted{deltas: map[shard.ID]float64{}}
+	still := scripted(t, nil)
 	// emergency marks an input as an emergency, so a pass only repairs.
 	emergency := func(in *placement.Input) { in.Emergency = true }
 	// skewed puts two heavy shards on n0 and two light shards on each other node.
@@ -693,16 +577,16 @@ func TestPass(t *testing.T) {
 				name:  "does not move a shard whose move lowers a lower tier within its tolerance and raises a higher one",
 				hosts: []shard.NodeID{n0, n0, n1},
 				goals: []tiered{
-					{goal: scripted{deltas: map[shard.ID]float64{ids[0]: -0.5e-9}}, weight: 1},
-					{goal: scripted{deltas: map[shard.ID]float64{ids[0]: 1}}, tier: 1, weight: 1},
+					{goal: scripted(t, map[shard.ID]float64{ids[0]: -0.5e-9}), weight: 1},
+					{goal: scripted(t, map[shard.ID]float64{ids[0]: 1}), tier: 1, weight: 1},
 				},
 			},
 			{
 				name:  "moves a shard whose move raises a lower tier within its tolerance and lowers a higher one",
 				hosts: []shard.NodeID{n0, n0, n1},
 				goals: []tiered{
-					{goal: scripted{deltas: map[shard.ID]float64{ids[0]: 0.5e-9}}, weight: 1},
-					{goal: scripted{deltas: map[shard.ID]float64{ids[0]: -1}}, tier: 1, weight: 1},
+					{goal: scripted(t, map[shard.ID]float64{ids[0]: 0.5e-9}), weight: 1},
+					{goal: scripted(t, map[shard.ID]float64{ids[0]: -1}), tier: 1, weight: 1},
 				},
 				want: map[shard.ID]placement.Target{ids[0]: onN1},
 			},
@@ -710,8 +594,8 @@ func TestPass(t *testing.T) {
 				name:  "moves the shard that lowers a lower tier over a shard that lowers a higher tier more",
 				hosts: []shard.NodeID{n0, n0, n1},
 				goals: []tiered{
-					{goal: scripted{deltas: map[shard.ID]float64{ids[1]: -1}}, weight: 1},
-					{goal: scripted{deltas: map[shard.ID]float64{ids[0]: -100}}, tier: 1, weight: 1},
+					{goal: scripted(t, map[shard.ID]float64{ids[1]: -1}), weight: 1},
+					{goal: scripted(t, map[shard.ID]float64{ids[0]: -100}), tier: 1, weight: 1},
 				},
 				input: loaded(5, light, light),
 				want:  map[shard.ID]placement.Target{ids[1]: onN1},
@@ -735,7 +619,7 @@ func TestPass(t *testing.T) {
 			{
 				name:   "examines the Sample largest shards of a node in a sweep",
 				hosts:  []shard.NodeID{n0, n0},
-				goals:  []tiered{{goal: scripted{deltas: map[shard.ID]float64{ids[0]: -1}}, weight: 1}},
+				goals:  []tiered{{goal: scripted(t, map[shard.ID]float64{ids[0]: -1}), weight: 1}},
 				input:  loaded(light, 5),
 				config: func(cfg *planner.Config) { cfg.Search.Sample = 1 },
 			},
@@ -772,7 +656,7 @@ func TestPass(t *testing.T) {
 				name:  "places a replica on the lower node of two whose deltas differ by less than the tolerance",
 				hosts: []shard.NodeID{""},
 				goals: []tiered{
-					{goal: nudge{start: 1000, after: 1000, first: map[shard.NodeID]float64{n1: -1e-9}}, weight: 1},
+					{goal: nudge(t, 1000, 1000, map[shard.NodeID]float64{n1: -1e-9}, nil), weight: 1},
 				},
 				input: emergency,
 				want:  map[shard.ID]placement.Target{ids[0]: onN0},
@@ -781,7 +665,7 @@ func TestPass(t *testing.T) {
 				name:  "places a replica by the tolerance of the cost that the first move leaves",
 				hosts: []shard.NodeID{"", ""},
 				goals: []tiered{{
-					goal:   nudge{start: 1000, after: 100, later: map[shard.NodeID]float64{n1: -1, n2: -1 - 5e-7}},
+					goal:   nudge(t, 1000, 100, nil, map[shard.NodeID]float64{n1: -1, n2: -1 - 5e-7}),
 					weight: 1,
 				}},
 				input: emergency,
@@ -791,7 +675,7 @@ func TestPass(t *testing.T) {
 				name:  "places a replica on the lower node of two that tie within the tolerance after a move",
 				hosts: []shard.NodeID{"", ""},
 				goals: []tiered{{
-					goal:   nudge{start: 1000, after: 100, later: map[shard.NodeID]float64{n1: -1, n2: -1 - 1e-9}},
+					goal:   nudge(t, 1000, 100, nil, map[shard.NodeID]float64{n1: -1, n2: -1 - 1e-9}),
 					weight: 1,
 				}},
 				input: emergency,
@@ -800,7 +684,7 @@ func TestPass(t *testing.T) {
 			{
 				name:        "places a replica on a node that a constraint rejected for another shard",
 				hosts:       []shard.NodeID{"", "", n0, n1, n2},
-				constraints: []placement.Constraint{avoid{node: n3, shard: ids[0]}},
+				constraints: []placement.Constraint{avoid(t, n3, ids[0])},
 				goals:       []tiered{{goal: count, weight: 1}},
 				input:       emergency,
 				want:        map[shard.ID]placement.Target{ids[0]: onN0, ids[1]: onN3},
@@ -815,7 +699,7 @@ func TestPass(t *testing.T) {
 			{
 				name:        "moves the shard that the constraints admit when a rejected move would tie with it",
 				hosts:       []shard.NodeID{n0, n0, n1, n2},
-				constraints: []placement.Constraint{avoid{node: n3, shard: ids[0]}},
+				constraints: []placement.Constraint{avoid(t, n3, ids[0])},
 				goals:       []tiered{{goal: count, weight: 1}},
 				input:       loaded(light, 5, light, light),
 				want:        map[shard.ID]placement.Target{ids[1]: onN3},
@@ -823,14 +707,14 @@ func TestPass(t *testing.T) {
 			{
 				name:  "moves the lower shard ID of two shards with equal deltas",
 				hosts: []shard.NodeID{n0, n0, n1},
-				goals: []tiered{{goal: scripted{deltas: map[shard.ID]float64{ids[0]: -1, ids[1]: -1}}, weight: 1}},
+				goals: []tiered{{goal: scripted(t, map[shard.ID]float64{ids[0]: -1, ids[1]: -1}), weight: 1}},
 				input: loaded(light, 5, light),
 				want:  map[shard.ID]placement.Target{ids[0]: onN1},
 			},
 			{
 				name:  "moves the shard with the lowest delta when a lower shard ID has a higher delta",
 				hosts: []shard.NodeID{n0, n0, n1},
-				goals: []tiered{{goal: scripted{deltas: map[shard.ID]float64{ids[0]: -1, ids[1]: -5}}, weight: 1}},
+				goals: []tiered{{goal: scripted(t, map[shard.ID]float64{ids[0]: -1, ids[1]: -5}), weight: 1}},
 				input: loaded(light, 5, light),
 				want:  map[shard.ID]placement.Target{ids[1]: onN1},
 			},
@@ -838,7 +722,7 @@ func TestPass(t *testing.T) {
 				name:  "moves the lower shard ID of two shards whose deltas differ by less than the tolerance",
 				hosts: []shard.NodeID{n0, n0, n1},
 				goals: []tiered{
-					{goal: scripted{deltas: map[shard.ID]float64{ids[0]: -1, ids[1]: -1 - 1e-12}}, weight: 1},
+					{goal: scripted(t, map[shard.ID]float64{ids[0]: -1, ids[1]: -1 - 1e-12}), weight: 1},
 				},
 				input: loaded(5, light, light),
 				want:  map[shard.ID]placement.Target{ids[0]: onN1},
@@ -907,7 +791,7 @@ func TestPass(t *testing.T) {
 				name:  "does not move a lower shard ID whose delta is within the tolerance of 0",
 				hosts: []shard.NodeID{n0, n0, n1},
 				goals: []tiered{
-					{goal: scripted{deltas: map[shard.ID]float64{ids[0]: -0.8e-9, ids[1]: -1.5e-9}}, weight: 1},
+					{goal: scripted(t, map[shard.ID]float64{ids[0]: -0.8e-9, ids[1]: -1.5e-9}), weight: 1},
 				},
 				input: loaded(light, 5, light),
 				want:  map[shard.ID]placement.Target{ids[1]: onN1},
@@ -1217,7 +1101,7 @@ func TestPass(t *testing.T) {
 		measures := []struct {
 			name  string
 			hosts []shard.NodeID
-			want  int32
+			want  int
 		}{
 			{name: "measures the costs once in a pass without a move", hosts: []shard.NodeID{n0, n1, n2, n3}, want: 1},
 			{name: "measures the costs again after a move", hosts: imbalanced, want: 2},
@@ -1225,11 +1109,13 @@ func TestPass(t *testing.T) {
 		for _, tt := range measures {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				g := counted{calls: new(atomic.Int32)}
+				g := placementtest.NewGoalStub(t,
+					placementtest.WithGoalName(func() shard.StrategyName { return countedName }))
 				p := newPlanner(t, defaults(), nil, tiered{goal: count, weight: 1}, tiered{goal: g, tier: 1, weight: 1})
 				_, err := p.Place(t.Context(), cell(tt.hosts...))
 				assert.NoError(t, err, "Place must plan the cell")
-				assert.Equal(t, g.calls.Load(), tt.want, "Place must call Cost once for each measure of the costs")
+				assert.Equal(t, g.OnCost.CallCount(), tt.want,
+					"Place must call Cost once for each measure of the costs")
 			})
 		}
 
@@ -1255,7 +1141,7 @@ func TestPass(t *testing.T) {
 			}
 			in := cell("")
 			in.Emergency = true
-			plan, err := newPlanner(t, defaults(), []placement.Constraint{rejecting{errs: rejections}}).
+			plan, err := newPlanner(t, defaults(), []placement.Constraint{rejecting(t, rejections)}).
 				Place(t.Context(), in)
 			assert.NoError(t, err, "Place must plan the cell")
 			expect.That(t, plan.Targets[ids[0]].Reason).
@@ -1269,7 +1155,7 @@ func TestPass(t *testing.T) {
 			in := cell("")
 			paired()(in)
 			in.Emergency = true
-			c := roles{errs: map[shard.Role]error{shard.RolePrimary: errPrimary, shard.RoleSecondary: errSecondary}}
+			c := roles(t, map[shard.Role]error{shard.RolePrimary: errPrimary, shard.RoleSecondary: errSecondary})
 			plan, err := newPlanner(t, defaults(), []placement.Constraint{c}).Place(t.Context(), in)
 			assert.NoError(t, err, "Place must plan the cell")
 			target := plan.Targets[ids[0]]
@@ -1283,7 +1169,7 @@ func TestPass(t *testing.T) {
 			t.Parallel()
 			in := cell("", "")
 			paired([]shard.NodeID{n0, d9}, []shard.NodeID{n0, n1})(in)
-			c := roles{errs: map[shard.Role]error{shard.RoleSecondary: errSecondary}}
+			c := roles(t, map[shard.Role]error{shard.RoleSecondary: errSecondary})
 			plan, err := newPlanner(t, defaults(), []placement.Constraint{c}, tiered{goal: count, weight: 1}).
 				Place(t.Context(), in)
 			assert.NoError(t, err, "Place must plan the cell")
@@ -1300,8 +1186,8 @@ func TestPass(t *testing.T) {
 			in := cell(n0, "")
 			clock := fake.New(origin)
 			in.Clock = clock
-			p := newPlanner(t, defaults(), []placement.Constraint{ticking{clock: clock}},
-				tiered{goal: faulty{start: math.NaN()}, weight: 1})
+			p := newPlanner(t, defaults(), []placement.Constraint{ticking(t, clock)},
+				tiered{goal: faulty(t, math.NaN(), 0, 0), weight: 1})
 			_, err := p.Place(t.Context(), in)
 			assert.ErrorIs(t, err, placement.ErrCost, "Place must refuse a cost that is not finite")
 			assert.Equal(t, clock.Time(), origin, "Place must not check a move before it measures the costs")
@@ -1315,7 +1201,7 @@ func TestPass(t *testing.T) {
 				t,
 				cfg,
 				nil,
-				tiered{goal: first{}, weight: 1},
+				tiered{goal: first(t), weight: 1},
 				tiered{goal: goal.Stickiness{}, tier: 1, weight: 1},
 			)
 			plan, err := p.Place(t.Context(), cell(n0, n0))
@@ -1331,7 +1217,7 @@ func TestPass(t *testing.T) {
 			p := newPlanner(
 				t,
 				defaults(),
-				[]placement.Constraint{ticking{clock: clock}},
+				[]placement.Constraint{ticking(t, clock)},
 				tiered{goal: count, weight: 1},
 			)
 			plan, err := p.Place(t.Context(), in)
@@ -1367,7 +1253,7 @@ func TestPass(t *testing.T) {
 				in.Emergency = tt.emergency
 				ctx, cancel := context.WithCancelCause(t.Context())
 				defer cancel(nil)
-				p := newPlanner(t, defaults(), []placement.Constraint{cancelling{cancel: cancel}},
+				p := newPlanner(t, defaults(), []placement.Constraint{cancelling(t, cancel)},
 					tiered{goal: count, weight: 1})
 				_, err := p.Place(ctx, in)
 				assert.ErrorIs(t, err, errStopped, "Place must return the cause of the context")
@@ -1381,7 +1267,7 @@ func TestPass(t *testing.T) {
 			in.Faults[ids[1]] = []shard.NodeID{n0, n1, n2, n3}
 			ctx, cancel := context.WithCancelCause(t.Context())
 			defer cancel(nil)
-			p := newPlanner(t, defaults(), []placement.Constraint{cancelling{cancel: cancel}},
+			p := newPlanner(t, defaults(), []placement.Constraint{cancelling(t, cancel)},
 				tiered{goal: count, weight: 1})
 			_, err := p.Place(ctx, in)
 			assert.ErrorIs(t, err, errStopped, "Place must return the cause of the context")
@@ -1395,37 +1281,37 @@ func TestPass(t *testing.T) {
 			{
 				name:  "returns ErrCost for a cost that is not finite",
 				hosts: []shard.NodeID{n0},
-				goals: []tiered{{goal: faulty{start: math.NaN()}, weight: 1}},
+				goals: []tiered{{goal: faulty(t, math.NaN(), 0, 0), weight: 1}},
 			},
 			{
 				name:  "returns ErrCost for a delta of an added replica that is not finite",
 				hosts: []shard.NodeID{""},
-				goals: []tiered{{goal: faulty{delta: math.Inf(1)}, weight: 1}},
+				goals: []tiered{{goal: faulty(t, 0, 0, math.Inf(1)), weight: 1}},
 			},
 			{
 				name:  "returns ErrCost for a delta of a relocated replica that is not finite",
 				hosts: []shard.NodeID{g9},
-				goals: []tiered{{goal: faulty{delta: math.Inf(1)}, weight: 1}},
+				goals: []tiered{{goal: faulty(t, 0, 0, math.Inf(1)), weight: 1}},
 			},
 			{
 				name:  "returns ErrCost for a delta of an improvement that is not finite",
 				hosts: imbalanced,
-				goals: []tiered{{goal: faulty{delta: math.NaN()}, weight: 1}},
+				goals: []tiered{{goal: faulty(t, 0, 0, math.NaN()), weight: 1}},
 			},
 			{
 				name:  "returns ErrCost for a delta of a higher tier that is not finite",
 				hosts: imbalanced,
-				goals: []tiered{{goal: count, weight: 1}, {goal: faulty{delta: math.NaN()}, tier: 1, weight: 1}},
+				goals: []tiered{{goal: count, weight: 1}, {goal: faulty(t, 0, 0, math.NaN()), tier: 1, weight: 1}},
 			},
 			{
 				name:  "returns ErrCost for a cost after a move that is not finite",
 				hosts: []shard.NodeID{""},
-				goals: []tiered{{goal: faulty{moved: math.Inf(-1)}, weight: 1}},
+				goals: []tiered{{goal: faulty(t, 0, math.Inf(-1), 0), weight: 1}},
 			},
 			{
 				name:  "returns ErrCost for an infinite delta of a node that the pass does not choose",
 				hosts: []shard.NodeID{""},
-				goals: []tiered{{goal: poisoned{node: n2}, weight: 1}},
+				goals: []tiered{{goal: poisoned(t, n2), weight: 1}},
 			},
 		}
 		for _, tt := range faults {
@@ -1438,11 +1324,10 @@ func TestPass(t *testing.T) {
 
 		t.Run("returns ErrMove for a constraint that changes the state", func(t *testing.T) {
 			t.Parallel()
-			applied := false
 			p := newPlanner(
 				t,
 				defaults(),
-				[]placement.Constraint{meddling{applied: &applied}},
+				[]placement.Constraint{meddling(t)},
 				tiered{goal: count, weight: 1},
 			)
 			_, err := p.Place(t.Context(), cell(n0, n0, ""))
@@ -1451,11 +1336,10 @@ func TestPass(t *testing.T) {
 
 		t.Run("returns ErrMove for a constraint that changes the state during the improvement", func(t *testing.T) {
 			t.Parallel()
-			applied := false
 			p := newPlanner(
 				t,
 				defaults(),
-				[]placement.Constraint{meddling{applied: &applied}},
+				[]placement.Constraint{meddling(t)},
 				tiered{goal: count, weight: 1},
 			)
 			_, err := p.Place(t.Context(), cell(imbalanced...))

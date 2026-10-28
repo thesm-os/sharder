@@ -11,9 +11,9 @@ import (
 	"go.thesmos.sh/sharder/placement/placementtest"
 )
 
-// keeper is a placer that leaves every shard where it is. Its plans do not change a
-// shard, and their repair cursor is the cursor of the input. keeper passes the laws of
-// AssertPlacer.
+// keeper is a placer without constraints that leaves every shard where it is. Its plans
+// do not change a shard, and their repair cursor is the cursor of the input. keeper
+// passes the checks of the suite of placement.Placer.
 type keeper struct{}
 
 // Place returns a plan that does not change a shard. It returns the cause of ctx when
@@ -30,8 +30,14 @@ func (keeper) Schedule() placement.Schedule {
 	return placement.Schedule{}
 }
 
-// TestPlacer checks the laws of a placer against keeper.
+// Constraints returns no constraint.
+func (keeper) Constraints() []placement.Constraint {
+	return nil
+}
+
+// TestPlacer checks that keeper passes the checks of the suite of placement.Placer.
 func TestPlacer(t *testing.T) {
 	t.Parallel()
-	placementtest.AssertPlacer(t, keeper{}, nil)
+
+	placementtest.RunPlacerSuite(t, func() keeper { return keeper{} })
 }

@@ -24,6 +24,8 @@ const DrainName shard.StrategyName = "drain"
 // # Allocation contract
 //
 // Check does not allocate.
+//
+//dokimi:subject placement.Constraint new=newDrain options=cells
 type Drain struct{}
 
 var _ placement.Constraint = Drain{}

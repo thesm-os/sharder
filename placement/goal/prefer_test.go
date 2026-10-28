@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/tag"
@@ -149,38 +148,12 @@ func TestPrefer(t *testing.T) {
 	})
 }
 
-// TestPreferConformance checks the laws of placement.Goal against a Prefer.
-func TestPreferConformance(t *testing.T) {
-	t.Parallel()
+// preferSubject returns the prefer of the label zone from the shard label home, the
+// subject of the suite of placement.Goal. It stops h when NewPrefer refuses it.
+func preferSubject(h *placementtest.GoalHandle) *goal.Prefer {
 	g, err := goal.NewPrefer(goal.PreferConfig{Label: placementtest.Zone, From: placementtest.Home})
-	assert.NoError(t, err, "NewPrefer must accept the labels zone and home")
-	placementtest.AssertGoal(t, g)
-}
-
-// TestPreferAllocs checks that Delta of a Prefer does not allocate.
-func TestPreferAllocs(t *testing.T) {
-	g, err := goal.NewPrefer(goal.PreferConfig{Label: placementtest.Zone, From: placementtest.Home})
-	assert.NoError(t, err, "NewPrefer must accept the labels zone and home")
-	placementtest.AssertGoalAllocs(t, g)
-}
-
-// BenchmarkPrefer reports the cost of Delta of a Prefer, and fails when it allocates.
-func BenchmarkPrefer(b *testing.B) {
-	b.Run("Delta", func(b *testing.B) {
-		g := newPrefer(b)
-		st := newState(b, cell())
-		m := placement.Move{From: n1, To: n3, Shard: s3, Role: shard.RolePrimary}
-		var got float64
-
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		for c.Loop() {
-			got = g.Delta(st, m)
-		}
-
-		assert.Equal(b, got, -1.0, "the benchmark must measure a move to the preferred value")
-	})
+	assert.NoError(h, err, "NewPrefer must accept the labels zone and home")
+	return g
 }
 
 // newPrefer returns the goal prefer of the label region from the shard label home, and

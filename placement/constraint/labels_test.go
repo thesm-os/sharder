@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/errs"
 
@@ -266,43 +265,15 @@ func TestLabels(t *testing.T) {
 	})
 }
 
-// TestLabelsConformance checks the laws of placement.Constraint against a Labels.
-func TestLabelsConformance(t *testing.T) {
-	t.Parallel()
-	placementtest.AssertConstraint(t, newLabels(t,
+// labelsSubject returns the labels with three rules, the subject of the suite of
+// placement.Constraint: a node is in zone a, a node is not in zone b, and the node of a
+// secondary has a zone. It stops h when NewLabels refuses a rule.
+func labelsSubject(h *placementtest.ConstraintHandle) *constraint.Labels {
+	return newLabels(h,
+		constraint.Rule{Key: placementtest.Zone, Operator: constraint.In, Values: []string{zoneA}},
 		constraint.Rule{Key: placementtest.Zone, Operator: constraint.NotIn, Values: []string{zoneB}},
 		constraint.Rule{Key: placementtest.Zone, Operator: constraint.Exists, Role: shard.RoleSecondary},
-	))
-}
-
-// TestLabelsAllocs checks that Check of a Labels does not allocate.
-func TestLabelsAllocs(t *testing.T) {
-	placementtest.AssertConstraintAllocs(t, newLabels(t,
-		constraint.Rule{Key: placementtest.Zone, Operator: constraint.In, Values: []string{zoneA}},
-	))
-}
-
-// BenchmarkLabels reports the cost of Check of a Labels with two rules, and fails when
-// it allocates.
-func BenchmarkLabels(b *testing.B) {
-	b.Run("Check", func(b *testing.B) {
-		c := newLabels(b,
-			constraint.Rule{Key: region, Operator: constraint.In, Values: []string{eu, us}},
-			constraint.Rule{Key: jurisdiction, Operator: constraint.NotIn, Values: []string{us}},
-		)
-		st := newState(b, cell())
-		m := placement.Move{To: n2, Shard: s4, Role: shard.RolePrimary}
-		var err error
-
-		contract := bench.Start(b).MaxAllocs(0)
-		defer contract.End()
-
-		for contract.Loop() {
-			err = c.Check(st, m)
-		}
-
-		assert.NoError(b, err, "the benchmark must measure a move that passes both rules")
-	})
+	)
 }
 
 // newLabels returns the constraint labels with rules, and stops tb when NewLabels

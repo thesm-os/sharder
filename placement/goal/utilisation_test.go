@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/errs"
 
@@ -133,35 +132,10 @@ func TestUtilisation(t *testing.T) {
 	})
 }
 
-// TestUtilisationConformance checks the laws of placement.Goal against a Utilisation.
-func TestUtilisationConformance(t *testing.T) {
-	t.Parallel()
-	placementtest.AssertGoal(t, newUtilisation(t))
-}
-
-// TestUtilisationAllocs checks that Delta of a Utilisation does not allocate.
-func TestUtilisationAllocs(t *testing.T) {
-	placementtest.AssertGoalAllocs(t, newUtilisation(t))
-}
-
-// BenchmarkUtilisation reports the cost of Delta of a Utilisation, and fails when it
-// allocates.
-func BenchmarkUtilisation(b *testing.B) {
-	b.Run("Delta", func(b *testing.B) {
-		g := newUtilisation(b)
-		st := newState(b, cell())
-		m := placement.Move{From: n2, To: n3, Shard: s2, Role: shard.RolePrimary}
-		var got float64
-
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		for c.Loop() {
-			got = g.Delta(st, m)
-		}
-
-		assert.CloseTo(b, got, -0.1, tolerance, "the benchmark must measure a move that lowers the cost")
-	})
+// utilisationSubject returns the utilisation of the metric cpu above 0.5, the subject
+// of the suite of placement.Goal. It stops h when NewUtilisation refuses it.
+func utilisationSubject(h *placementtest.GoalHandle) *goal.Utilisation {
+	return newUtilisation(h)
 }
 
 // newUtilisation returns the goal utilisation of the metric cpu above 0.5, and stops tb

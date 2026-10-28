@@ -28,6 +28,8 @@ const StickinessName shard.StrategyName = "stickiness"
 // # Allocation contract
 //
 // Delta does not allocate.
+//
+//dokimi:subject placement.Goal new=newStickiness options=cells
 type Stickiness struct{}
 
 var _ placement.Goal = Stickiness{}

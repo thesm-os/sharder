@@ -48,6 +48,8 @@ func (c BalanceConfig) Validate() error {
 // # Allocation contract
 //
 // Delta does not allocate.
+//
+//dokimi:subject placement.Goal new=balanceSubject options=cells
 type Balance struct {
 	// metric is the name of the metric.
 	metric string

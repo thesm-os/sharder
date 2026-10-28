@@ -1270,9 +1270,8 @@ func TestState(t *testing.T) {
 	})
 }
 
-// TestStateAllocs checks the allocation contract of NewState, of the readers of a State
-// and of Apply. MaxAllocs counts the allocations of the whole process, so the test
-// does not run in parallel.
+// TestStateAllocs checks the allocation contract of NewState. MaxAllocs counts the
+// allocations of the whole process, so the test does not run in parallel.
 func TestStateAllocs(t *testing.T) {
 	t.Run("NewState", func(t *testing.T) {
 		// The fifth node of the cell is gone, so NewState adds it while it reads the
@@ -1282,69 +1281,9 @@ func TestStateAllocs(t *testing.T) {
 		expect.MaxAllocs(t, func() { _, _ = placement.NewState(in) }, 64,
 			"NewState must allocate 64 objects for a cell of 1,000 shards on 4 accepting nodes and a gone node")
 	})
-
-	st := newState(t, cell())
-	readers := []struct {
-		name string
-		call func()
-	}{
-		{name: "Shards", call: func() { _ = st.Shards() }},
-		{name: "Shard", call: func() { _, _ = st.Shard(s2) }},
-		{name: "Replicas", call: func() { _ = st.Replicas(s1) }},
-		{name: "ReplicasAt", call: func() { _ = st.ReplicasAt(0) }},
-		{name: "Initial", call: func() { _ = st.Initial(s1) }},
-		{name: "InitialAt", call: func() { _ = st.InitialAt(0) }},
-		{name: "InFlight", call: func() { _, _ = st.InFlight(s5) }},
-		{name: "ShardLoad", call: func() { _ = st.ShardLoad(s4) }},
-		{name: "Desired", call: func() { _ = st.Desired() }},
-		{name: "Max", call: func() { _ = st.Max(shard.RoleSecondary) }},
-		{name: "Nodes", call: func() { _ = st.Nodes() }},
-		{name: "Node", call: func() { _, _ = st.Node(n1) }},
-		{name: "Draining", call: func() { _ = st.Draining(d1) }},
-		{name: "OnNode", call: func() { _ = st.OnNode(n3) }},
-		{name: "RoleCount", call: func() { _ = st.RoleCount(n2, shard.RolePrimary) }},
-		{name: "RoleTotal", call: func() { _ = st.RoleTotal(shard.RolePrimary) }},
-		{name: "NodeLoad", call: func() { _ = st.NodeLoad(n1) }},
-		{name: "PeakLoad", call: func() { _ = st.PeakLoad(n1) }},
-		{name: "PeakCounts", call: func() { _ = st.PeakCounts(n1, s5) }},
-		{name: "PeakCount", call: func() { _ = st.PeakCount(n1) }},
-		{name: "PeakRoleCount", call: func() { _ = st.PeakRoleCount(n1, shard.RolePrimary) }},
-		{name: "Metrics", call: func() { _ = st.Metrics() }},
-		{name: "Capacity", call: func() { _, _ = st.Capacity(n1, placementtest.Bytes) }},
-		{name: "Utilisation", call: func() { _, _ = st.Utilisation(n1, placementtest.Bytes) }},
-		{name: "UtilisationSum", call: func() { _, _ = st.UtilisationSum(placementtest.Bytes) }},
-		{name: "TotalLoad", call: func() { _ = st.TotalLoad(placementtest.Bytes) }},
-		{name: "Labelled", call: func() { _ = st.Labelled(t0, n2) }},
-		{name: "LabelledNodes", call: func() { _ = st.LabelledNodes(t0) }},
-		{name: "Moved", call: func() { _ = st.Moved() }},
-		{name: "MovedNode", call: func() { _ = st.MovedNode(n1) }},
-		{name: "MovedShard", call: func() { _ = st.MovedShard(s1) }},
-	}
-	for _, tt := range readers {
-		t.Run(tt.name, func(t *testing.T) {
-			expect.MaxAllocs(t, tt.call, 0, tt.name+" must not allocate")
-		})
-	}
-
-	t.Run("Apply", func(t *testing.T) {
-		moving := newState(t, cell())
-		there := placement.Move{From: n1, To: n2, Shard: s3, Role: shard.RolePrimary}
-		back := placement.Move{From: n2, To: n1, Shard: s3, Role: shard.RolePrimary}
-		for _, m := range []placement.Move{{From: g1, To: n1, Shard: s3, Role: shard.RolePrimary}, there, back} {
-			assert.NoError(t, moving.Apply(m), "Apply must accept the moves that grow the lists of n1 and n2")
-		}
-		var err error
-		expect.MaxAllocs(t, func() {
-			if err = moving.Apply(there); err == nil {
-				err = moving.Apply(back)
-			}
-		}, 0, "Apply must not allocate for a shard and lists that earlier moves changed")
-		assert.NoError(t, err, "the test must measure two moves that Apply accepts")
-	})
 }
 
-// BenchmarkState reports the cost of NewState for cells of increasing size, and of the
-// readers that constraints and goals call for each evaluation.
+// BenchmarkState reports the cost of NewState for cells of increasing size.
 func BenchmarkState(b *testing.B) {
 	b.Run("NewState", func(b *testing.B) {
 		for _, shards := range []int{1_000, 10_000, 100_000} {
@@ -1362,75 +1301,6 @@ func BenchmarkState(b *testing.B) {
 				assert.NoError(b, err, "the benchmark must measure a state that NewState builds")
 			})
 		}
-	})
-
-	st := newState(b, scaled(10_000, 50))
-	sh := st.Shards()[len(st.Shards())/2]
-	node := st.Nodes()[len(st.Nodes())/2]
-
-	b.Run("Replicas", func(b *testing.B) {
-		var got []shard.Replica
-
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		for c.Loop() {
-			got = st.Replicas(sh)
-		}
-
-		assert.NotEmpty(b, got, "the benchmark must measure a placed shard")
-	})
-
-	b.Run("Utilisation", func(b *testing.B) {
-		var ok bool
-
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		for c.Loop() {
-			_, ok = st.Utilisation(node, placementtest.CPU)
-		}
-
-		assert.True(b, ok, "the benchmark must measure a node with a capacity")
-	})
-
-	b.Run("PeakCounts", func(b *testing.B) {
-		var got bool
-
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		for c.Loop() {
-			got = st.PeakCounts(st.Replicas(sh)[0].Node, sh)
-		}
-
-		assert.True(b, got, "the benchmark must measure a node that counts the shard")
-	})
-
-	b.Run("PeakCount", func(b *testing.B) {
-		var got int
-
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		for c.Loop() {
-			got = st.PeakCount(node)
-		}
-
-		assert.NotEqual(b, got, 0, "the benchmark must measure a node with shards")
-	})
-
-	b.Run("PeakRoleCount", func(b *testing.B) {
-		var got int
-
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		for c.Loop() {
-			got = st.PeakRoleCount(node, shard.RolePrimary)
-		}
-
-		assert.NotEqual(b, got, 0, "the benchmark must measure a node with primaries")
 	})
 }
 

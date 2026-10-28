@@ -50,6 +50,8 @@ func (c SpreadConfig) Validate() error {
 // # Allocation contract
 //
 // Delta does not allocate. Cost allocates a map of the values of the accepting nodes.
+//
+//dokimi:subject placement.Goal new=spreadSubject options=cells
 type Spread struct {
 	// label is the key of the label of nodes.
 	label string

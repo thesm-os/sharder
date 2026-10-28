@@ -186,6 +186,16 @@ func Inputs() prop.Generator[*placement.Input] {
 	})
 }
 
+// States returns a generator of the states of the inputs that Inputs generates. A value
+// shares its indexes with the state that placement.NewState built, so a caller reads it
+// through a pointer and does not apply a move to it. The generated calls of a suite
+// pass the address of each value to the subject.
+func States() prop.Generator[placement.State] {
+	return prop.Composite(func(c *prop.Case) placement.State {
+		return *newState(c, c.Draw(Inputs(), labelInput))
+	})
+}
+
 // drawNodes generates the accepting nodes of a cell in a generated order.
 func drawNodes(c *prop.Case) []shard.Node {
 	count := c.Draw(prop.Integer(0, maxNodes), labelNodes)

@@ -56,6 +56,8 @@ func (c UtilisationConfig) Validate() error {
 // # Allocation contract
 //
 // Delta does not allocate.
+//
+//dokimi:subject placement.Goal new=utilisationSubject options=cells
 type Utilisation struct {
 	// metric is the name of the metric.
 	metric string

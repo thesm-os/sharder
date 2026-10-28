@@ -98,9 +98,9 @@ func (c matchLabel) Check(st *placement.State, m placement.Move) error {
 	return nil
 }
 
-// TestConstraint checks the laws of a constraint against the constraints capacity and
-// match-label written again outside package constraint, and checks that they reject
-// the moves that the built-ins reject.
+// TestConstraint checks that the constraints capacity and match-label, written again
+// outside package constraint, pass the checks of the suite of placement.Constraint, and
+// that they reject the moves that the built-ins reject.
 func TestConstraint(t *testing.T) {
 	t.Parallel()
 
@@ -121,9 +121,9 @@ func TestConstraint(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			t.Run("AssertConstraint", func(t *testing.T) {
+			t.Run("RunConstraintSuite", func(t *testing.T) {
 				t.Parallel()
-				placementtest.AssertConstraint(t, tt.give)
+				placementtest.RunConstraintSuite(t, func() placement.Constraint { return tt.give })
 			})
 
 			t.Run("rejects the moves that the built-in rejects", func(t *testing.T) {
@@ -147,13 +147,16 @@ func TestConstraint(t *testing.T) {
 }
 
 // TestConstraintAllocs checks that Check of the constraints written again does not
-// allocate.
+// allocate on the cells of placementtest.Inputs.
 func TestConstraintAllocs(t *testing.T) {
 	t.Run("capacity", func(t *testing.T) {
-		placementtest.AssertConstraintAllocs(t, capacity{})
+		placementtest.RunConstraintBudgets(t, func(*placementtest.ConstraintHandle) capacity { return capacity{} },
+			placementtest.ConstraintCells...)
 	})
 
 	t.Run("match-label", func(t *testing.T) {
-		placementtest.AssertConstraintAllocs(t, matchLabel{key: placementtest.Tenant})
+		placementtest.RunConstraintBudgets(t,
+			func(*placementtest.ConstraintHandle) matchLabel { return matchLabel{key: placementtest.Tenant} },
+			placementtest.ConstraintCells...)
 	})
 }

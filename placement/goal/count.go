@@ -72,6 +72,8 @@ func (c CountConfig) Validate() error {
 // # Allocation contract
 //
 // Delta does not allocate.
+//
+//dokimi:subject placement.Goal new=countSubject options=cells
 type Count struct {
 	// weights is the weight of each role, indexed by the role.
 	weights [shard.RoleCount]float64

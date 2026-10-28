@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 
 	"go.thesmos.sh/sharder/placement"
 	"go.thesmos.sh/sharder/placement/goal"
@@ -109,32 +108,7 @@ func TestStickiness(t *testing.T) {
 	})
 }
 
-// TestStickinessConformance checks the laws of placement.Goal against a Stickiness.
-func TestStickinessConformance(t *testing.T) {
-	t.Parallel()
-	placementtest.AssertGoal(t, goal.Stickiness{})
-}
-
-// TestStickinessAllocs checks that Delta of a Stickiness does not allocate.
-func TestStickinessAllocs(t *testing.T) {
-	placementtest.AssertGoalAllocs(t, goal.Stickiness{})
-}
-
-// BenchmarkStickiness reports the cost of Delta of a Stickiness, and fails when it
-// allocates.
-func BenchmarkStickiness(b *testing.B) {
-	b.Run("Delta", func(b *testing.B) {
-		st := newState(b, cell())
-		m := placement.Move{From: n3, To: n4, Shard: s1, Role: shard.RoleSecondary}
-		var got float64
-
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		for c.Loop() {
-			got = goal.Stickiness{}.Delta(st, m)
-		}
-
-		assert.Equal(b, got, 1.0, "the benchmark must measure a move away from the start of the pass")
-	})
+// newStickiness returns the zero Stickiness, the subject of the suite of placement.Goal.
+func newStickiness(*placementtest.GoalHandle) goal.Stickiness {
+	return goal.Stickiness{}
 }

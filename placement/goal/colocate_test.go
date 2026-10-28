@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/errs"
 
@@ -141,35 +140,10 @@ func TestColocate(t *testing.T) {
 	})
 }
 
-// TestColocateConformance checks the laws of placement.Goal against a Colocate.
-func TestColocateConformance(t *testing.T) {
-	t.Parallel()
-	placementtest.AssertGoal(t, newColocate(t))
-}
-
-// TestColocateAllocs checks that Delta of a Colocate does not allocate.
-func TestColocateAllocs(t *testing.T) {
-	placementtest.AssertGoalAllocs(t, newColocate(t))
-}
-
-// BenchmarkColocate reports the cost of Delta of a Colocate, and fails when it
-// allocates.
-func BenchmarkColocate(b *testing.B) {
-	b.Run("Delta", func(b *testing.B) {
-		g := newColocate(b)
-		st := newState(b, cell())
-		m := placement.Move{From: n2, To: n4, Shard: s2, Role: shard.RolePrimary}
-		var got float64
-
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		for c.Loop() {
-			got = g.Delta(st, m)
-		}
-
-		assert.Equal(b, got, 1.0, "the benchmark must measure a move that spreads a group")
-	})
+// colocateSubject returns the colocate of the group tenant, the subject of the suite of
+// placement.Goal. It stops h when NewColocate refuses it.
+func colocateSubject(h *placementtest.GoalHandle) *goal.Colocate {
+	return newColocate(h)
 }
 
 // newColocate returns the goal colocate of the group tenant, and stops tb when

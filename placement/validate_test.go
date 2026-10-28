@@ -31,71 +31,6 @@ var (
 	errCrowded = errors.New("crowded")
 )
 
-// refusing is a constraint that rejects every replica on one node.
-type refusing struct {
-	// node is the node that the constraint rejects.
-	node shard.NodeID
-}
-
-// Name returns the name refusing.
-func (refusing) Name() shard.StrategyName {
-	return refusingName
-}
-
-// Check returns errRefused for a move to the node of r.
-func (r refusing) Check(_ *placement.State, m placement.Move) error {
-	if m.To == r.node {
-		return errRefused
-	}
-	return nil
-}
-
-// limit is a constraint that rejects a replica on a node whose peak load of cpu would
-// pass a limit.
-type limit struct {
-	// cpu is the most peak load of cpu of a node.
-	cpu float64
-}
-
-// Name returns the name limit.
-func (limit) Name() shard.StrategyName {
-	return limitName
-}
-
-// Check returns errFull when the peak load of cpu of To with the replica of m passes
-// the limit of l.
-func (l limit) Check(st *placement.State, m placement.Move) error {
-	if m.To == "" {
-		return nil
-	}
-	load := st.PeakLoad(m.To)[placementtest.CPU]
-	if !st.PeakCounts(m.To, m.Shard) {
-		load += st.ShardLoad(m.Shard)[placementtest.CPU]
-	}
-	if load > l.cpu {
-		return errFull
-	}
-	return nil
-}
-
-// crowded is a constraint that rejects a replica that a plan keeps on n1 while n1 has
-// more than one shard. It admits every other move.
-type crowded struct{}
-
-// Name returns the name crowded.
-func (crowded) Name() shard.StrategyName {
-	return crowdedName
-}
-
-// Check returns errCrowded for a move whose From and To are n1 while n1 has more than
-// one shard.
-func (crowded) Check(st *placement.State, m placement.Move) error {
-	if m.From == n1 && m.To == n1 && len(st.OnNode(n1)) > 1 {
-		return errCrowded
-	}
-	return nil
-}
-
 // TestValidate checks the checks of Validate and the violations that it returns.
 func TestValidate(t *testing.T) {
 	t.Parallel()
@@ -211,7 +146,7 @@ func TestValidate(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				_, err := placement.Validate(cell(), placement.Plan{Targets: tt.targets},
-					[]placement.Constraint{refusing{node: n2}, limit{cpu: 10}})
+					[]placement.Constraint{refusing(t, n2), limit(t, 10)})
 				for _, want := range tt.want {
 					expect.ErrorIs(t, err, want, "Validate must reject the plan with each error of the check")
 				}
@@ -244,7 +179,7 @@ func TestValidate(t *testing.T) {
 
 		t.Run("returns nil for each target of two that fits a node alone", func(t *testing.T) {
 			t.Parallel()
-			cs := []placement.Constraint{limit{cpu: 10}}
+			cs := []placement.Constraint{limit(t, 10)}
 			for _, target := range []map[shard.ID]placement.Target{
 				{s4: {Deficit: 2, Replicas: []shard.Replica{{Node: n1, Role: shard.RolePrimary}}}},
 				{s2: {Deficit: 1, Replicas: []shard.Replica{
@@ -327,7 +262,7 @@ func TestValidate(t *testing.T) {
 			_, err := placement.Validate(cell(), placement.Plan{Targets: map[shard.ID]placement.Target{
 				s3: {Deficit: 2, Replicas: []shard.Replica{{Node: n2, Role: shard.RolePrimary}}},
 				s4: {Deficit: 3},
-			}}, []placement.Constraint{limit{cpu: 10}})
+			}}, []placement.Constraint{limit(t, 10)})
 			assert.NoError(t, err, "Validate must accept targets with a deficit")
 		})
 
@@ -338,7 +273,7 @@ func TestValidate(t *testing.T) {
 					{Node: n1, Role: shard.RolePrimary},
 					{Node: n2, Role: shard.RoleSecondary},
 				}},
-			}}, []placement.Constraint{limit{cpu: 6}, refusing{node: n2}})
+			}}, []placement.Constraint{limit(t, 6), refusing(t, n2)})
 			assert.NoError(t, err, "Validate must not reject a plan for the replicas that it keeps")
 			assert.Equal(t, violations, []placement.Violation{
 				{Err: errRefused, Constraint: refusingName, Node: n2, Shard: s1, Role: shard.RoleSecondary},
@@ -350,15 +285,58 @@ func TestValidate(t *testing.T) {
 
 		t.Run("returns a violation of a kept replica on a node to which the plan adds a replica", func(t *testing.T) {
 			t.Parallel()
+			crowded := placementtest.NewConstraintStub(t,
+				placementtest.WithConstraintName(func() shard.StrategyName { return crowdedName }),
+				placementtest.WithConstraintCheck(func(st *placement.State, m placement.Move) error {
+					if m.From == n1 && m.To == n1 && len(st.OnNode(n1)) > 1 {
+						return errCrowded
+					}
+					return nil
+				}))
 			violations, err := placement.Validate(cell(), placement.Plan{Targets: map[shard.ID]placement.Target{
 				s4: {Deficit: 2, Replicas: []shard.Replica{{Node: n1, Role: shard.RolePrimary}}},
-			}}, []placement.Constraint{crowded{}})
+			}}, []placement.Constraint{crowded})
 			assert.NoError(t, err, "Validate must accept the replica that the plan adds")
 			assert.Equal(t, violations, []placement.Violation{
 				{Err: errCrowded, Constraint: crowdedName, Node: n1, Shard: s1, Role: shard.RolePrimary},
 			}, "Validate must check the kept replicas alone against the state of the whole plan")
 		})
 	})
+}
+
+// refusing returns a constraint named refusingName that rejects each move to the node n with
+// errRefused.
+func refusing(tb assert.TB, n shard.NodeID) *placementtest.ConstraintStub {
+	tb.Helper()
+	return placementtest.NewConstraintStub(tb,
+		placementtest.WithConstraintName(func() shard.StrategyName { return refusingName }),
+		placementtest.WithConstraintCheck(func(_ *placement.State, m placement.Move) error {
+			if m.To == n {
+				return errRefused
+			}
+			return nil
+		}))
+}
+
+// limit returns a constraint named limitName that rejects a replica with errFull when the
+// peak load of cpu of its node with the replica passes cpu.
+func limit(tb assert.TB, cpu float64) *placementtest.ConstraintStub {
+	tb.Helper()
+	return placementtest.NewConstraintStub(tb,
+		placementtest.WithConstraintName(func() shard.StrategyName { return limitName }),
+		placementtest.WithConstraintCheck(func(st *placement.State, m placement.Move) error {
+			if m.To == "" {
+				return nil
+			}
+			load := st.PeakLoad(m.To)[placementtest.CPU]
+			if !st.PeakCounts(m.To, m.Shard) {
+				load += st.ShardLoad(m.Shard)[placementtest.CPU]
+			}
+			if load > cpu {
+				return errFull
+			}
+			return nil
+		}))
 }
 
 // primaries returns a replica in the role primary on each node of nodes.

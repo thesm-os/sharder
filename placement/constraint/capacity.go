@@ -65,6 +65,8 @@ func (c CapacityConfig) Validate() error {
 // # Allocation contract
 //
 // Check does not allocate.
+//
+//dokimi:subject placement.Constraint new=capacitySubject options=cells
 type Capacity struct {
 	// headroom is the fraction of each capacity that the constraint keeps free.
 	headroom float64

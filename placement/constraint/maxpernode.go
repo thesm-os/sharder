@@ -66,6 +66,8 @@ func (c MaxPerNodeConfig) Validate() error {
 // # Allocation contract
 //
 // Check does not allocate.
+//
+//dokimi:subject placement.Constraint new=maxPerNodeSubject options=cells
 type MaxPerNode struct {
 	// max is the most replicas of a node.
 	max int

@@ -18,6 +18,10 @@ import (
 //
 // A Placer is safe for concurrent use. The controller of each cell runs the passes of
 // the cell one at a time, so cells place in parallel.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=placementtest/
 type Placer interface {
 	// Place returns the plan of one pass over in. It does not modify in.
 	//

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/errs"
 
@@ -170,36 +169,10 @@ func TestIsolation(t *testing.T) {
 	})
 }
 
-// TestIsolationConformance checks the laws of placement.Constraint against an
-// Isolation.
-func TestIsolationConformance(t *testing.T) {
-	t.Parallel()
-	placementtest.AssertConstraint(t, newIsolation(t, 1))
-}
-
-// TestIsolationAllocs checks that Check of an Isolation does not allocate.
-func TestIsolationAllocs(t *testing.T) {
-	placementtest.AssertConstraintAllocs(t, newIsolation(t, 1))
-}
-
-// BenchmarkIsolation reports the cost of Check of an Isolation, and fails when it
-// allocates.
-func BenchmarkIsolation(b *testing.B) {
-	b.Run("Check", func(b *testing.B) {
-		c := newIsolation(b, 1)
-		st := newState(b, cell())
-		m := placement.Move{From: n1, To: n2, Shard: s6, Role: shard.RolePrimary}
-		var err error
-
-		contract := bench.Start(b).MaxAllocs(0)
-		defer contract.End()
-
-		for contract.Loop() {
-			err = c.Check(st, m)
-		}
-
-		assert.NoError(b, err, "the benchmark must measure a move that isolates the replicas")
-	})
+// isolationSubject returns the isolation of the label zone with a Max of 1, the subject
+// of the suite of placement.Constraint. It stops h when NewIsolation refuses it.
+func isolationSubject(h *placementtest.ConstraintHandle) *constraint.Isolation {
+	return newIsolation(h, 1)
 }
 
 // newIsolation returns the constraint isolation of the label zone with the Max most,

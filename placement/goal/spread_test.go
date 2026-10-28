@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/errs"
 
@@ -215,35 +214,10 @@ func TestSpread(t *testing.T) {
 	})
 }
 
-// TestSpreadConformance checks the laws of placement.Goal against a Spread.
-func TestSpreadConformance(t *testing.T) {
-	t.Parallel()
-	placementtest.AssertGoal(t, newSpread(t))
-}
-
-// TestSpreadAllocs checks that Delta of a Spread does not allocate.
-func TestSpreadAllocs(t *testing.T) {
-	placementtest.AssertGoalAllocs(t, newSpread(t))
-}
-
-// BenchmarkSpread reports the cost of Delta of a Spread for a shard of three replicas,
-// and fails when it allocates.
-func BenchmarkSpread(b *testing.B) {
-	b.Run("Delta", func(b *testing.B) {
-		g := newSpread(b)
-		st := newState(b, cell())
-		m := placement.Move{From: n3, To: n4, Shard: s1, Role: shard.RoleSecondary}
-		var got float64
-
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		for c.Loop() {
-			got = g.Delta(st, m)
-		}
-
-		assert.Equal(b, got, -1.0, "the benchmark must measure a move that spreads the replicas")
-	})
+// spreadSubject returns the spread of the label zone, the subject of the suite of
+// placement.Goal. It stops h when NewSpread refuses it.
+func spreadSubject(h *placementtest.GoalHandle) *goal.Spread {
+	return newSpread(h)
 }
 
 // newSpread returns the goal spread of the label zone, and stops tb when NewSpread

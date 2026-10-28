@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/tag"
@@ -145,36 +144,10 @@ func TestMatchLabel(t *testing.T) {
 	})
 }
 
-// TestMatchLabelConformance checks the laws of placement.Constraint against a
-// MatchLabel.
-func TestMatchLabelConformance(t *testing.T) {
-	t.Parallel()
-	placementtest.AssertConstraint(t, newMatchLabel(t, placementtest.Home))
-}
-
-// TestMatchLabelAllocs checks that Check of a MatchLabel does not allocate.
-func TestMatchLabelAllocs(t *testing.T) {
-	placementtest.AssertConstraintAllocs(t, newMatchLabel(t, placementtest.Home))
-}
-
-// BenchmarkMatchLabel reports the cost of Check of a MatchLabel, and fails when it
-// allocates.
-func BenchmarkMatchLabel(b *testing.B) {
-	b.Run("Check", func(b *testing.B) {
-		c := newMatchLabel(b, jurisdiction)
-		st := newState(b, cell())
-		m := placement.Move{To: n2, Shard: s1, Role: shard.RoleSecondary}
-		var err error
-
-		contract := bench.Start(b).MaxAllocs(0)
-		defer contract.End()
-
-		for contract.Loop() {
-			err = c.Check(st, m)
-		}
-
-		assert.NoError(b, err, "the benchmark must measure a node with the value of the shard")
-	})
+// matchLabelSubject returns the match-label of the label home, the subject of the suite
+// of placement.Constraint. It stops h when NewMatchLabel refuses it.
+func matchLabelSubject(h *placementtest.ConstraintHandle) *constraint.MatchLabel {
+	return newMatchLabel(h, placementtest.Home)
 }
 
 // newMatchLabel returns the constraint match-label of label, and stops tb when

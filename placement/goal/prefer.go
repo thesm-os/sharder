@@ -62,6 +62,8 @@ func (c PreferConfig) Validate() error {
 // # Allocation contract
 //
 // Delta does not allocate.
+//
+//dokimi:subject placement.Goal new=preferSubject options=cells
 type Prefer struct {
 	// label is the key of the label of nodes.
 	label string

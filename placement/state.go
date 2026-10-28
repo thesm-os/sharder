@@ -71,6 +71,11 @@ import (
 // the first time. It also allocates when it inserts a shard into a full list of a
 // node. A list grows geometrically, as append grows a slice, so k inserts into one list
 // allocate O(log k) times. The other methods do not allocate.
+//
+//dokimi:stub field={{.Method}}Stub
+//dokimi:suite
+//dokimi:out path=placementtest/
+//dokimi:subject State new=newLargeState options=stateOptions
 type State struct {
 	// in is the input that NewState indexed.
 	in *Input
@@ -244,6 +249,8 @@ func NewState(in *Input) (*State, error) {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Shards() []shard.ID {
 	return st.ids
 }
@@ -254,6 +261,8 @@ func (st *State) Shards() []shard.ID {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Shard(id shard.ID) (partition.Shard, bool) {
 	i, ok := st.position(id)
 	if !ok {
@@ -268,6 +277,8 @@ func (st *State) Shard(id shard.ID) (partition.Shard, bool) {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Replicas(id shard.ID) []shard.Replica {
 	i, ok := st.position(id)
 	if !ok {
@@ -283,7 +294,12 @@ func (st *State) Replicas(id shard.ID) []shard.Replica {
 // # Allocation contract
 //
 // Zero alloc.
-func (st *State) ReplicasAt(i int) []shard.Replica {
+//
+//dokimi:budget allocs=0
+func (st *State) ReplicasAt(
+	//dokimi:sample value=0
+	i int,
+) []shard.Replica {
 	return st.shards[i].replicas
 }
 
@@ -294,6 +310,8 @@ func (st *State) ReplicasAt(i int) []shard.Replica {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Initial(id shard.ID) []shard.Replica {
 	i, ok := st.position(id)
 	if !ok {
@@ -308,7 +326,12 @@ func (st *State) Initial(id shard.ID) []shard.Replica {
 // # Allocation contract
 //
 // Zero alloc.
-func (st *State) InitialAt(i int) []shard.Replica {
+//
+//dokimi:budget allocs=0
+func (st *State) InitialAt(
+	//dokimi:sample value=0
+	i int,
+) []shard.Replica {
 	return st.shards[i].initial
 }
 
@@ -318,6 +341,8 @@ func (st *State) InitialAt(i int) []shard.Replica {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) InFlight(id shard.ID) (InFlight, bool) {
 	i, ok := st.position(id)
 	if !ok || !st.shards[i].frozen {
@@ -333,6 +358,8 @@ func (st *State) InFlight(id shard.ID) (InFlight, bool) {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) ShardLoad(id shard.ID) shard.Load {
 	i, ok := st.position(id)
 	if !ok {
@@ -347,6 +374,8 @@ func (st *State) ShardLoad(id shard.ID) shard.Load {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Desired() int {
 	return st.desired
 }
@@ -357,6 +386,8 @@ func (st *State) Desired() int {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Max(r shard.Role) int {
 	if !r.IsValid() {
 		return 0
@@ -369,6 +400,8 @@ func (st *State) Max(r shard.Role) int {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Nodes() []shard.NodeID {
 	return st.accepting
 }
@@ -379,6 +412,8 @@ func (st *State) Nodes() []shard.NodeID {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Node(n shard.NodeID) (shard.Node, bool) {
 	x, ok := st.nodeIndex[n]
 	if !ok || st.nodes[x].node == nil {
@@ -392,6 +427,8 @@ func (st *State) Node(n shard.NodeID) (shard.Node, bool) {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Draining(n shard.NodeID) bool {
 	x, ok := st.nodeIndex[n]
 	return ok && st.nodes[x].draining
@@ -402,6 +439,8 @@ func (st *State) Draining(n shard.NodeID) bool {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) OnNode(n shard.NodeID) []shard.ID {
 	x, ok := st.nodeIndex[n]
 	if !ok {
@@ -415,6 +454,8 @@ func (st *State) OnNode(n shard.NodeID) []shard.ID {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) RoleCount(n shard.NodeID, r shard.Role) int {
 	x, ok := st.nodeIndex[n]
 	if !ok || !r.IsValid() {
@@ -428,6 +469,8 @@ func (st *State) RoleCount(n shard.NodeID, r shard.Role) int {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) RoleTotal(r shard.Role) int {
 	if !r.IsValid() {
 		return 0
@@ -442,6 +485,8 @@ func (st *State) RoleTotal(r shard.Role) int {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) NodeLoad(n shard.NodeID) shard.Load {
 	x, ok := st.nodeIndex[n]
 	if !ok {
@@ -457,6 +502,8 @@ func (st *State) NodeLoad(n shard.NodeID) shard.Load {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) PeakLoad(n shard.NodeID) shard.Load {
 	x, ok := st.nodeIndex[n]
 	if !ok {
@@ -473,6 +520,8 @@ func (st *State) PeakLoad(n shard.NodeID) shard.Load {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) PeakCounts(n shard.NodeID, id shard.ID) bool {
 	i, ok := st.position(id)
 	if !ok || n == "" {
@@ -499,6 +548,8 @@ func (st *State) PeakCounts(n shard.NodeID, id shard.ID) bool {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) PeakCount(n shard.NodeID) int {
 	x, ok := st.nodeIndex[n]
 	if !ok {
@@ -516,6 +567,8 @@ func (st *State) PeakCount(n shard.NodeID) int {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) PeakRoleCount(n shard.NodeID, r shard.Role) int {
 	x, ok := st.nodeIndex[n]
 	if !ok || !r.IsValid() {
@@ -530,6 +583,8 @@ func (st *State) PeakRoleCount(n shard.NodeID, r shard.Role) int {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Metrics() []Metric {
 	return st.metrics
 }
@@ -541,6 +596,8 @@ func (st *State) Metrics() []Metric {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Capacity(n shard.NodeID, metric string) (float64, bool) {
 	x, ok := st.nodeIndex[n]
 	k := slices.IndexFunc(st.metrics, func(m Metric) bool { return m.Name == metric })
@@ -557,6 +614,8 @@ func (st *State) Capacity(n shard.NodeID, metric string) (float64, bool) {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Utilisation(n shard.NodeID, metric string) (float64, bool) {
 	c, ok := st.Capacity(n, metric)
 	//dokimi:mutate-skip lcr-right: Capacity returns 0 with false, so c <= 0 is also true when ok is false
@@ -574,6 +633,8 @@ func (st *State) Utilisation(n shard.NodeID, metric string) (float64, bool) {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) UtilisationSum(metric string) (float64, int) {
 	k := slices.IndexFunc(st.metrics, func(m Metric) bool { return m.Name == metric })
 	if k < 0 {
@@ -589,6 +650,8 @@ func (st *State) UtilisationSum(metric string) (float64, int) {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) TotalLoad(metric string) float64 {
 	k := slices.IndexFunc(st.metrics, func(m Metric) bool { return m.Name == metric })
 	if k < 0 {
@@ -603,6 +666,8 @@ func (st *State) TotalLoad(metric string) float64 {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Labelled(t tag.Tag, n shard.NodeID) int {
 	x, ok := st.nodeIndex[n]
 	if !ok {
@@ -617,6 +682,8 @@ func (st *State) Labelled(t tag.Tag, n shard.NodeID) int {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) LabelledNodes(t tag.Tag) int {
 	return int(st.labelledNodes[t])
 }
@@ -626,6 +693,8 @@ func (st *State) LabelledNodes(t tag.Tag) int {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) Moved() int {
 	return st.moved
 }
@@ -636,6 +705,8 @@ func (st *State) Moved() int {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) MovedNode(n shard.NodeID) int {
 	x, ok := st.nodeIndex[n]
 	if !ok {
@@ -650,6 +721,8 @@ func (st *State) MovedNode(n shard.NodeID) int {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (st *State) MovedShard(id shard.ID) int {
 	i, ok := st.position(id)
 	if !ok {

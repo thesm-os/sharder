@@ -44,11 +44,17 @@ type Move struct {
 // # Allocation contract
 //
 // Check does not allocate.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=placementtest/
 type Constraint interface {
 	// Name returns the registered name of the constraint, such as "capacity".
 	Name() shard.StrategyName
 	// Check returns nil when the constraint admits m in st, and otherwise an error
 	// that explains why not. It does not modify st.
+	//
+	//dokimi:budget allocs=0
 	Check(st *State, m Move) error
 }
 
@@ -64,6 +70,10 @@ type Constraint interface {
 // # Allocation contract
 //
 // Delta does not allocate.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=placementtest/
 type Goal interface {
 	// Name returns the registered name of the goal, such as "balance".
 	Name() shard.StrategyName
@@ -71,5 +81,7 @@ type Goal interface {
 	Cost(st *State) float64
 	// Delta returns the cost after m minus the cost before m, without applying m. It
 	// returns 0 for a move whose From equals its To. It does not modify st.
+	//
+	//dokimi:budget allocs=0
 	Delta(st *State, m Move) float64
 }

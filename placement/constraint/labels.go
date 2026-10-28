@@ -125,6 +125,8 @@ func (c LabelsConfig) Validate() error {
 // # Allocation contract
 //
 // Check does not allocate.
+//
+//dokimi:subject placement.Constraint new=labelsSubject options=cells
 type Labels struct {
 	// rules lists the rules, which NewLabels copied.
 	rules []Rule

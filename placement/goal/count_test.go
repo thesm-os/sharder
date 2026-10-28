@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/errs"
 
@@ -200,34 +199,10 @@ func TestCount(t *testing.T) {
 	})
 }
 
-// TestCountConformance checks the laws of placement.Goal against a Count.
-func TestCountConformance(t *testing.T) {
-	t.Parallel()
-	placementtest.AssertGoal(t, newCount(t, map[shard.Role]float64{shard.RolePrimary: 2, shard.RoleSecondary: 0.5}))
-}
-
-// TestCountAllocs checks that Delta of a Count does not allocate.
-func TestCountAllocs(t *testing.T) {
-	placementtest.AssertGoalAllocs(t, newCount(t, nil))
-}
-
-// BenchmarkCount reports the cost of Delta of a Count, and fails when it allocates.
-func BenchmarkCount(b *testing.B) {
-	b.Run("Delta", func(b *testing.B) {
-		g := newCount(b, nil)
-		st := newState(b, cell())
-		m := placement.Move{From: n1, To: n4, Shard: s3, Role: shard.RolePrimary}
-		var got float64
-
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		for c.Loop() {
-			got = g.Delta(st, m)
-		}
-
-		assert.CloseTo(b, got, -0.5, tolerance, "the benchmark must measure a move that lowers the variance")
-	})
+// countSubject returns the count that weighs a primary twice and a secondary half, the
+// subject of the suite of placement.Goal. It stops h when NewCount refuses it.
+func countSubject(h *placementtest.GoalHandle) *goal.Count {
+	return newCount(h, map[shard.Role]float64{shard.RolePrimary: 2, shard.RoleSecondary: 0.5})
 }
 
 // newCount returns the goal count with weights, and stops tb when NewCount refuses

@@ -53,6 +53,8 @@ func (c ColocateConfig) Validate() error {
 // # Allocation contract
 //
 // Delta does not allocate. Cost allocates the set of the groups.
+//
+//dokimi:subject placement.Goal new=colocateSubject options=cells
 type Colocate struct {
 	// group is the key of the label of shards.
 	group string

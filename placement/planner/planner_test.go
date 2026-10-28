@@ -94,6 +94,20 @@ const (
 	failed shape = 4
 )
 
+// constrainedPlanner is a planner with the constraints that its plans obey, the subject
+// of the suite of placement.Placer.
+type constrainedPlanner struct {
+	*planner.Planner
+
+	// constraints are the constraints of the planner.
+	constraints []placement.Constraint
+}
+
+// Constraints returns the constraints of the planner.
+func (p constrainedPlanner) Constraints() []placement.Constraint {
+	return p.constraints
+}
+
 // TestPlanner checks New, Schedule, and the input that Place refuses.
 func TestPlanner(t *testing.T) {
 	t.Parallel()
@@ -221,12 +235,15 @@ func TestPlanner(t *testing.T) {
 	})
 }
 
-// TestPlannerConformance checks the laws of placement.Placer against a planner with
-// every built-in constraint but match-label and every built-in goal.
+// TestPlannerConformance checks that a planner with every built-in constraint but
+// match-label and every built-in goal passes the checks of the suite of
+// placement.Placer.
 func TestPlannerConformance(t *testing.T) {
 	t.Parallel()
-	cs, gs := everyStrategy(t)
-	placementtest.AssertPlacer(t, newPlanner(t, defaults(), cs, gs...), cs)
+	placementtest.RunPlacerSuiteFromHandle(t, func(h *placementtest.PlacerHandle) constrainedPlanner {
+		cs, gs := everyStrategy(h)
+		return constrainedPlanner{Planner: newPlanner(h, defaults(), cs, gs...), constraints: cs}
+	})
 }
 
 // BenchmarkPlanner reports the cost of a pass at increasing sizes of a cell, in the

@@ -50,6 +50,8 @@ func (c MatchLabelConfig) Validate() error {
 // # Allocation contract
 //
 // Check does not allocate.
+//
+//dokimi:subject placement.Constraint new=matchLabelSubject options=cells
 type MatchLabel struct {
 	// label is the key of the label.
 	label string

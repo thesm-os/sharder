@@ -61,6 +61,8 @@ func (c IsolationConfig) Validate() error {
 // # Allocation contract
 //
 // Check does not allocate.
+//
+//dokimi:subject placement.Constraint new=isolationSubject options=cells
 type Isolation struct {
 	// label is the key of the label of nodes.
 	label string

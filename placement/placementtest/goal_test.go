@@ -65,15 +65,15 @@ func (stickiness) Delta(st *placement.State, m placement.Move) float64 {
 	return delta
 }
 
-// TestGoal checks the laws of a goal against the goal stickiness written again outside
-// package goal, and its deltas for moves away from the start of the pass, back to it,
-// and between two other nodes.
+// TestGoal checks that the goal stickiness, written again outside package goal, passes
+// the checks of the suite of placement.Goal, and checks its deltas for moves away from
+// the start of the pass, back to it, and between two other nodes.
 func TestGoal(t *testing.T) {
 	t.Parallel()
 
-	t.Run("AssertGoal", func(t *testing.T) {
+	t.Run("RunGoalSuite", func(t *testing.T) {
 		t.Parallel()
-		placementtest.AssertGoal(t, stickiness{})
+		placementtest.RunGoalSuite(t, func() stickiness { return stickiness{} })
 	})
 
 	t.Run("Delta", func(t *testing.T) {
@@ -106,7 +106,8 @@ func TestGoal(t *testing.T) {
 }
 
 // TestGoalAllocs checks that Delta of the goal stickiness written again does not
-// allocate.
+// allocate on the cells of placementtest.Inputs.
 func TestGoalAllocs(t *testing.T) {
-	placementtest.AssertGoalAllocs(t, stickiness{})
+	placementtest.RunGoalBudgets(t, func(*placementtest.GoalHandle) stickiness { return stickiness{} },
+		placementtest.GoalCells...)
 }

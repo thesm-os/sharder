@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/errs"
 
@@ -215,36 +214,10 @@ func TestMaxPerNode(t *testing.T) {
 	})
 }
 
-// TestMaxPerNodeConformance checks the laws of placement.Constraint against a
-// MaxPerNode.
-func TestMaxPerNodeConformance(t *testing.T) {
-	t.Parallel()
-	placementtest.AssertConstraint(t, newMaxPerNode(t, 2, shard.RoleNone))
-}
-
-// TestMaxPerNodeAllocs checks that Check of a MaxPerNode does not allocate.
-func TestMaxPerNodeAllocs(t *testing.T) {
-	placementtest.AssertConstraintAllocs(t, newMaxPerNode(t, 1, shard.RoleSecondary))
-}
-
-// BenchmarkMaxPerNode reports the cost of Check of a MaxPerNode, and fails when it
-// allocates.
-func BenchmarkMaxPerNode(b *testing.B) {
-	b.Run("Check", func(b *testing.B) {
-		c := newMaxPerNode(b, 3, shard.RoleNone)
-		st := newState(b, cell())
-		m := placement.Move{To: n3, Shard: s4, Role: shard.RolePrimary}
-		var err error
-
-		contract := bench.Start(b).MaxAllocs(0)
-		defer contract.End()
-
-		for contract.Loop() {
-			err = c.Check(st, m)
-		}
-
-		assert.NoError(b, err, "the benchmark must measure a move up to the Max")
-	})
+// maxPerNodeSubject returns the max-per-node with a Max of 1 secondary, the subject of
+// the suite of placement.Constraint. It stops h when NewMaxPerNode refuses it.
+func maxPerNodeSubject(h *placementtest.ConstraintHandle) *constraint.MaxPerNode {
+	return newMaxPerNode(h, 1, shard.RoleSecondary)
 }
 
 // newMaxPerNode returns the constraint max-per-node with the Max most and role, and
