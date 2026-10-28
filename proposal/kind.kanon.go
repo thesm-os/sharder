@@ -14,8 +14,9 @@ const (
 )
 
 // ValidateKanon returns the error of x.valid. kanon encodes a value of
-// OperationKind as a value of its underlying type uint8 and calls ValidateKanon
-// on every value of OperationKind that it encodes or decodes.
+// OperationKind as a value of its underlying type uint8, ahead of the text
+// methods of OperationKind, and calls ValidateKanon on every value of
+// OperationKind that it encodes or decodes.
 func (x OperationKind) ValidateKanon() error {
 	return x.valid()
 }

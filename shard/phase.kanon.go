@@ -14,8 +14,8 @@ const (
 )
 
 // ValidateKanon returns the error of x.valid. kanon encodes a value of Phase as
-// a value of its underlying type uint8 and calls ValidateKanon on every value
-// of Phase that it encodes or decodes.
+// a value of its underlying type uint8, ahead of the text methods of Phase, and
+// calls ValidateKanon on every value of Phase that it encodes or decodes.
 func (x Phase) ValidateKanon() error {
 	return x.valid()
 }

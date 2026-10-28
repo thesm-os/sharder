@@ -14,8 +14,8 @@ const (
 )
 
 // ValidateKanon returns the error of x.valid. kanon encodes a value of Path as
-// a value of its underlying type uint8 and calls ValidateKanon on every value
-// of Path that it encodes or decodes.
+// a value of its underlying type uint8, ahead of the text methods of Path, and
+// calls ValidateKanon on every value of Path that it encodes or decodes.
 func (x Path) ValidateKanon() error {
 	return x.valid()
 }

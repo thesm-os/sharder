@@ -14,8 +14,8 @@ const (
 )
 
 // ValidateKanon returns the error of x.valid. kanon encodes a value of Impact
-// as a value of its underlying type uint8 and calls ValidateKanon on every
-// value of Impact that it encodes or decodes.
+// as a value of its underlying type uint8, ahead of the text methods of Impact,
+// and calls ValidateKanon on every value of Impact that it encodes or decodes.
 func (x Impact) ValidateKanon() error {
 	return x.valid()
 }
