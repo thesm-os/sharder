@@ -24,6 +24,7 @@ import (
 	"go.thesmos.sh/sharder/internal/follow"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/shard"
+	"go.thesmos.sh/sharder/shard/shardtest"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
 )
@@ -712,11 +713,11 @@ func TestFollower(t *testing.T) {
 // starts at the position n, so the placements of the tests are in position order by n.
 func placement(n int, on shard.NodeID) shard.Placement {
 	pos := binary.BigEndian.AppendUint32(nil, uint32(n))
-	return shard.Placement{
-		Shard:    shard.ID{ID128: id.ID128{0: tagShard, 12: pos[0], 13: pos[1], 14: pos[2], 15: pos[3]}},
-		Range:    shard.Range{Start: pos},
-		Replicas: []shard.Replica{{Node: on, Role: shard.RolePrimary}},
-	}
+	return shardtest.NewPlacementBuilder().
+		WithShard(shard.ID{ID128: id.ID128{0: tagShard, 12: pos[0], 13: pos[1], 14: pos[2], 15: pos[3]}}).
+		WithRange(shard.Range{Start: pos}).
+		WithReplicas(shard.Replica{Node: on, Role: shard.RolePrimary}).
+		Build()
 }
 
 // follows runs the steps of the case c over a Follower of node. The steps commit, deliver

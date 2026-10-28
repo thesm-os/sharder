@@ -31,7 +31,6 @@ import (
 	"go.thesmos.sh/sharder/partition/xxhash64"
 	"go.thesmos.sh/sharder/placement"
 	"go.thesmos.sh/sharder/placement/constraint"
-	"go.thesmos.sh/sharder/placement/planner"
 	"go.thesmos.sh/sharder/proposal"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
@@ -868,17 +867,17 @@ const lockDelay = 2 * time.Second
 
 // strict sets the planner of the spec to at most one replica per node.
 func strict(s *setup) {
-	s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(strictConfig)}
+	s.spec.Placement = planned(strictConfig)
 }
 
 // paired sets the planner of the spec to pairedConfig.
 func paired(s *setup) {
-	s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(pairedConfig)}
+	s.spec.Placement = planned(pairedConfig)
 }
 
 // bounded sets the planner of the spec to boundedConfig.
 func bounded(s *setup) {
-	s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(boundedConfig)}
+	s.spec.Placement = planned(boundedConfig)
 }
 
 // unavailable sets maxUnavailable of the spec to zero.

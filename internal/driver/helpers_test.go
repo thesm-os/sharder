@@ -24,6 +24,7 @@ import (
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
+	"go.thesmos.sh/sharder/store/storetest"
 )
 
 // waitFor bounds each wait of a test for an event or a result. Inside a bubble of
@@ -233,11 +234,19 @@ func logged(logs *telemetrytest.Records) ([]slog.Level, []error) {
 	return levels, errs
 }
 
+// mutation returns the mutation of the commit seq of the writer of the tests, with the
+// placements puts.
+func mutation(seq uint64, puts ...shard.Placement) *store.Mutation {
+	return new(storetest.NewMutationBuilder().
+		WithID(store.CommitID{Incarnation: inc, Term: term, Seq: seq}).
+		WithPut(puts...).
+		Build())
+}
+
 // commit applies the commit seq to the scope of the tests in s, with the placements puts,
 // and fails t when the store refuses it. The commit expects the generation seq-1.
 func commit(t *testing.T, s *memory.Store, seq uint64, puts ...shard.Placement) {
 	t.Helper()
-	m := &store.Mutation{ID: store.CommitID{Incarnation: inc, Term: term, Seq: seq}, Put: puts}
-	_, err := s.Writer(scope, inc, term).Commit(t.Context(), epoch.Epoch(seq-1), m)
+	_, err := s.Writer(scope, inc, term).Commit(t.Context(), epoch.Epoch(seq-1), mutation(seq, puts...))
 	assert.NoError(t, err, "the store applies the commit")
 }

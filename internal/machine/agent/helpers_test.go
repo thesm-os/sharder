@@ -34,6 +34,7 @@ import (
 	"go.thesmos.sh/sharder/partition/fixedslots"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
+	"go.thesmos.sh/sharder/shard/shardtest"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
 )
@@ -753,13 +754,13 @@ func record(e epoch.Epoch) *shard.Cell {
 // epoch e. Its range starts at the bytes of sid, so the placements of two shards of the
 // tests never start at one position.
 func placement(sid shard.ID, e epoch.Epoch, n shard.NodeID) shard.Placement {
-	return shard.Placement{
-		Shard:    sid,
-		Range:    shard.Range{Start: slices.Clone(sid.ID128[:])},
-		Epoch:    e,
-		Reserved: e,
-		Replicas: []shard.Replica{{Node: n, Role: shard.RolePrimary}},
-	}
+	return shardtest.NewPlacementBuilder().
+		WithShard(sid).
+		WithRange(shard.Range{Start: slices.Clone(sid.ID128[:])}).
+		WithEpoch(e).
+		WithReserved(e).
+		WithReplicas(shard.Replica{Node: n, Role: shard.RolePrimary}).
+		Build()
 }
 
 // transition returns the transition of the operation op in the phase phase, from another

@@ -371,10 +371,7 @@ func TestStore(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Commit{
-					Mutation: &store.Mutation{
-						ID:  store.CommitID{Incarnation: inc, Term: term, Seq: 1},
-						Put: []shard.Placement{first},
-					},
+					Mutation:    mutation(1, first),
 					Scope:       scope,
 					Token:       1,
 					Term:        term,
@@ -392,7 +389,7 @@ func TestStore(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t, performing(machine.Commit{
-					Mutation:    &store.Mutation{ID: store.CommitID{Incarnation: inc, Term: term, Seq: 1}},
+					Mutation:    mutation(1),
 					Scope:       scope,
 					Token:       1,
 					Term:        term,

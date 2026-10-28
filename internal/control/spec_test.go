@@ -11,7 +11,6 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
-	"go.thesmos.sh/core/epoch"
 
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
@@ -22,7 +21,6 @@ import (
 	"go.thesmos.sh/sharder/partition/fixedslots"
 	"go.thesmos.sh/sharder/placement"
 	"go.thesmos.sh/sharder/placement/placementtest"
-	"go.thesmos.sh/sharder/placement/planner"
 	"go.thesmos.sh/sharder/shard"
 )
 
@@ -124,7 +122,7 @@ func TestSpec(t *testing.T) {
 					s.extend = func(tb assert.TB, r *config.Registry) error {
 						return config.Register(r, config.Constraint, fragile(tb, builtin.MaxPerNode()))
 					}
-					s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(fragileConstraint)}
+					s.spec.Placement = planned(fragileConstraint)
 				},
 			},
 			{
@@ -133,7 +131,7 @@ func TestSpec(t *testing.T) {
 					s.extend = func(tb assert.TB, r *config.Registry) error {
 						return config.Register(r, config.Goal, fragile(tb, builtin.Count()))
 					}
-					s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(fragileGoal)}
+					s.spec.Placement = planned(fragileGoal)
 				},
 			},
 			{
@@ -170,16 +168,6 @@ func TestSpec(t *testing.T) {
 			})
 		}
 	})
-}
-
-// testSpec returns the spec of the tests at the version v.
-func testSpec(v epoch.Epoch) config.Spec {
-	return config.Spec{
-		Namespace:    namespace,
-		Preset:       builtin.ExclusiveWorker,
-		Partitioning: config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)},
-		Version:      v,
-	}
 }
 
 // selects returns an option that registers a strategy with register, and selects it as

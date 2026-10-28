@@ -4,7 +4,6 @@
 package control_test
 
 import (
-	"encoding/json"
 	"errors"
 	"maps"
 	"slices"
@@ -15,10 +14,8 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/errs"
 
-	"go.thesmos.sh/sharder/config"
 	"go.thesmos.sh/sharder/internal/control"
 	"go.thesmos.sh/sharder/internal/machine"
-	"go.thesmos.sh/sharder/placement/planner"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
@@ -569,13 +566,7 @@ func refuses(n shard.Node) func(r *protocol.Request) error {
 // quiet sets the planner of the spec to the goal count without a pass on a change of the
 // membership.
 func quiet(s *setup) {
-	s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(quietConfig)}
-}
-
-// restarted returns n at its next incarnation.
-func restarted(n shard.Node) shard.Node {
-	n.Incarnation++
-	return n
+	s.spec.Placement = planned(quietConfig)
 }
 
 // report returns a report of the live incarnation of n with the sequence seq and the

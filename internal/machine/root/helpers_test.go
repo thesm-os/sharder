@@ -21,6 +21,7 @@ import (
 	"go.thesmos.sh/sharder/budget"
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/config/configtest"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/machine/root"
 	"go.thesmos.sh/sharder/membership"
@@ -382,11 +383,11 @@ func (h *harness) submitCall(tb assert.TB, p *proposal.Proposal, caller shard.Id
 
 // namespaceSpec returns the spec of the namespace of the tests.
 func namespaceSpec() config.Spec {
-	return config.Spec{
-		Namespace:    namespace,
-		Preset:       builtin.ExclusiveWorker,
-		Partitioning: config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)},
-	}
+	return configtest.NewSpecBuilder().
+		WithNamespace(namespace).
+		WithPreset(builtin.ExclusiveWorker).
+		WithPartitioning(config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)}).
+		Build()
 }
 
 // registry returns a registry with every built-in strategy of the support matrix.

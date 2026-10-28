@@ -249,7 +249,7 @@ func TestRun(t *testing.T) {
 					case machine.Stopped:
 						return []machine.Effect{
 							machine.Commit{
-								Mutation:    &store.Mutation{ID: store.CommitID{Incarnation: inc, Term: term, Seq: 1}},
+								Mutation:    mutation(1),
 								Scope:       scope,
 								Token:       1,
 								Term:        term,

@@ -32,8 +32,10 @@ import (
 	"go.thesmos.sh/sharder/partition"
 	"go.thesmos.sh/sharder/partition/fixedslots"
 	"go.thesmos.sh/sharder/shard"
+	"go.thesmos.sh/sharder/shard/shardtest"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
+	"go.thesmos.sh/sharder/store/storetest"
 )
 
 // The names of the records of the tests.
@@ -326,11 +328,26 @@ func (h *harness) placements(n shard.NodeID, e epoch.Epoch) []shard.Placement {
 // placement returns the placement of slot i on the node n at the epoch e, and a placement
 // without replicas for an empty n.
 func (h *harness) placement(i int, n shard.NodeID, e epoch.Epoch) shard.Placement {
-	p := shard.Placement{Shard: shards[i], Range: h.spans[i].Range, Epoch: e, Reserved: e, Sequence: uint64(e)}
+	b := shardtest.NewPlacementBuilder().
+		WithShard(shards[i]).
+		WithRange(h.spans[i].Range).
+		WithEpoch(e).
+		WithReserved(e).
+		WithSequence(uint64(e))
 	if n != "" {
-		p.Replicas = []shard.Replica{{Node: n, Role: shard.RolePrimary}}
+		b.WithReplicas(shard.Replica{Node: n, Role: shard.RolePrimary})
 	}
-	return p
+	return b.Build()
+}
+
+// creation returns the mutation of the root that creates the namespace of the tests with the
+// spec of h, the mapping m and the cell whose shard in the root scope is key.
+func (h *harness) creation(key id.ID128, m shard.Mapping) *store.Mutation {
+	return new(storetest.NewMutationBuilder().
+		WithSpec(h.spec).
+		WithMapping(m).
+		WithPut(shard.Placement{Shard: shard.ID{ID128: key}}).
+		Build())
 }
 
 // commit commits m to the scope s as its writer: the root at its term for the root scope,
@@ -362,11 +379,7 @@ func (h *harness) recreate(tb assert.TB, inc shard.NamespaceIncarnation, key id.
 	h.st.Delete(h.cell)
 	h.incarnation = inc
 	clear(h.seqs)
-	h.commit(tb, rootScope, &store.Mutation{
-		Put:     []shard.Placement{{Shard: shard.ID{ID128: key}}},
-		Spec:    h.spec,
-		Mapping: &h.mapping,
-	})
+	h.commit(tb, rootScope, h.creation(key, h.mapping))
 	h.cell = shard.Scope{Namespace: namespace, Cell: shard.CellID(ulid.Format(key.ID()))}
 	h.placed = h.commit(tb, h.cell, &store.Mutation{Put: h.placements(nodeA.ID, firstEpoch)})
 	return h.cell

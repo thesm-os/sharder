@@ -30,6 +30,7 @@ import (
 	"go.thesmos.sh/sharder/membership"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
+	"go.thesmos.sh/sharder/shard/shardtest"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
 )
@@ -1813,15 +1814,15 @@ func scripted(tb assert.TB, script handoff.Script) *handofftest.ProtocolStub {
 // incarnation of the node on, at the epoch, the reserved epoch and the sequence placed.
 func placement(n int, on shard.Node) shard.Placement {
 	pos := binary.BigEndian.AppendUint32(nil, uint32(n))
-	return shard.Placement{
-		Shard:       shard.ID{ID128: id.ID128{0: tagShard, 12: pos[0], 13: pos[1], 14: pos[2], 15: pos[3]}},
-		Range:       shard.Range{Start: pos},
-		Replicas:    []shard.Replica{{Node: on.ID, Role: shard.RolePrimary}},
-		Epoch:       placed,
-		Incarnation: on.Incarnation,
-		Reserved:    placed,
-		Sequence:    uint64(placed),
-	}
+	return shardtest.NewPlacementBuilder().
+		WithShard(shard.ID{ID128: id.ID128{0: tagShard, 12: pos[0], 13: pos[1], 14: pos[2], 15: pos[3]}}).
+		WithRange(shard.Range{Start: pos}).
+		WithReplicas(shard.Replica{Node: on.ID, Role: shard.RolePrimary}).
+		WithEpoch(placed).
+		WithIncarnation(on.Incarnation).
+		WithReserved(placed).
+		WithSequence(uint64(placed)).
+		Build()
 }
 
 // placements returns the placements of the shards 1 to n of the tests on the node on.
@@ -1875,8 +1876,9 @@ func record(p shard.Placement, from, to, fallback shard.Node) store.Transition {
 
 // restarted returns n at its next incarnation.
 func restarted(n shard.Node) shard.Node {
-	n.Incarnation++
-	return n
+	return shardtest.NewNodeBuilderFrom(n).
+		WithIncarnation(n.Incarnation + 1).
+		Build()
 }
 
 // failures returns an answer that fails the first n requests with err. The answer replies

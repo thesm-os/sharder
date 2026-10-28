@@ -85,11 +85,7 @@ func TestDiscovery(t *testing.T) {
 				h := newHarness(t, func(s *setup) { s.create = false })
 				recorded := h.mapping
 				tt.give(&recorded)
-				h.commit(t, rootScope, &store.Mutation{
-					Put:     []shard.Placement{{Shard: shard.ID{ID128: cellKey}}},
-					Spec:    h.spec,
-					Mapping: &recorded,
-				})
+				h.commit(t, rootScope, h.creation(cellKey, recorded))
 				to := h.start(t)
 				assert.ErrorIs(t, h.replied(t, to).Err, routes.ErrMapping, "the router must refuse the namespace")
 			})
@@ -175,11 +171,7 @@ func TestDiscovery(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, func(s *setup) { s.create = false })
 			to := h.start(t)
-			h.commit(t, rootScope, &store.Mutation{
-				Put:     []shard.Placement{{Shard: shard.ID{ID128: cellKey}}},
-				Spec:    h.spec,
-				Mapping: &h.mapping,
-			})
+			h.commit(t, rootScope, h.creation(cellKey, h.mapping))
 			h.follow(t)
 			h.view(t, cellScope, nodeA)
 			assert.Nil(t, h.replied(t, to).Err, "the router must serve the namespace that the root created")
@@ -360,11 +352,7 @@ func TestDiscovery(t *testing.T) {
 			clear(h.seqs)
 			recorded := h.mapping
 			recorded.Config = []byte(eightSlots)
-			h.commit(t, rootScope, &store.Mutation{
-				Put:     []shard.Placement{{Shard: shard.ID{ID128: recreatedKey}}},
-				Spec:    h.spec,
-				Mapping: &recorded,
-			})
+			h.commit(t, rootScope, h.creation(recreatedKey, recorded))
 			h.follow(t)
 			_, err := h.machine.Route(t.Context(), h.keys[1])
 			expect.ErrorIs(

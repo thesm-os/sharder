@@ -23,6 +23,7 @@ import (
 	"go.thesmos.sh/sharder/budget"
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/config/configtest"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/internal/machine/cell"
 	"go.thesmos.sh/sharder/membership"
@@ -30,8 +31,10 @@ import (
 	"go.thesmos.sh/sharder/placement"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
+	"go.thesmos.sh/sharder/shard/shardtest"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
+	"go.thesmos.sh/sharder/store/storetest"
 )
 
 // The names of the records and the callers of the tests.
@@ -191,12 +194,7 @@ type harness struct {
 func newHarness(tb testCase, opts ...option) *harness {
 	tb.Helper()
 	s := setup{
-		spec: config.Spec{
-			Namespace:    namespace,
-			Preset:       builtin.ExclusiveWorker,
-			Partitioning: config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)},
-			Version:      firstVersion,
-		},
+		spec: testSpec(firstVersion),
 		cfg: cell.Config{
 			Rand:        constant.NewCounter(half),
 			Reporter:    noop.New(),
@@ -477,16 +475,21 @@ func registry(tb assert.TB) *config.Registry {
 	return r
 }
 
+// testSpec returns the spec of the tests at the version v.
+func testSpec(v epoch.Epoch) config.Spec {
+	return configtest.NewSpecBuilder().
+		WithNamespace(namespace).
+		WithPreset(builtin.ExclusiveWorker).
+		WithPartitioning(config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)}).
+		WithVersion(v).
+		Build()
+}
+
 // specMutation returns the mutation of the root that accepts the spec of the tests at the
 // version v, after change changes it.
 func specMutation(tb testCase, v epoch.Epoch, change func(*config.Spec)) *store.Mutation {
 	tb.Helper()
-	spec := config.Spec{
-		Namespace:    namespace,
-		Preset:       builtin.ExclusiveWorker,
-		Partitioning: config.Selection{Name: fixedslots.Name, Config: json.RawMessage(slotsConfig)},
-		Version:      v,
-	}
+	spec := testSpec(v)
 	if change != nil {
 		change(&spec)
 	}
@@ -494,7 +497,7 @@ func specMutation(tb testCase, v epoch.Epoch, change func(*config.Spec)) *store.
 	assert.NoError(tb, err, "the spec must resolve")
 	raw, err := json.Marshal(&res.Spec)
 	assert.NoError(tb, err, "the resolved spec must encode")
-	return &store.Mutation{Spec: raw}
+	return new(storetest.NewMutationBuilder().WithSpec(raw).Build())
 }
 
 // otherCells returns the root placements of n other cells. Each starts at its own
@@ -504,7 +507,10 @@ func otherCells(n int) []shard.Placement {
 	for i := range n {
 		k := cellKey
 		k[14] = byte(i) + 1
-		ps = append(ps, shard.Placement{Shard: shard.ID{ID128: k}, Range: shard.Range{Start: []byte{0xf0, byte(i)}}})
+		ps = append(ps, shardtest.NewPlacementBuilder().
+			WithShard(shard.ID{ID128: k}).
+			WithRange(shard.Range{Start: []byte{0xf0, byte(i)}}).
+			Build())
 	}
 	return ps
 }

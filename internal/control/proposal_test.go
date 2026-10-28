@@ -29,7 +29,6 @@ import (
 	"go.thesmos.sh/sharder/placement"
 	"go.thesmos.sh/sharder/placement/constraint"
 	"go.thesmos.sh/sharder/placement/goal"
-	"go.thesmos.sh/sharder/placement/planner"
 	"go.thesmos.sh/sharder/proposal"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/shard"
@@ -526,7 +525,7 @@ func TestProposal(t *testing.T) {
 		t.Run("explains a shard with the cost of each tier of its goals", func(t *testing.T) {
 			t.Parallel()
 			h := served(t, func(s *setup) {
-				s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(tieredConfig)}
+				s.spec.Placement = planned(tieredConfig)
 			})
 			h.view(t, nodeA, nodeB, nodeC, nodeD)
 			gen := h.state(t).Head.Generation
@@ -585,7 +584,7 @@ func TestProposal(t *testing.T) {
 					s.extend = func(tb assert.TB, r *config.Registry) error {
 						return config.Register(r, config.Goal, badCost(tb, tt.goal, tt.cost))
 					}
-					s.spec.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(raw)}
+					s.spec.Placement = planned(raw)
 				})
 				h.start(t)
 				h.view(t, nodeA)
@@ -836,7 +835,7 @@ func TestProposal(t *testing.T) {
 				name: "returns ErrSpec for a spec whose strategies do not build",
 				give: func(p *proposal.Proposal) {
 					s := testSpec(firstVersion + 1)
-					s.Placement = config.Selection{Name: planner.Name, Config: json.RawMessage(fragileConstraint)}
+					s.Placement = planned(fragileConstraint)
 					p.Body = specBody(t, s)
 				},
 				setup: func(s *setup) {

@@ -29,8 +29,10 @@ import (
 	"go.thesmos.sh/sharder/internal/scope"
 	"go.thesmos.sh/sharder/partition/singleton"
 	"go.thesmos.sh/sharder/shard"
+	"go.thesmos.sh/sharder/shard/shardtest"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
+	"go.thesmos.sh/sharder/store/storetest"
 )
 
 // The names of the records of the tests.
@@ -616,7 +618,7 @@ func TestScope(t *testing.T) {
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
 			h.write(t, cellScope, incA, newTerm)
-			h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
+			h.commit(t, puts(1))
 			assert.ErrorIs(t, h.failure(t), epoch.ErrFenced, "the fence of a newer controller must stop the Scope")
 			_, _, err := h.scope.Commit(&store.Mutation{}, nil)
 			assert.ErrorIs(t, err, scope.ErrNotAcquired, "Commit must refuse a mutation after a stop")
@@ -626,7 +628,7 @@ func TestScope(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
-			got := h.commit(t, &store.Mutation{Put: placements(1)})
+			got := h.commit(t, puts(1))
 			assert.Equal(t, got, store.CommitID{Incarnation: incA, Term: term, Seq: 2},
 				"the first commit after the acquisition must have the second commit ID of the term")
 		})
@@ -636,7 +638,7 @@ func TestScope(t *testing.T) {
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
 			for n := range 3 {
-				h.commit(t, &store.Mutation{Put: []shard.Placement{placement(n + 1)}})
+				h.commit(t, puts(n+1))
 			}
 			assert.Length(t, h.pending, 1, "one commit must be in flight")
 		})
@@ -647,7 +649,7 @@ func TestScope(t *testing.T) {
 			h.acquire(t)
 			ids := make([]store.CommitID, 0, 3)
 			for n := range 3 {
-				ids = append(ids, h.commit(t, &store.Mutation{Put: []shard.Placement{placement(n + 1)}}))
+				ids = append(ids, h.commit(t, puts(n+1)))
 			}
 			h.drain(t)
 			expect.Equal(t, h.applied(), ids, "the Scope must report each commit in the order of the calls")
@@ -658,10 +660,10 @@ func TestScope(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
-			first := &store.Mutation{Put: []shard.Placement{placement(1)}}
+			first := puts(1)
 			h.commit(t, first)
 			h.drain(t)
-			second := &store.Mutation{Put: []shard.Placement{placement(2)}}
+			second := puts(2)
 			h.commit(t, second)
 			expect.Equal(t, first.Confirm, []store.CommitID{acquisitionID},
 				"the first commit must confirm the receipt of the acquisition")
@@ -673,8 +675,8 @@ func TestScope(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
-			first := h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
-			second := h.commit(t, &store.Mutation{Put: []shard.Placement{placement(2)}})
+			first := h.commit(t, puts(1))
+			second := h.commit(t, puts(2))
 			h.drain(t)
 			expect.False(t, h.receipt(t, acquisitionID), "a later commit must confirm the receipt of the acquisition")
 			expect.False(t, h.receipt(t, first), "a later commit must confirm the receipt of the first commit")
@@ -685,7 +687,7 @@ func TestScope(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
-			m := &store.Mutation{Put: []shard.Placement{placement(1)}}
+			m := puts(1)
 			cid := h.commit(t, m)
 			h.st.FailAt(memory.PointCommitApply)
 			h.deliver(t)
@@ -701,7 +703,7 @@ func TestScope(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
-			h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
+			h.commit(t, puts(1))
 			h.st.FailAt(memory.PointCommitApply)
 			h.deliver(t)
 			h.deliver(t)
@@ -714,7 +716,7 @@ func TestScope(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
-			h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
+			h.commit(t, puts(1))
 			h.st.FailAt(memory.PointCommitAck)
 			h.drain(t)
 			assert.Length(t, h.results, 2, "the Scope must report the acquisition and the commit")
@@ -726,7 +728,7 @@ func TestScope(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
-			h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
+			h.commit(t, puts(1))
 			h.st.FailAt(memory.PointCommitApply)
 			h.deliver(t)
 			h.st.Delete(cellScope)
@@ -742,7 +744,7 @@ func TestScope(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
-			h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
+			h.commit(t, puts(1))
 			h.st.FailAt(memory.PointCommitApply)
 			h.deliver(t)
 			h.st.Delete(cellScope)
@@ -757,7 +759,7 @@ func TestScope(t *testing.T) {
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
 			h.st.Delete(cellScope)
-			h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
+			h.commit(t, puts(1))
 			err := h.failure(t)
 			expect.That(t, err).ErrorIs(scope.ErrChanged, "the Scope must stop at a generation that it did not create")
 			expect.That(t, err).ErrorIs(version.ErrMismatch, "the error must wrap the refusal of the store")
@@ -767,7 +769,7 @@ func TestScope(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
-			h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
+			h.commit(t, puts(1))
 			h.st.FailAt(memory.PointCommitApply)
 			h.deliver(t)
 			h.st.Delete(cellScope)
@@ -778,11 +780,11 @@ func TestScope(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
-			h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
+			h.commit(t, puts(1))
 			h.st.FailAt(memory.PointCommitApply)
 			h.drain(t)
 			h.st.Delete(cellScope)
-			h.commit(t, &store.Mutation{Put: []shard.Placement{placement(2)}})
+			h.commit(t, puts(2))
 			assert.ErrorIs(t, h.failure(t), version.ErrMismatch,
 				"the Scope must stop at the refusal of the store without a read of the receipt")
 		})
@@ -793,7 +795,7 @@ func TestScope(t *testing.T) {
 			h.acquire(t)
 			h.st.Delete(cellScope)
 			h.write(t, cellScope, incB, oldTerm)
-			h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
+			h.commit(t, puts(1))
 			assert.ErrorIs(t, h.failure(t), shard.ErrIncarnation,
 				"the Scope must stop at a scope of another incarnation")
 		})
@@ -803,7 +805,7 @@ func TestScope(t *testing.T) {
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
 			h.write(t, cellScope, incA, newTerm)
-			h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
+			h.commit(t, puts(1))
 			assert.ErrorIs(t, h.failure(t), epoch.ErrFenced, "the Scope must stop at the fence of a newer controller")
 		})
 
@@ -813,7 +815,7 @@ func TestScope(t *testing.T) {
 				t.Parallel()
 				h := newHarness(t, cellScope, cellAcquisition)
 				h.acquire(t)
-				h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
+				h.commit(t, puts(1))
 				h.st.FailAt(memory.PointCommitApply)
 				h.deliver(t)
 				h.write(t, cellScope, incA, newTerm)
@@ -826,7 +828,7 @@ func TestScope(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, cellScope, cellAcquisition, memory.WithLimits(onePlacement))
 			h.acquire(t)
-			h.commit(t, &store.Mutation{Put: placements(2)})
+			h.commit(t, puts(1, 2))
 			assert.ErrorIs(t, h.failure(t), store.ErrTooLarge, "the Scope must stop at a mutation that cannot commit")
 		})
 
@@ -835,7 +837,7 @@ func TestScope(t *testing.T) {
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
 			gone := func() weak.Pointer[store.Mutation] {
-				m := &store.Mutation{Put: []shard.Placement{placement(1)}}
+				m := puts(1)
 				h.commit(t, m)
 				return weak.Make(m)
 			}()
@@ -851,8 +853,8 @@ func TestScope(t *testing.T) {
 			h.acquire(t)
 			h.write(t, cellScope, incA, newTerm)
 			gone := func() []weak.Pointer[store.Mutation] {
-				first := &store.Mutation{Put: []shard.Placement{placement(1)}}
-				second := &store.Mutation{Put: []shard.Placement{placement(2)}}
+				first := puts(1)
+				second := puts(2)
 				h.commit(t, first)
 				h.commit(t, second)
 				return []weak.Pointer[store.Mutation]{weak.Make(first), weak.Make(second)}
@@ -881,7 +883,7 @@ func TestScope(t *testing.T) {
 				stateful.Steps(c, stateful.Machine[struct{}]{
 					Actions: []stateful.Action[struct{}]{
 						{Name: "commit", Run: func(c *prop.Case, _ int, _ any) {
-							m := &store.Mutation{Put: []shard.Placement{placement(len(ids) + 1)}}
+							m := puts(len(ids) + 1)
 							ids = append(ids, h.commit(c, m))
 						}},
 						{Name: "deliver", Enabled: busy, Run: func(c *prop.Case, _ int, _ any) { h.deliver(c) }},
@@ -984,7 +986,7 @@ func TestScope(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
-			h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
+			h.commit(t, puts(1))
 			ev := h.perform(t, take[machine.Commit](t, h))
 			h.step(t, ev)
 			_, _, ok := h.scope.Step(ev, nil)
@@ -1019,7 +1021,7 @@ func TestScope(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t, cellScope, cellAcquisition)
 			h.acquire(t)
-			h.commit(t, &store.Mutation{Put: []shard.Placement{placement(1)}})
+			h.commit(t, puts(1))
 			ev := h.perform(t, take[machine.Commit](t, h))
 			out := []machine.Effect{foreign}
 			_, got, ok := h.scope.Step(ev, out)
@@ -1087,31 +1089,38 @@ func TestScope(t *testing.T) {
 // cellAcquisition is the acquisition of the controller of the cell of the tests, in the
 // incarnation incA.
 func cellAcquisition(store.Head) (shard.NamespaceIncarnation, *store.Mutation) {
-	rec := record
-	return incA, &store.Mutation{Cell: &rec}
+	return incA, new(storetest.NewMutationBuilder().WithCell(record).Build())
 }
 
 // rootAcquisition is the acquisition of the root of the tests. It creates the namespace with
 // the incarnation incA, the mapping and the spec when the scope has no incarnation, and
 // acquires the incarnation of the scope otherwise.
 func rootAcquisition(head store.Head) (shard.NamespaceIncarnation, *store.Mutation) {
-	rec := record
+	b := storetest.NewMutationBuilder().WithCell(record)
 	if head.Incarnation.IsZero() {
-		m := mapping
-		return incA, &store.Mutation{Cell: &rec, Mapping: &m, Spec: []byte(spec)}
+		return incA, new(b.WithMapping(mapping).WithSpecString(spec).Build())
 	}
-	return head.Incarnation, &store.Mutation{Cell: &rec}
+	return head.Incarnation, new(b.Build())
 }
 
 // placement returns the placement of the shard n of the tests. Its range starts at the
 // position n, so the placements of the tests are in position order by n.
 func placement(n int) shard.Placement {
 	pos := binary.BigEndian.AppendUint32(nil, uint32(n))
-	return shard.Placement{
-		Shard:    shard.ID{ID128: id.ID128{0: tagShard, 12: pos[0], 13: pos[1], 14: pos[2], 15: pos[3]}},
-		Range:    shard.Range{Start: pos},
-		Replicas: []shard.Replica{{Node: node, Role: shard.RolePrimary}},
+	return shardtest.NewPlacementBuilder().
+		WithShard(shard.ID{ID128: id.ID128{0: tagShard, 12: pos[0], 13: pos[1], 14: pos[2], 15: pos[3]}}).
+		WithRange(shard.Range{Start: pos}).
+		WithReplicas(shard.Replica{Node: node, Role: shard.RolePrimary}).
+		Build()
+}
+
+// puts returns a mutation that puts the placements of the shards ns.
+func puts(ns ...int) *store.Mutation {
+	b := storetest.NewMutationBuilder()
+	for _, n := range ns {
+		b.AppendPut(placement(n))
 	}
+	return new(b.Build())
 }
 
 // placements returns the placements of the shards 1 to n of the tests, in position order.
@@ -1266,17 +1275,17 @@ func (h *harness) read(tb assert.TB, e *machine.Read) machine.Event {
 	return machine.PageRead{Placements: ps, Next: next, State: state, Token: e.Token}
 }
 
-// write commits puts to the scope id at its current generation, as another controller
-// does. The writer of the commit has the incarnation inc and the term at.
+// write commits the placements ps to the scope id at its current generation, as another
+// controller does. The writer of the commit has the incarnation inc and the term at.
 func (h *harness) write(
-	tb assert.TB, id shard.Scope, inc shard.NamespaceIncarnation, at epoch.Epoch, puts ...shard.Placement,
+	tb assert.TB, id shard.Scope, inc shard.NamespaceIncarnation, at epoch.Epoch, ps ...shard.Placement,
 ) {
 	tb.Helper()
 	ctx := assert.Context(tb)
 	head, err := h.st.Head(ctx, id)
 	assert.NoError(tb, err, "the store must return the header of the scope")
 	h.others++
-	m := &store.Mutation{ID: store.CommitID{Incarnation: inc, Term: at, Seq: h.others}, Put: puts}
+	m := &store.Mutation{ID: store.CommitID{Incarnation: inc, Term: at, Seq: h.others}, Put: ps}
 	_, err = h.st.Writer(id, inc, at).Commit(ctx, head.Generation, m)
 	assert.NoError(tb, err, "the other controller must commit")
 }

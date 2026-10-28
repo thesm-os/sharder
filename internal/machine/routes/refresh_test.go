@@ -116,11 +116,7 @@ func TestRefresh(t *testing.T) {
 			clear(h.seqs)
 			recorded := h.mapping
 			recorded.Config = []byte(eightSlots)
-			h.commit(t, rootScope, &store.Mutation{
-				Put:     []shard.Placement{{Shard: shard.ID{ID128: recreatedKey}}},
-				Spec:    h.spec,
-				Mapping: &recorded,
-			})
+			h.commit(t, rootScope, h.creation(recreatedKey, recorded))
 			h.follow(t)
 			to := h.refresh(t, incB, cellID, 1)
 			assert.ErrorIs(t, h.replied(t, to).Err, routes.ErrMapping,
