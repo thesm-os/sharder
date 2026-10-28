@@ -1,5 +1,17 @@
 # go.thesmos.sh/sharder/examples
 
+## 0.1.2
+
+### Patch Changes
+
+- cdeb7e4: Build the doubles of the specs of the examples with `storetest.ReaderStub` and `routertest.RouterStub`.
+- 56825cc: Require Go 1.27.3.
+- 56825cc: Update `go.dokimi.dev/assert` to v0.10.0.
+- 56825cc: Update `go.thesmos.sh/core` to v0.35.0.
+- 56825cc: Update `go.thesmos.sh/kanon` to v0.3.0.
+- Updated dependencies [458ca91, f020380, 26996e3, 355ea94, 6f0a9e9, aee26b2, f887eaf, 5268c3f, f76f51b, 679f394, 9d0dc62, cec90b9, aef9a90, 04e1e28, 3add429, 0642763, d0d711d, c6bfe06, b8e250d, c3f39e1, 08a2ba6, 02b944b, 76e98aa, e57a51f, 56020ad, 56825cc, 4c1801f, 6908ef1, 554b622, 6106cd6]
+  - go.thesmos.sh/sharder@0.2.0
+
 ## 0.1.1
 
 ### Patch Changes
