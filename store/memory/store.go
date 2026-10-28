@@ -28,6 +28,9 @@ import (
 //
 // A Store is safe for concurrent use. One mutex orders every call, so the effects of a
 // run depend only on the order of the calls and on the clock.
+//
+//dokimi:subject store.Store new=newFaultyStore
+//dokimi:excuse Store.Read/reads-survive-restarts reason="a Store does not keep anything beyond its process"
 type Store struct {
 	// clk is the clock of the leases.
 	clk clock.Clock

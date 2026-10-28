@@ -10,12 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"hash/maphash"
+	"iter"
 	"maps"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
-	"testing"
 	"time"
 
 	"go.dokimi.dev/assert"
@@ -23,7 +25,7 @@ import (
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/assert/stateful"
-	"go.thesmos.sh/core/coretest/epochtest"
+	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sha256"
 	"go.thesmos.sh/core/epoch"
@@ -36,16 +38,15 @@ import (
 	"go.thesmos.sh/sharder/proposal"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
+	"go.thesmos.sh/sharder/store/memory"
 )
 
 // The names in the records of the suite.
 const (
 	// namespace is the namespace of every scope of the suite.
 	namespace shard.Namespace = "storetest"
-	// cell is the cell of the scope that the laws commit to.
+	// cell is the cell of the scope that the checks commit to.
 	cell shard.CellID = "cell-1"
-	// fencedCell is the prefix of the cells of the scopes of the fence laws.
-	fencedCell = "fenced-"
 	// protocol is the handoff protocol of the transitions of the suite.
 	protocol shard.StrategyName = "storetest"
 	// partitioner is the partitioner of the mapping of the suite.
@@ -136,9 +137,9 @@ const (
 	drainCount = 4
 	// maxBatch is the most entries of one list of a generated mutation, such as its puts.
 	maxBatch = 3
-	// maxCommits is the most mutations that one case of a law commits.
+	// maxCommits is the most mutations that one case of a check commits.
 	maxCommits = 5
-	// maxLimit is the largest limit of a page of the law of pages.
+	// maxLimit is the largest limit of a page of the check of pages.
 	maxLimit = 4
 	// rangeStep is the distance between the starts of the ranges of two neighbouring
 	// shards.
@@ -158,21 +159,21 @@ const (
 	// linearizability can linearize it at any later point or never. The steps of the
 	// check grow exponentially with the number of lost commits.
 	maxLost = 2
-	// candidates is the number of clients of the law of terms.
+	// candidates is the number of clients of the check of terms.
 	candidates = 3
-	// rounds is the number of terms that each client of the law of terms leads.
+	// rounds is the number of terms that each client of the check of terms leads.
 	rounds = 3
-	// maxFitsPlacements is the most placements of a mutation of the law of Fits below the
-	// limit of the store.
+	// maxFitsPlacements is the most placements of a mutation of the check of Fits below
+	// the limit of the store.
 	maxFitsPlacements = 32
-	// maxFitsBytes is the most bytes of the spec of a mutation of the law of Fits below the
-	// limit of the store.
+	// maxFitsBytes is the most bytes of the spec of a mutation of the check of Fits below
+	// the limit of the store.
 	maxFitsBytes = 8192
-	// fitsPlacementSlack is how many placements a mutation of the law of Fits puts beyond
-	// the limit of the store.
+	// fitsPlacementSlack is how many placements a mutation of the check of Fits puts
+	// beyond the limit of the store.
 	fitsPlacementSlack = 2
-	// fitsByteSlack is how many bytes the spec of a mutation of the law of Fits has beyond
-	// the limit of the store.
+	// fitsByteSlack is how many bytes the spec of a mutation of the check of Fits has
+	// beyond the limit of the store.
 	fitsByteSlack = 64
 )
 
@@ -188,9 +189,9 @@ const (
 
 // The terms and the phases of the suite.
 const (
-	// lawTerm is the term of the writers of the laws apart from the machine of commits.
+	// lawTerm is the term of the writers of the checks apart from the machine of commits.
 	lawTerm epoch.Epoch = 1
-	// highTerm is the term of the commit that raises the watermark of the law of terms.
+	// highTerm is the term of the commit that raises the watermark of the check of terms.
 	highTerm epoch.Epoch = 7
 	// invalidPhase is a phase that is not valid, so a transition with it does not encode.
 	invalidPhase = shard.PhaseAborted + 1
@@ -202,14 +203,24 @@ const waitFor = 10 * time.Second
 
 // The identities and the instants of the suite.
 var (
-	// incA is the namespace incarnation of the writers of the laws.
+	// incA is the namespace incarnation of the writers of the checks.
 	incA = shard.NamespaceIncarnation{ID: id.New128([16]byte{0: tagIncarnation, 15: 0x0a})}
-	// incB is the namespace incarnation of the writers of the laws of another incarnation.
+	// incB is the namespace incarnation of the writers of the checks of another
+	// incarnation.
 	incB = shard.NamespaceIncarnation{ID: id.New128([16]byte{0: tagIncarnation, 15: 0x0b})}
-	// scope is the scope that the laws commit to.
+	// scope is the scope that the checks commit to.
 	scope = shard.Scope{Namespace: namespace, Cell: cell}
-	// origin is the first instant of the records of the suite.
+	// root is the root scope of the namespace of scope.
+	root = shard.Scope{Namespace: namespace}
+	// origin is the first instant of the records of the suite, and the instant of the
+	// clock of the memory stores of the planted defects.
 	origin = time.Date(2026, time.October, 11, 0, 0, 0, 0, time.UTC)
+	// limits are the limits of the memory stores of the planted defects. The check of Fits
+	// generates mutations on both sides of them, and every other check commits mutations
+	// below them.
+	limits = store.Limits{MaxPlacements: 8, MaxBytes: 4096}
+	// lossPoints maps each loss to the point of a memory store that loses a commit there.
+	lossPoints = map[Loss]memory.Point{LoseRequest: memory.PointCommitApply, LoseReply: memory.PointCommitAck}
 	// rejections lists the definite rejections of a commit after its encoding, in the
 	// order of the checks of Commit, each with the label of its outcome.
 	rejections = [...]struct {
@@ -223,6 +234,10 @@ var (
 	}
 	// modelSeed is the seed of the hashes of the states of the machine of commits.
 	modelSeed = maphash.MakeSeed()
+	// fx is the fixture of the checks.
+	fx = newFixture()
+	// tables returns the table of the machine of commits, which the first call builds.
+	tables = sync.OnceValues(newTable)
 )
 
 // The generators of the parts of the records of the suite.
@@ -271,7 +286,7 @@ var (
 	drainSubsets = prop.List(prop.Integer(0, drainCount-1), prop.Unique(), prop.MaxSize(maxBatch))
 )
 
-// Loss is the point at which a fault that [WithLostCommits] injects interrupts a commit.
+// Loss is the point at which a fault that [Faulty.LoseCommit] injects interrupts a commit.
 //
 // [Loss.IsValid] refuses the zero Loss.
 //
@@ -291,80 +306,46 @@ const (
 	LoseReply Loss = 2 // reply
 )
 
-// config is the result of the Options of one run of AssertStore.
-type config struct {
-	// reopen opens the storage behind a store again, or is nil.
-	reopen func(tb assert.TB, s store.Store) store.Store
-	// lose makes the next commit to a store fail, or is nil.
-	lose func(tb assert.TB, s store.Store, l Loss)
-	// del deletes a scope from the storage behind a store, or is nil.
-	del func(tb assert.TB, s store.Store, sc shard.Scope)
-	// compact discards the generations of the scopes of a store below their current ones,
-	// or is nil.
-	compact func(tb assert.TB, s store.Store)
+// Faulty is a store whose next commit a fault interrupts. The checks of a commit whose
+// outcome is unknown call it, and the machine of commits loses commits through it.
+type Faulty interface {
+	// LoseCommit makes the next commit to the store fail with an error that wraps
+	// version.ErrOutcomeUnknown, at the point that l selects.
+	LoseCommit(l Loss)
 }
 
-// Option configures a run of [AssertStore]. Each Option adds the laws that its docblock
-// lists.
-type Option func(*config)
-
-// WithReopen gives the suite a way to open the storage behind s again, as a process does
-// after a restart. reopen closes s, or lets it fail as a crash does, and returns a new
-// store over the same storage. The suite closes the store that reopen returns, and does
-// not close s. It then checks that every commit that returned a generation before the
-// reopen is readable with the same header, state, placements and receipt.
-func WithReopen(reopen func(tb assert.TB, s store.Store) store.Store) Option {
-	return func(c *config) { c.reopen = reopen }
+// Deleter is a store that deletes a scope, as an operator does before a namespace is
+// created again under the same name. The checks of a scope that another incarnation
+// creates again call it.
+type Deleter interface {
+	// Delete removes the scope sc from the storage of the store. A later commit at the
+	// generation zero creates the scope again.
+	Delete(sc shard.Scope)
 }
 
-// WithLostCommits gives the suite a way to make the next commit to s fail with an error
-// that wraps version.ErrOutcomeUnknown, at the point that l selects. The suite then checks
-// that Outcome and a retry settle both outcomes, and adds up to two lost commits to each
-// case of the machine of commits.
-func WithLostCommits(lose func(tb assert.TB, s store.Store, l Loss)) Option {
-	return func(c *config) { c.lose = lose }
+// Compactor is a store that discards the old generations of its scopes, as the compaction
+// of a backend does. The checks of a discarded generation call it.
+type Compactor interface {
+	// Compact discards the generations of every scope of the store below their current
+	// generations.
+	Compact()
 }
 
-// WithDelete gives the suite a way to delete the scope sc from the storage behind s, as an
-// operator does before a namespace is created again under the same name. The suite then
-// creates the scope with another incarnation, brings it to the old generation, and checks
-// that a read, a page token, a watch and the receipts of the old incarnation return
-// shard.ErrIncarnation or nothing.
-func WithDelete(del func(tb assert.TB, s store.Store, sc shard.Scope)) Option {
-	return func(c *config) { c.del = del }
-}
-
-// WithCompact gives the suite a way to discard the generations of every scope of s below
-// their current generations, as the compaction of a backend does. The suite then checks
-// that a page token and a watch at a discarded generation return store.ErrCompacted, and
-// that a watch from the current generation continues.
-func WithCompact(compact func(tb assert.TB, s store.Store)) Option {
-	return func(c *config) { c.compact = compact }
-}
-
-// cleanupTB is an assert.TB that runs a function when its test or case ends, as a
-// *testing.T and a *prop.Case do.
-type cleanupTB interface {
-	assert.TB
-	// Cleanup registers f to run when the test or the case ends.
-	Cleanup(f func())
-}
-
-// fixture contains the identities of the records of one run of the suite, and the
-// generators of its mutations.
+// fixture contains the identities of the records of the suite, and the generators of its
+// mutations.
 type fixture struct {
 	// puts generates the placements of one commit.
 	puts prop.Generator[[]shard.Placement]
-	// mutations generates the mutations that one case of a law commits, in order.
+	// mutations generates the mutations that one case of a check commits, in order.
 	mutations prop.Generator[[]store.Mutation]
 	// ranges lists the range of each shard of shards.
 	ranges [shardCount]shard.Range
 	// everywhere lists a placement of each shard with a replica on each node.
 	everywhere []shard.Placement
-	// mapping is the mapping of the namespace, which the first commit of the law of the
+	// mapping is the mapping of the namespace, which the first commit of the check of the
 	// state records.
 	mapping shard.Mapping
-	// cell is the controller record that the last commit of the law of node watches
+	// cell is the controller record that the last commit of the check of node watches
 	// replaces, so every watcher receives its generation.
 	cell shard.Cell
 	// drains lists the keys of the generated drains: the manual drains of two nodes, and
@@ -380,8 +361,8 @@ type fixture struct {
 	disruptions [disruptionCount]budget.ID
 }
 
-// newFixture returns the fixture of one run of the suite. The shards cover the positions
-// in order, the first from the empty start and the last to the end of the position space.
+// newFixture returns the fixture of the suite. The shards cover the positions in order,
+// the first from the empty start and the last to the end of the position space.
 func newFixture() *fixture {
 	f := &fixture{
 		mapping: shard.Mapping{Partitioner: partitioner, Config: []byte(`{"slots":16}`)},
@@ -439,10 +420,10 @@ func (f *fixture) generatePuts(c *prop.Case) []shard.Placement {
 	return ps
 }
 
-// generateMutation generates one mutation of the laws over generated commits. The mutation
-// has placements, transitions, ended shards, applied and forgotten proposals, reserved and
-// released disruptions, drains and undrains, a spec and a controller record. Each list
-// contains a shard, a proposal, a disruption or a drain at most once.
+// generateMutation generates one mutation of the checks over generated commits. The
+// mutation has placements, transitions, ended shards, applied and forgotten proposals,
+// reserved and released disruptions, drains and undrains, a spec and a controller record.
+// Each list contains a shard, a proposal, a disruption or a drain at most once.
 func (f *fixture) generateMutation(c *prop.Case) store.Mutation {
 	m := store.Mutation{Put: f.generatePuts(c)}
 	for _, s := range c.Draw(shardSubsets, "transitions") {
@@ -717,9 +698,11 @@ type table struct {
 
 // newTable returns the table of the machine of commits. The mutations of one commit ID
 // differ in their specs, and the mutation of the variant confirming confirms the commit of
-// its writer before it. It fails tb when a mutation does not encode.
-func newTable(tb assert.TB) *table {
-	tb.Helper()
+// its writer before it.
+//
+// Error modes:
+//   - the error of Mutation.Digest for a mutation that does not encode.
+func newTable() (*table, error) {
 	tab := &table{}
 	for w, wr := range writers {
 		for s := range seqs {
@@ -732,12 +715,14 @@ func newTable(tb assert.TB) *table {
 					m.Confirm = []store.CommitID{tab.ids[w][s-1]}
 				}
 				d, err := m.Digest()
-				assert.NoError(tb, err, "each mutation of the machine of commits encodes")
+				if err != nil {
+					return nil, fmt.Errorf("storetest: the digest of the commit %v: %w", m.ID, err)
+				}
 				tab.digests[w][s][v] = d
 			}
 		}
 	}
-	return tab
+	return tab, nil
 }
 
 // machine is the subject of the machine of commits in one case. It has a store, the scope
@@ -745,10 +730,10 @@ func newTable(tb assert.TB) *table {
 type machine struct {
 	// s is the store of the case.
 	s store.Store
+	// lose is the store of the case when it implements Faulty, and nil otherwise.
+	lose Faulty
 	// tab is the table of the mutations of the commits.
 	tab *table
-	// lose makes the next commit fail, or is nil without WithLostCommits.
-	lose func(tb assert.TB, s store.Store, l Loss)
 	// sc is the scope of the calls.
 	sc shard.Scope
 	// lost counts the calls of loseNext in the case.
@@ -756,10 +741,10 @@ type machine struct {
 }
 
 // actions returns the actions of the machine. They call Head, Read and Outcome, Commit at
-// an arbitrary generation, and Commit at the generation that Head returns. WithLostCommits
-// adds an action that loses the next commit.
-func (m *machine) actions() []stateful.Action[*scopeModel] {
-	actions := []stateful.Action[*scopeModel]{
+// an arbitrary generation, and Commit at the generation that Head returns. A store that
+// implements Faulty adds an action that loses the next commit.
+func (m *machine) actions() []stateful.Action[struct{}] {
+	actions := []stateful.Action[struct{}]{
 		{Name: opHead, Run: func(c *prop.Case, client int, _ any) { m.head(c, client) }},
 		{Name: opRead, Run: m.read},
 		{Name: opOutcome, Input: generateOutcome, Run: m.outcome},
@@ -767,7 +752,7 @@ func (m *machine) actions() []stateful.Action[*scopeModel] {
 		{Name: opCommitAtHead, Input: generateCommit, Run: m.commitAtHead},
 	}
 	if m.lose != nil {
-		actions = append(actions, stateful.Action[*scopeModel]{Name: opLose, Input: generateLoss, Run: m.loseNext})
+		actions = append(actions, stateful.Action[struct{}]{Name: opLose, Input: generateLoss, Run: m.loseNext})
 	}
 	return actions
 }
@@ -857,15 +842,15 @@ func (m *machine) commit(c *prop.Case, client int, cc commitCall) {
 
 // loseNext makes the next commit to the store fail at the point that the input selects.
 // It arms no fault after the first maxLost calls of a case.
-func (m *machine) loseNext(c *prop.Case, _ int, in any) {
+func (m *machine) loseNext(_ *prop.Case, _ int, in any) {
 	if m.lost.Add(1) > maxLost {
 		return
 	}
 	l, _ := in.(Loss)
-	m.lose(c, m.s, l)
+	m.lose.LoseCommit(l)
 }
 
-// lease is the state of the election of a scope in the law of terms: the last term that
+// lease is the state of the election of a scope in the check of terms: the last term that
 // the election granted, and whether a candidate leads.
 type lease struct {
 	last epoch.Epoch
@@ -888,21 +873,8 @@ var termSpec = history.Spec[lease]{
 	},
 }
 
-// fenced is a handle of core's fence laws: a writer of one scope of a store at one term,
-// with the counter of the commit numbers of the scope.
-type fenced struct {
-	// s is the store of the scope.
-	s store.Store
-	// seq counts the commits of the scope.
-	seq *atomic.Uint64
-	// sc is the scope.
-	sc shard.Scope
-	// term is the term of the writer.
-	term epoch.Epoch
-}
-
-// committer commits the mutations of one law to the scope of a store, in order, each at the
-// generation before it, through a writer of one incarnation at the term lawTerm.
+// committer commits the mutations of one check to the scope of a store, in order, each at
+// the generation before it, through a writer of one incarnation at the term lawTerm.
 type committer struct {
 	// w is the writer of the commits.
 	w store.Writer
@@ -929,7 +901,7 @@ func (cm *committer) commit(tb assert.TB, m *store.Mutation) epoch.Epoch {
 }
 
 // stateModel is the state of a scope apart from its header and its placements, as the
-// mutations of a law leave it.
+// mutations of a check leave it.
 type stateModel struct {
 	applied      map[proposal.ID]time.Time
 	transitions  map[shard.ID]store.Transition
@@ -1009,7 +981,7 @@ func (sm *stateModel) state(h store.Head) store.State {
 	}
 }
 
-// watchModel is the placements and the transitions of a scope, as the mutations of a law
+// watchModel is the placements and the transitions of a scope, as the mutations of a check
 // leave them. It derives the events of a watch of one node from them.
 type watchModel struct {
 	placements  map[shard.ID]shard.Placement
@@ -1075,517 +1047,724 @@ type image struct {
 	head       store.Head
 }
 
-// suite is one run of AssertStore: the stores that newStore returns, the options, the
-// fixture of the laws, and the table of the machine of commits.
-type suite struct {
-	// newStore returns an empty store.
-	newStore func(tb assert.TB) store.Store
-	// fx is the fixture of the laws.
-	fx *fixture
-	// tab is the table of the machine of commits.
-	tab *table
-	// cfg is the result of the options.
-	cfg config
+// backend is the memory store under a planted defect of the suite, the verified fake of the
+// planted defects. It records the scopes that a planted store deleted, and whether a
+// planted store compacted it.
+//
+// # Concurrency
+//
+// A backend is safe for concurrent use.
+type backend struct {
+	*memory.Store
+	// deleted contains each scope that Delete removed.
+	deleted map[shard.Scope]bool
+	mu      sync.Mutex
+	// compacted reports a call of Compact.
+	compacted bool
 }
 
-// open returns a store that newStore returns, and closes it when tb ends.
-func (su *suite) open(tb cleanupTB) store.Store {
-	tb.Helper()
-	s := su.newStore(tb)
-	tb.Cleanup(func() { assert.NoError(tb, s.Close(), "Close returns nil") })
-	return s
-}
-
-// headLaws runs the laws of Head.
-func (su *suite) headLaws(t *testing.T) {
-	t.Parallel()
-	t.Run("returns the zero Head of a scope before its first commit", func(t *testing.T) {
-		t.Parallel()
-		h, err := su.open(t).Head(t.Context(), scope)
-		assert.NoError(t, err, "Head returns the header of a scope")
-		assert.Equal(t, h, store.Head{}, "the Head of a scope before its first commit is zero")
-	})
-}
-
-// readLaws runs the laws of Read.
-func (su *suite) readLaws(t *testing.T) {
-	t.Parallel()
-	t.Run("returns the zero State of a scope before its first commit", su.readsNothing)
-	t.Run("returns the state that the commits leave", su.readsState)
-	t.Run("returns each selected placement once at the generation of the read", su.readsPages)
-	t.Run("returns ErrIncarnation for a scope of another incarnation", su.readsOtherIncarnation)
-	if su.cfg.del != nil {
-		t.Run("returns ErrIncarnation for a scope that another incarnation created again", su.readsRecreated)
-		t.Run("returns ErrIncarnation for a page token of the incarnation before", su.readsRecreatedToken)
+// newBackend returns an empty memory store with the limits of the suite, and closes it when
+// the check of h ends.
+func newBackend(h *StoreHandle) *backend {
+	b := &backend{
+		Store:   memory.New(fake.New(origin), memory.WithLimits(limits)),
+		deleted: make(map[shard.Scope]bool),
 	}
-	if su.cfg.compact != nil {
-		t.Run("returns ErrCompacted for a page token of a discarded generation", su.readsCompacted)
+	h.Cleanup(func() { assert.NoError(h, b.Close(), "Close of the memory store returns nil") })
+	return b
+}
+
+// wasDeleted reports whether a planted store deleted sc.
+func (b *backend) wasDeleted(sc shard.Scope) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.deleted[sc]
+}
+
+// wasCompacted reports whether a planted store compacted b.
+func (b *backend) wasCompacted() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.compacted
+}
+
+// plantedStore is a planted defect of the suite: the double of store.Store over a backend,
+// with the operations of the kit on the backend.
+//
+// # Concurrency
+//
+// A plantedStore is safe for concurrent use.
+type plantedStore struct {
+	store.Store
+	// b is the backend of the double.
+	b *backend
+	// points maps each loss to the point of the backend at which LoseCommit arms a fault.
+	points map[Loss]memory.Point
+}
+
+// The operations of the kit that a planted store implements.
+var (
+	_ Faulty    = plantedStore{}
+	_ Deleter   = plantedStore{}
+	_ Compactor = plantedStore{}
+)
+
+// plant returns the double of the store b, with the options opts that replace the calls of
+// b that break a law. LoseCommit of the double arms the faults of lossPoints.
+func plant(h *StoreHandle, b *backend, opts ...StoreStubOption) plantedStore {
+	return plantedStore{
+		Store:  NewStoreStub(h, append([]StoreStubOption{StoreStubDelegateTo(b.Store)}, opts...)...),
+		b:      b,
+		points: lossPoints,
 	}
-	if su.cfg.reopen != nil {
-		t.Run("returns the commits that applied before a reopen", su.readsReopened)
-	}
 }
 
-// readsNothing checks that Read returns the zero State and an empty page for a scope before
-// its first commit, whatever incarnation the reader expects.
-func (su *suite) readsNothing(t *testing.T) {
-	t.Parallel()
-	prop.ForAll(t, "Read returns the zero State and an empty page for a scope before its first commit",
-		func(c *prop.Case) {
-			s := su.open(c)
-			inc := c.Draw(prop.SampledFrom(shard.NamespaceIncarnation{}, incA, incB), "incarnation")
-			state, cur, err := s.Read(c.Context(), scope, inc, store.Query{}, page.Page{Limit: maxLimit})
-			assert.NoError(c, err, "Read returns the state of a scope before its first commit")
-			placements, token := drain(c, cur, maxLimit)
-			assert.Equal(c, state, store.State{}, "the State of a scope before its first commit is zero",
-				assert.EquateEmpty())
-			assert.Empty(c, placements, "a scope before its first commit does not have a placement")
-			assert.Equal(c, token, "", "the first page of a scope before its first commit is its last")
-		})
+// LoseCommit arms the fault of the backend at the point of l.
+func (s plantedStore) LoseCommit(l Loss) {
+	s.b.FailAt(s.points[l])
 }
 
-// readsState checks that Read returns the state that generated commits leave.
-func (su *suite) readsState(t *testing.T) {
-	t.Parallel()
-	prop.ForAll(t, "Read returns the state that the commits leave", func(c *prop.Case) {
-		s := su.open(c)
-		cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-		ms := c.Draw(su.fx.mutations, "mutations")
-		ms[0].Mapping = &su.fx.mapping
-		sm := newStateModel()
-		for i := range ms {
-			cm.commit(c, &ms[i])
-			sm.apply(&ms[i])
-		}
-		got, cur, err := s.Read(c.Context(), scope, incA, store.Query{}, page.Page{})
-		assert.NoError(c, err, "Read returns the state of the scope")
-		assert.NoError(c, cur.Close(), "Close of a cursor returns nil")
-		want := sm.state(store.Head{Generation: cm.gen, Watermark: lawTerm, Schema: store.Schema, Incarnation: incA})
-		assert.Equal(c, got, want, "Read returns the state that the commits leave", assert.EquateEmpty())
-	})
+// Delete records sc, and removes it from the backend.
+func (s plantedStore) Delete(sc shard.Scope) {
+	s.b.mu.Lock()
+	s.b.deleted[sc] = true
+	s.b.mu.Unlock()
+	s.b.Delete(sc)
 }
 
-// readsPages checks that the pages of a Read list each selected placement once, in position
-// order, at the generation of the first page, also when a commit applies between two
-// pages.
-func (su *suite) readsPages(t *testing.T) {
-	t.Parallel()
-	prop.ForAll(t, "the pages of a Read list each selected placement once, in position order, "+
-		"at the generation of the read", func(c *prop.Case) {
-		s := su.open(c)
-		cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-		batches := c.Draw(prop.List(su.fx.puts, prop.MinSize(1), prop.MaxSize(maxCommits)), "batches")
-		for _, b := range batches {
-			cm.commit(c, &store.Mutation{Put: b})
-		}
-		limit := c.Draw(prop.Integer(1, maxLimit), "limit")
-		node := c.Draw(prop.SampledFrom[shard.NodeID]("", nodeA, nodeB, nodeC), "node")
-		between := c.Draw(prop.Boolean(), "commit between the pages")
-		q := store.Query{Node: node}
-		first, cur, err := s.Read(c.Context(), scope, incA, q, page.Page{Limit: limit})
-		assert.NoError(c, err, "Read returns the first page of the scope")
-		got, token := drain(c, cur, limit)
-		if between {
-			cm.commit(c, &store.Mutation{Put: slices.Clone(su.fx.everywhere)})
-		}
-		for later := 1; token != ""; later++ {
-			assert.True(c, later <= shardCount, "Read ends its pages within one page per placement of the scope")
-			state, next, err := s.Read(c.Context(), scope, incA, q, page.Page{Token: token, Limit: limit})
-			c.Assume(!errors.Is(err, store.ErrCompacted))
-			assert.NoError(c, err, "Read returns the page of its token")
-			assert.Equal(c, state.Head.Generation, first.Head.Generation,
-				"every page of a read is at the generation of its first page")
-			var placements []shard.Placement
-			placements, token = drain(c, next, limit)
-			got = append(got, placements...)
-		}
-		assert.Equal(c, got, selected(batches, node), "the pages list each selected placement once, in position order",
-			assert.EquateEmpty())
-	})
+// Compact records the compaction, and discards the old generations of the backend.
+func (s plantedStore) Compact() {
+	s.b.mu.Lock()
+	s.b.compacted = true
+	s.b.mu.Unlock()
+	s.b.Compact()
 }
 
-// readsOtherIncarnation checks that Read returns shard.ErrIncarnation for a scope that
-// another incarnation created.
-func (su *suite) readsOtherIncarnation(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
+// HeadsStartAtZero checks that Head returns the zero Head of a scope before its first
+// commit, also while the root scope of its namespace has commits.
+//
+//dokimi:check Store.Head defect=headsFromTheRoot
+func HeadsStartAtZero(h *StoreHandle, c *prop.Case) {
+	s := h.Subject()
+	commitsToTheRoot(h, c, s)
+	got, err := s.Head(h.Context(), scope)
+	assert.NoError(h, err, h.Statement())
+	assert.Equal(h, got, store.Head{}, h.Statement())
+}
+
+// headsFromTheRoot returns a planted defect whose Head returns the header of the root scope
+// of the namespace for a cell scope before its first commit.
+func headsFromTheRoot(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreHead(func(ctx context.Context, s shard.Scope) (store.Head, error) {
+		got, err := b.Head(ctx, s)
+		if err != nil || got.Generation > 0 || s.Cell == "" {
+			return got, err
+		}
+		return b.Head(ctx, shard.Scope{Namespace: s.Namespace})
+	}))
+}
+
+// ReadsStartEmpty checks that Read returns the zero State and an empty page for a scope
+// before its first commit, also while the root scope of its namespace has commits.
+//
+//dokimi:check Store.Read defect=readsFromTheRoot
+func ReadsStartEmpty(h *StoreHandle, c *prop.Case) {
+	s := h.Subject()
+	commitsToTheRoot(h, c, s)
+	inc := c.Draw(prop.SampledFrom(shard.NamespaceIncarnation{}, incA, incB), "incarnation")
+	state, cur, err := s.Read(h.Context(), scope, inc, store.Query{}, page.Page{Limit: maxLimit})
+	assert.NoError(h, err, h.Statement())
+	placements, token := drain(h, cur, maxLimit)
+	assert.Equal(h, state, store.State{}, h.Statement(), assert.EquateEmpty())
+	assert.Empty(h, placements, h.Statement())
+	assert.Equal(h, token, "", h.Statement())
+}
+
+// readsFromTheRoot returns a planted defect whose Read returns the state and the
+// placements of the root scope of the namespace for a cell scope before its first commit.
+func readsFromTheRoot(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreRead(
+		func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, q store.Query, p page.Page) (
+			store.State, page.Cursor[shard.Placement], error,
+		) {
+			head, err := b.Head(ctx, s)
+			if err != nil || head.Generation > 0 || s.Cell == "" {
+				return b.Read(ctx, s, inc, q, p)
+			}
+			return b.Read(ctx, shard.Scope{Namespace: s.Namespace}, inc, q, p)
+		}))
+}
+
+// ReadsReturnTheCommittedState checks that Read returns the state that the commits to a
+// scope leave.
+//
+//dokimi:check Store.Read defect=forgetsDrains
+func ReadsReturnTheCommittedState(h *StoreHandle, c *prop.Case) {
+	s := h.Subject()
 	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-	cm.commit(t, &store.Mutation{})
-	_, _, err := s.Read(t.Context(), scope, incB, store.Query{}, page.Page{})
-	assert.ErrorIs(t, err, shard.ErrIncarnation, "Read returns ErrIncarnation for a scope of another incarnation")
+	ms := c.Draw(fx.mutations, "mutations")
+	ms[0].Mapping = &fx.mapping
+	sm := newStateModel()
+	for i := range ms {
+		cm.commit(h, &ms[i])
+		sm.apply(&ms[i])
+	}
+	got, cur, err := s.Read(h.Context(), scope, incA, store.Query{}, page.Page{})
+	assert.NoError(h, err, h.Statement())
+	assert.NoError(h, cur.Close(), "Close of a cursor returns nil")
+	want := sm.state(store.Head{Generation: cm.gen, Watermark: lawTerm, Schema: store.Schema, Incarnation: incA})
+	assert.Equal(h, got, want, h.Statement(), assert.EquateEmpty())
 }
 
-// readsRecreated checks that Read returns shard.ErrIncarnation to a reader of an
+// forgetsDrains returns a planted defect whose Read returns each state without its drains.
+func forgetsDrains(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreRead(
+		func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, q store.Query, p page.Page) (
+			store.State, page.Cursor[shard.Placement], error,
+		) {
+			state, cur, err := b.Read(ctx, s, inc, q, p)
+			state.Drains = nil
+			return state, cur, err
+		}))
+}
+
+// PagesListEachSelectedPlacementOnce checks that the pages of a Read list each selected
+// placement once, in position order, at the generation of the read.
+//
+//dokimi:check Store.Read defect=ignoresNodes
+func PagesListEachSelectedPlacementOnce(h *StoreHandle, c *prop.Case) {
+	s := h.Subject()
+	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
+	batches := c.Draw(prop.List(fx.puts, prop.MinSize(1), prop.MaxSize(maxCommits)), "batches")
+	for _, b := range batches {
+		cm.commit(h, &store.Mutation{Put: b})
+	}
+	limit := c.Draw(prop.Integer(1, maxLimit), "limit")
+	node := c.Draw(prop.SampledFrom[shard.NodeID]("", nodeA, nodeB, nodeC), "node")
+	between := c.Draw(prop.Boolean(), "commit between the pages")
+	q := store.Query{Node: node}
+	first, cur, err := s.Read(h.Context(), scope, incA, q, page.Page{Limit: limit})
+	assert.NoError(h, err, h.Statement())
+	got, token := drain(h, cur, limit)
+	if between {
+		cm.commit(h, &store.Mutation{Put: slices.Clone(fx.everywhere)})
+	}
+	for later := 1; token != ""; later++ {
+		assert.True(h, later <= shardCount, h.Statement())
+		state, next, err := s.Read(h.Context(), scope, incA, q, page.Page{Token: token, Limit: limit})
+		c.Assume(!errors.Is(err, store.ErrCompacted))
+		assert.NoError(h, err, h.Statement())
+		assert.Equal(h, state.Head.Generation, first.Head.Generation, h.Statement())
+		var placements []shard.Placement
+		placements, token = drain(h, next, limit)
+		got = append(got, placements...)
+	}
+	assert.Equal(h, got, selected(batches, node), h.Statement(), assert.EquateEmpty())
+}
+
+// ignoresNodes returns a planted defect whose Read returns every placement of a scope,
+// whatever node its query selects.
+func ignoresNodes(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreRead(
+		func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, _ store.Query, p page.Page) (
+			store.State, page.Cursor[shard.Placement], error,
+		) {
+			return b.Read(ctx, s, inc, store.Query{}, p)
+		}))
+}
+
+// ReadsRefuseOtherIncarnations checks that Read returns ErrIncarnation for a scope that
+// another incarnation created.
+//
+//dokimi:check Store.Read defect=readsOtherIncarnations
+func ReadsRefuseOtherIncarnations(h *StoreHandle) {
+	s := h.Subject()
+	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
+	cm.commit(h, &store.Mutation{})
+	_, _, err := s.Read(h.Context(), scope, incB, store.Query{}, page.Page{})
+	assert.ErrorIs(h, err, shard.ErrIncarnation, h.Statement())
+}
+
+// readsOtherIncarnations returns a planted defect whose Read without a page token returns
+// the state of a scope of another incarnation in place of ErrIncarnation.
+func readsOtherIncarnations(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreRead(
+		func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, q store.Query, p page.Page) (
+			store.State, page.Cursor[shard.Placement], error,
+		) {
+			state, cur, err := b.Read(ctx, s, inc, q, p)
+			if errors.Is(err, shard.ErrIncarnation) && p.Token == "" {
+				return b.Read(ctx, s, shard.NamespaceIncarnation{}, q, p)
+			}
+			return state, cur, err
+		}))
+}
+
+// ReadsRefuseRecreatedScopes checks that Read returns ErrIncarnation for a scope that
+// another incarnation created again.
+//
+//dokimi:check Store.Read defect=readsOtherIncarnations
+func ReadsRefuseRecreatedScopes(h *StoreHandle) {
+	if _, ok := recreate(h); !ok {
+		return
+	}
+	_, _, err := h.Subject().Read(h.Context(), scope, incA, store.Query{}, page.Page{})
+	assert.ErrorIs(h, err, shard.ErrIncarnation, h.Statement())
+}
+
+// PagesRefuseRecreatedScopes checks that Read returns ErrIncarnation for a page token of an
 // incarnation whose scope another incarnation created again.
-func (su *suite) readsRecreated(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
-	su.recreate(t, s)
-	_, _, err := s.Read(t.Context(), scope, incA, store.Query{}, page.Page{})
-	assert.ErrorIs(t, err, shard.ErrIncarnation,
-		"Read returns ErrIncarnation for a scope that another incarnation created again")
-}
-
-// readsRecreatedToken checks that Read returns shard.ErrIncarnation for a page token of an
-// incarnation whose scope another incarnation created again at the same generation.
-func (su *suite) readsRecreatedToken(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
-	token := su.recreate(t, s)
-	_, _, err := s.Read(
-		t.Context(),
+//
+//dokimi:check Store.Read defect=restartsPagesOfOtherIncarnations
+func PagesRefuseRecreatedScopes(h *StoreHandle) {
+	token, ok := recreate(h)
+	if !ok {
+		return
+	}
+	_, _, err := h.Subject().Read(
+		h.Context(),
 		scope,
 		shard.NamespaceIncarnation{},
 		store.Query{},
 		page.Page{Token: token, Limit: 1},
 	)
-	assert.ErrorIs(
-		t,
-		err,
-		shard.ErrIncarnation,
-		"Read returns ErrIncarnation for a page token of the incarnation before",
+	assert.ErrorIs(h, err, shard.ErrIncarnation, h.Statement())
+}
+
+// restartsPagesOfOtherIncarnations returns a planted defect whose Read of a page token of
+// another incarnation returns the first page of the scope in place of ErrIncarnation.
+func restartsPagesOfOtherIncarnations(h *StoreHandle) store.Store {
+	return restartsPages(h, shard.ErrIncarnation)
+}
+
+// PagesRefuseCompactedGenerations checks that Read returns ErrCompacted for a page token of
+// a discarded generation.
+//
+//dokimi:check Store.Read defect=restartsCompactedPages
+func PagesRefuseCompactedGenerations(h *StoreHandle) {
+	compactor, ok := operation[Compactor](h)
+	if !ok {
+		return
+	}
+	s := h.Subject()
+	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
+	cm.commit(h, &store.Mutation{Put: slices.Clone(fx.everywhere[:2])})
+	_, cur, err := s.Read(h.Context(), scope, incA, store.Query{}, page.Page{Limit: 1})
+	assert.NoError(h, err, "Read returns the first page of the scope")
+	_, token := drain(h, cur, 1)
+	cm.commit(h, &store.Mutation{Spec: []byte(`{}`)})
+	compactor.Compact()
+	_, _, err = s.Read(h.Context(), scope, incA, store.Query{}, page.Page{Token: token, Limit: 1})
+	assert.ErrorIs(h, err, store.ErrCompacted, h.Statement())
+}
+
+// restartsCompactedPages returns a planted defect whose Read of a page token of a discarded
+// generation returns the first page of the scope in place of ErrCompacted.
+func restartsCompactedPages(h *StoreHandle) store.Store {
+	return restartsPages(h, store.ErrCompacted)
+}
+
+// ReadsSurviveRestarts checks that a store that opens again after a restart returns the
+// header, the state, the placements and the receipts of the commits before the restart.
+//
+//dokimi:check Store.Read defect=forgetsOnRestart restart=forget
+func ReadsSurviveRestarts(h *StoreHandle) {
+	s := h.Subject()
+	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
+	cm.commit(h, &store.Mutation{Put: slices.Clone(fx.everywhere[:3])})
+	cm.commit(h, &store.Mutation{Put: slices.Clone(fx.everywhere[3:]), Spec: []byte(`{}`)})
+	before := capture(h, s, cm)
+	assert.NotContains(h, before.receipts, store.Receipt{}, "the scope keeps the receipt of each commit")
+	assert.Equal(h, capture(h, h.Restart(s), cm), before, h.Statement(), assert.EquateEmpty())
+}
+
+// forgetsOnRestart returns the planted defect of ReadsSurviveRestarts: a planted store over
+// a memory store of its own, which forget replaces with an empty planted store.
+func forgetsOnRestart(h *StoreHandle) store.Store {
+	return plant(h, newBackend(h))
+}
+
+// forget returns an empty planted store in place of the planted defect of
+// ReadsSurviveRestarts after a restart.
+func forget(h *StoreHandle, _ store.Store) store.Store {
+	return plant(h, newBackend(h))
+}
+
+// WatchesYieldEachGenerationOnce checks that Watch yields each later generation once, in
+// order, with its whole mutation.
+//
+//dokimi:check Store.Watch defect=yieldsHistoryWithoutSpecs
+func WatchesYieldEachGenerationOnce(h *StoreHandle, c *prop.Case) {
+	s := h.Subject()
+	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
+	ms := c.Draw(fx.mutations, "mutations")
+	for i := range ms {
+		cm.commit(h, &ms[i])
+	}
+	from := c.Draw(prop.Integer(0, len(ms)-1), "from")
+	inc := c.Draw(prop.SampledFrom(shard.NamespaceIncarnation{}, incA), "incarnation")
+	ctx, cancel := context.WithCancel(h.Context())
+	defer cancel()
+	items := streamtest.Follow(ctx, s.Watch(ctx, scope, inc, epoch.Epoch(from), ""))
+	events := until(h, items, epoch.Epoch(from), cm.gen)
+	assert.Length(h, events, len(ms)-from, h.Statement())
+	for i := range events {
+		e := &events[i]
+		assert.Equal(h, e.Generation, epoch.Epoch(from+i+1), h.Statement())
+		assert.Equal(h, e.Mutation, ms[from+i], h.Statement(), assert.EquateEmpty())
+		assert.Empty(h, e.Removed, h.Statement())
+	}
+}
+
+// yieldsHistoryWithoutSpecs returns a planted defect whose watch without a node yields the
+// generations up to its start without their specs.
+func yieldsHistoryWithoutSpecs(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreWatch(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		from epoch.Epoch, node shard.NodeID,
+	) iter.Seq2[store.Event, error] {
+		events := b.Watch(ctx, s, inc, from, node)
+		head, err := b.Head(ctx, s)
+		if err != nil || node != "" {
+			return events
+		}
+		return func(yield func(store.Event, error) bool) {
+			for e, err := range events {
+				if e.Generation <= head.Generation {
+					e.Mutation.Spec = nil
+				}
+				if !yield(e, err) {
+					return
+				}
+			}
+		}
+	}))
+}
+
+// NodeWatchesYieldTheirChanges checks that a Watch of a node yields each change that
+// concerns the node.
+//
+//dokimi:check Store.Watch defect=dropsRemovals
+func NodeWatchesYieldTheirChanges(h *StoreHandle, c *prop.Case) {
+	s := h.Subject()
+	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
+	ms := c.Draw(fx.mutations, "mutations")
+	ms[len(ms)-1].Cell = &fx.cell
+	node := c.Draw(nodes, "node")
+	wm := newWatchModel()
+	var want []store.Event
+	for i := range ms {
+		g := cm.commit(h, &ms[i])
+		if e, ok := wm.event(&ms[i], g, node); ok {
+			want = append(want, e)
+		}
+	}
+	ctx, cancel := context.WithCancel(h.Context())
+	defer cancel()
+	events := until(h, streamtest.Follow(ctx, s.Watch(ctx, scope, incA, 0, node)), 0, cm.gen)
+	assert.Pairwise(
+		h,
+		events,
+		func(earlier, later store.Event) bool { return earlier.Generation < later.Generation },
+		h.Statement(),
 	)
-}
-
-// readsCompacted checks that Read returns store.ErrCompacted for a page token of a
-// generation that the store discarded.
-func (su *suite) readsCompacted(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
-	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-	cm.commit(t, &store.Mutation{Put: slices.Clone(su.fx.everywhere[:2])})
-	_, cur, err := s.Read(t.Context(), scope, incA, store.Query{}, page.Page{Limit: 1})
-	assert.NoError(t, err, "Read returns the first page of the scope")
-	_, token := drain(t, cur, 1)
-	cm.commit(t, &store.Mutation{Spec: []byte(`{}`)})
-	su.cfg.compact(t, s)
-	_, _, err = s.Read(t.Context(), scope, incA, store.Query{}, page.Page{Token: token, Limit: 1})
-	assert.ErrorIs(t, err, store.ErrCompacted, "Read returns ErrCompacted for a page token of a discarded generation")
-}
-
-// readsReopened checks that a store over the same storage returns the header, the state,
-// the placements and the receipts of the commits that applied before a reopen.
-func (su *suite) readsReopened(t *testing.T) {
-	t.Parallel()
-	s := su.newStore(t)
-	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-	cm.commit(t, &store.Mutation{Put: slices.Clone(su.fx.everywhere[:3])})
-	cm.commit(t, &store.Mutation{Put: slices.Clone(su.fx.everywhere[3:]), Spec: []byte(`{}`)})
-	before := capture(t, s, cm)
-	r := su.cfg.reopen(t, s)
-	t.Cleanup(func() { assert.NoError(t, r.Close(), "Close returns nil") })
-	assert.Equal(t, capture(t, r, cm), before,
-		"a store that opens again returns the commits that applied before", assert.EquateEmpty())
-}
-
-// recreate commits two generations to the scope of s through a writer of the incarnation
-// A, and reads the first page of the scope with a limit of one placement. It then deletes
-// the scope, commits two generations through a writer of the incarnation B, and returns
-// the token of the page.
-func (su *suite) recreate(t *testing.T, s store.Store) string {
-	t.Helper()
-	a := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-	a.commit(t, &store.Mutation{Put: slices.Clone(su.fx.everywhere[:2])})
-	a.commit(t, &store.Mutation{Spec: []byte(`{}`)})
-	_, cur, err := s.Read(t.Context(), scope, incA, store.Query{}, page.Page{Limit: 1})
-	assert.NoError(t, err, "Read returns the first page of the scope")
-	_, token := drain(t, cur, 1)
-	assert.NotEqual(t, token, "", "Read returns a token for a scope of two placements and a limit of one")
-	su.cfg.del(t, s, scope)
-	b := &committer{w: s.Writer(scope, incB, lawTerm), inc: incB}
-	b.commit(t, &store.Mutation{Put: slices.Clone(su.fx.everywhere[:2])})
-	b.commit(t, &store.Mutation{Spec: []byte(`{}`)})
-	return token
-}
-
-// watchLaws runs the laws of Watch.
-func (su *suite) watchLaws(t *testing.T) {
-	t.Parallel()
-	t.Run("yields each later generation once with its whole mutation", su.watchesWhole)
-	t.Run("yields each change that concerns a node", su.watchesNode)
-	t.Run("yields each commit that applies after the watch started", su.watchesLater)
-	t.Run("ends once its context ends", su.watchesUntilCancel)
-	t.Run("yields ErrIncarnation for a scope of another incarnation", su.watchesOtherIncarnation)
-	t.Run("yields ErrIncarnation when another incarnation creates the scope", su.watchesCreation)
-	if su.cfg.del != nil {
-		t.Run("yields ErrIncarnation for a scope that another incarnation created again", su.watchesRecreated)
+	var changes []store.Event
+	for i := range events {
+		e := &events[i]
+		if e.Mutation.ID != (store.CommitID{}) {
+			changes = append(changes, *e)
+			continue
+		}
+		assert.Equal(h, e.Mutation, store.Mutation{}, h.Statement(), assert.EquateEmpty())
+		assert.Empty(h, e.Removed, h.Statement())
 	}
-	if su.cfg.compact != nil {
-		t.Run("yields ErrCompacted from a discarded generation", su.watchesCompacted)
-		t.Run("yields the generations after the current generation of a compacted scope", su.watchesAfterCompaction)
+	assert.Length(h, changes, len(want), h.Statement())
+	for i := range want {
+		sameChange(h, &changes[i], &want[i])
 	}
 }
 
-// watchesWhole checks that a watch without a node yields each generation after its start
-// once, in order, with the whole mutation of its commit.
-func (su *suite) watchesWhole(t *testing.T) {
-	t.Parallel()
-	prop.ForAll(t, "Watch yields each later generation once, in order, with its whole mutation", func(c *prop.Case) {
-		s := su.open(c)
-		cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-		ms := c.Draw(su.fx.mutations, "mutations")
-		for i := range ms {
-			cm.commit(c, &ms[i])
-		}
-		from := c.Draw(prop.Integer(0, len(ms)-1), "from")
-		inc := c.Draw(prop.SampledFrom(shard.NamespaceIncarnation{}, incA), "incarnation")
-		ctx, cancel := context.WithCancel(c.Context())
-		defer cancel()
-		events := until(c, streamtest.Follow(ctx, s.Watch(ctx, scope, inc, epoch.Epoch(from), "")), epoch.Epoch(from),
-			cm.gen)
-		assert.Length(c, events, len(ms)-from, "Watch yields one event per generation")
-		for i := range events {
-			e := &events[i]
-			assert.Equal(c, e.Generation, epoch.Epoch(from+i+1), "Watch yields the generations in order")
-			assert.Equal(c, e.Mutation, ms[from+i], "an event contains the whole mutation of its commit",
-				assert.EquateEmpty())
-			assert.Empty(c, e.Removed, "an event of a watch without a node lists no removed shard")
-		}
-	})
-}
-
-// watchesNode checks that a watch of a node yields each change that concerns the node,
-// with the shards whose placements stop naming the node, and progress events without a
-// change.
-func (su *suite) watchesNode(t *testing.T) {
-	t.Parallel()
-	prop.ForAll(t, "a Watch of a node yields each change that concerns the node", func(c *prop.Case) {
-		s := su.open(c)
-		cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-		ms := c.Draw(su.fx.mutations, "mutations")
-		ms[len(ms)-1].Cell = &su.fx.cell
-		node := c.Draw(nodes, "node")
-		wm := newWatchModel()
-		var want []store.Event
-		for i := range ms {
-			g := cm.commit(c, &ms[i])
-			if e, ok := wm.event(&ms[i], g, node); ok {
-				want = append(want, e)
+// dropsRemovals returns a planted defect whose watch of a node yields each event without
+// the shards whose placements stop naming the node.
+func dropsRemovals(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreWatch(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		from epoch.Epoch, node shard.NodeID,
+	) iter.Seq2[store.Event, error] {
+		events := b.Watch(ctx, s, inc, from, node)
+		return func(yield func(store.Event, error) bool) {
+			for e, err := range events {
+				e.Removed = nil
+				if !yield(e, err) {
+					return
+				}
 			}
 		}
-		ctx, cancel := context.WithCancel(c.Context())
-		defer cancel()
-		events := until(c, streamtest.Follow(ctx, s.Watch(ctx, scope, incA, 0, node)), 0, cm.gen)
-		assert.Pairwise(
-			c,
-			events,
-			func(earlier, later store.Event) bool { return earlier.Generation < later.Generation },
-			"Watch yields the generations in order",
-		)
-		var changes []store.Event
-		for i := range events {
-			e := &events[i]
-			if e.Mutation.ID != (store.CommitID{}) {
-				changes = append(changes, *e)
-				continue
-			}
-			assert.Equal(c, e.Mutation, store.Mutation{}, "a progress event contains no change", assert.EquateEmpty())
-			assert.Empty(c, e.Removed, "a progress event lists no removed shard")
-		}
-		assert.Length(c, changes, len(want), "Watch yields one event for each generation with a change of the node")
-		for i := range want {
-			sameChange(c, &changes[i], &want[i])
-		}
-	})
+	}))
 }
 
-// watchesLater checks that a watch yields each commit that applies after the watch
-// started, as the commit applies.
-func (su *suite) watchesLater(t *testing.T) {
-	t.Parallel()
-	prop.ForAll(t, "Watch yields each commit that applies after the watch started", func(c *prop.Case) {
-		s := su.open(c)
-		cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-		ms := c.Draw(su.fx.mutations, "mutations")
-		ctx, cancel := context.WithCancel(c.Context())
-		defer cancel()
-		items := streamtest.Follow(ctx, s.Watch(ctx, scope, incA, 0, ""))
-		for i := range ms {
-			g := cm.commit(c, &ms[i])
-			it, ok := streamtest.Receive(c, items, waitFor, "Watch yields a commit within the wait of the suite")
-			assert.True(c, ok, "Watch yields every commit before its context ends")
-			assert.NoError(c, it.Err, "Watch yields the generations of the scope")
-			assert.Equal(c, it.Value.Generation, g, "Watch yields the generation of the commit")
-			assert.Equal(c, it.Value.Mutation, ms[i], "an event contains the whole mutation of its commit",
-				assert.EquateEmpty())
-		}
-	})
-}
-
-// watchesUntilCancel checks that a watch ends once its context ends.
-func (su *suite) watchesUntilCancel(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
+// WatchesFollowCommits checks that Watch yields each commit that applies after the watch
+// started, with its whole mutation.
+//
+//dokimi:check Store.Watch defect=stripsLaterMutations
+func WatchesFollowCommits(h *StoreHandle, c *prop.Case) {
+	s := h.Subject()
 	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-	cm.commit(t, &store.Mutation{})
-	ctx, cancel := context.WithCancel(t.Context())
+	ms := c.Draw(fx.mutations, "mutations")
+	ctx, cancel := context.WithCancel(h.Context())
 	defer cancel()
 	items := streamtest.Follow(ctx, s.Watch(ctx, scope, incA, 0, ""))
-	_, ok := streamtest.Receive(
-		t,
-		items,
-		waitFor,
-		"Watch yields the generation of the scope within the wait of the suite",
-	)
-	assert.True(t, ok, "Watch yields the generation of the scope")
-	cancel()
-	streamtest.End(t, items, waitFor, "Watch ends once its context ends")
+	for i := range ms {
+		g := cm.commit(h, &ms[i])
+		it, ok := streamtest.Receive(h, items, waitFor, h.Statement())
+		assert.True(h, ok, h.Statement())
+		assert.NoError(h, it.Err, h.Statement())
+		assert.Equal(h, it.Value.Generation, g, h.Statement())
+		assert.Equal(h, it.Value.Mutation, ms[i], h.Statement(), assert.EquateEmpty())
+	}
 }
 
-// watchesOtherIncarnation checks that a watch of a scope of another incarnation yields
-// shard.ErrIncarnation and ends.
-func (su *suite) watchesOtherIncarnation(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
+// stripsLaterMutations returns a planted defect whose watch without a node yields each
+// generation after its start without its mutation.
+func stripsLaterMutations(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreWatch(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		from epoch.Epoch, node shard.NodeID,
+	) iter.Seq2[store.Event, error] {
+		events := b.Watch(ctx, s, inc, from, node)
+		head, err := b.Head(ctx, s)
+		if err != nil || node != "" {
+			return events
+		}
+		return func(yield func(store.Event, error) bool) {
+			for e, err := range events {
+				if e.Generation > head.Generation {
+					e.Mutation = store.Mutation{}
+				}
+				if !yield(e, err) {
+					return
+				}
+			}
+		}
+	}))
+}
+
+// WatchesEndWithTheirContext checks that Watch ends once its context ends.
+//
+//dokimi:check Store.Watch defect=ignoresWatchContexts
+func WatchesEndWithTheirContext(h *StoreHandle) {
+	s := h.Subject()
 	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-	cm.commit(t, &store.Mutation{})
-	endsWith(t, s, incB, 0, shard.ErrIncarnation, "Watch yields ErrIncarnation for a scope of another incarnation")
+	cm.commit(h, &store.Mutation{})
+	ctx, cancel := context.WithCancel(h.Context())
+	defer cancel()
+	items := streamtest.Follow(ctx, s.Watch(ctx, scope, incA, 0, ""))
+	_, ok := streamtest.Receive(h, items, waitFor, "Watch yields the generation of the scope within the wait")
+	assert.True(h, ok, "Watch yields the generation of the scope")
+	cancel()
+	streamtest.End(h, items, waitFor, h.Statement())
 }
 
-// watchesCreation checks that a watch of a scope before its first commit yields
-// shard.ErrIncarnation and ends when another incarnation creates the scope.
-func (su *suite) watchesCreation(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
-	ctx, cancel := context.WithCancel(t.Context())
+// ignoresWatchContexts returns a planted defect whose watch continues after its context
+// ends.
+func ignoresWatchContexts(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreWatch(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		from epoch.Epoch, node shard.NodeID,
+	) iter.Seq2[store.Event, error] {
+		return b.Watch(context.WithoutCancel(ctx), s, inc, from, node)
+	}))
+}
+
+// WatchesRefuseOtherIncarnations checks that Watch yields ErrIncarnation for a scope that
+// another incarnation created, and ends.
+//
+//dokimi:check Store.Watch defect=watchesOtherIncarnations
+func WatchesRefuseOtherIncarnations(h *StoreHandle) {
+	s := h.Subject()
+	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
+	cm.commit(h, &store.Mutation{})
+	endsWith(h, incB, 0, shard.ErrIncarnation)
+}
+
+// watchesOtherIncarnations returns a planted defect whose watch of a scope that another
+// incarnation created when the watch starts yields its generations in place of
+// ErrIncarnation.
+func watchesOtherIncarnations(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreWatch(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		from epoch.Epoch, node shard.NodeID,
+	) iter.Seq2[store.Event, error] {
+		head, err := b.Head(ctx, s)
+		if err == nil && !inc.IsZero() && !head.Incarnation.IsZero() && head.Incarnation != inc {
+			return b.Watch(ctx, s, shard.NamespaceIncarnation{}, from, node)
+		}
+		return b.Watch(ctx, s, inc, from, node)
+	}))
+}
+
+// WatchesRefuseCreationsByOtherIncarnations checks that Watch yields ErrIncarnation when
+// another incarnation creates the scope, and ends.
+//
+//dokimi:check Store.Watch defect=checksIncarnationsOnce
+func WatchesRefuseCreationsByOtherIncarnations(h *StoreHandle) {
+	s := h.Subject()
+	ctx, cancel := context.WithCancel(h.Context())
 	defer cancel()
 	items := streamtest.Follow(ctx, s.Watch(ctx, scope, incB, 0, ""))
 	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-	cm.commit(t, &store.Mutation{})
-	it, ok := streamtest.Receive(t, items, waitFor, "Watch yields an error within the wait of the suite")
-	assert.True(t, ok, "Watch yields an error before it ends")
-	assert.ErrorIs(
-		t,
-		it.Err,
-		shard.ErrIncarnation,
-		"Watch yields ErrIncarnation when another incarnation creates the scope",
-	)
-	streamtest.End(t, items, waitFor, "Watch ends after ErrIncarnation")
+	cm.commit(h, &store.Mutation{})
+	it, ok := streamtest.Receive(h, items, waitFor, h.Statement())
+	assert.True(h, ok, h.Statement())
+	assert.ErrorIs(h, it.Err, shard.ErrIncarnation, h.Statement())
+	streamtest.End(h, items, waitFor, h.Statement())
 }
 
-// watchesRecreated checks that a watch of an incarnation whose scope another incarnation
-// created again yields shard.ErrIncarnation and ends.
-func (su *suite) watchesRecreated(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
-	su.recreate(t, s)
-	endsWith(t, s, incA, 1, shard.ErrIncarnation,
-		"Watch yields ErrIncarnation for a scope that another incarnation created again")
+// checksIncarnationsOnce returns a planted defect whose watch of a scope before its first
+// commit yields the generations of every incarnation that creates the scope.
+func checksIncarnationsOnce(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreWatch(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		from epoch.Epoch, node shard.NodeID,
+	) iter.Seq2[store.Event, error] {
+		head, err := b.Head(ctx, s)
+		if err == nil && head.Incarnation.IsZero() {
+			return b.Watch(ctx, s, shard.NamespaceIncarnation{}, from, node)
+		}
+		return b.Watch(ctx, s, inc, from, node)
+	}))
 }
 
-// watchesCompacted checks that a watch from a generation that the store discarded yields
-// store.ErrCompacted and ends.
-func (su *suite) watchesCompacted(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
+// WatchesRefuseRecreatedScopes checks that Watch yields ErrIncarnation for a scope that
+// another incarnation created again, and ends.
+//
+//dokimi:check Store.Watch defect=watchesOtherIncarnations
+func WatchesRefuseRecreatedScopes(h *StoreHandle) {
+	if _, ok := recreate(h); !ok {
+		return
+	}
+	endsWith(h, incA, 1, shard.ErrIncarnation)
+}
+
+// WatchesRefuseCompactedGenerations checks that Watch yields ErrCompacted from a discarded
+// generation, and ends.
+//
+//dokimi:check Store.Watch defect=restartsCompactedWatches
+func WatchesRefuseCompactedGenerations(h *StoreHandle) {
+	compactor, ok := operation[Compactor](h)
+	if !ok {
+		return
+	}
+	s := h.Subject()
 	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-	cm.commit(t, &store.Mutation{})
-	cm.commit(t, &store.Mutation{Spec: []byte(`{}`)})
-	su.cfg.compact(t, s)
-	endsWith(t, s, incA, 0, store.ErrCompacted, "Watch yields ErrCompacted from a discarded generation")
+	cm.commit(h, &store.Mutation{})
+	cm.commit(h, &store.Mutation{Spec: []byte(`{}`)})
+	compactor.Compact()
+	endsWith(h, incA, 0, store.ErrCompacted)
 }
 
-// watchesAfterCompaction checks that a watch from the current generation of a compacted
-// scope yields the commits after it.
-func (su *suite) watchesAfterCompaction(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
+// restartsCompactedWatches returns a planted defect whose watch from a discarded generation
+// yields the generations from the current one in place of ErrCompacted.
+func restartsCompactedWatches(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreWatch(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		from epoch.Epoch, node shard.NodeID,
+	) iter.Seq2[store.Event, error] {
+		events := b.Watch(ctx, s, inc, from, node)
+		return func(yield func(store.Event, error) bool) {
+			for e, err := range events {
+				if !errors.Is(err, store.ErrCompacted) {
+					if !yield(e, err) {
+						return
+					}
+					continue
+				}
+				head, err := b.Head(ctx, s)
+				if err != nil {
+					yield(store.Event{}, err)
+					return
+				}
+				for e, err := range b.Watch(ctx, s, inc, head.Generation-1, node) {
+					if !yield(e, err) {
+						return
+					}
+				}
+				return
+			}
+		}
+	}))
+}
+
+// WatchesContinueAfterCompaction checks that Watch yields the commits after the current
+// generation of a compacted scope.
+//
+//dokimi:check Store.Watch defect=refusesCompactedScopes
+func WatchesContinueAfterCompaction(h *StoreHandle) {
+	compactor, ok := operation[Compactor](h)
+	if !ok {
+		return
+	}
+	s := h.Subject()
 	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-	cm.commit(t, &store.Mutation{})
-	cm.commit(t, &store.Mutation{Spec: []byte(`{}`)})
-	su.cfg.compact(t, s)
-	ctx, cancel := context.WithCancel(t.Context())
+	cm.commit(h, &store.Mutation{})
+	cm.commit(h, &store.Mutation{Spec: []byte(`{}`)})
+	compactor.Compact()
+	ctx, cancel := context.WithCancel(h.Context())
 	defer cancel()
 	items := streamtest.Follow(ctx, s.Watch(ctx, scope, incA, cm.gen, ""))
-	m := store.Mutation{Spec: []byte(`{"version":1}`)}
-	g := cm.commit(t, &m)
-	it, ok := streamtest.Receive(t, items, waitFor, "Watch yields a commit within the wait of the suite")
-	assert.True(t, ok, "Watch yields the commit after a compaction")
-	assert.NoError(t, it.Err, "Watch yields the generations after the current generation of a compacted scope")
-	assert.Equal(t, it.Value.Generation, g, "Watch yields the generation of the commit after a compaction")
+	g := cm.commit(h, &store.Mutation{Spec: []byte(`{"version":1}`)})
+	it, ok := streamtest.Receive(h, items, waitFor, h.Statement())
+	assert.True(h, ok, h.Statement())
+	assert.NoError(h, it.Err, h.Statement())
+	assert.Equal(h, it.Value.Generation, g, h.Statement())
 }
 
-// writerLaws runs the laws of Writer and its method Commit.
-func (su *suite) writerLaws(t *testing.T) {
-	t.Parallel()
-	t.Run("Commit", su.commitLaws)
+// refusesCompactedScopes returns a planted defect whose every watch after a compaction
+// yields ErrCompacted.
+func refusesCompactedScopes(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreWatch(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		from epoch.Epoch, node shard.NodeID,
+	) iter.Seq2[store.Event, error] {
+		if !b.wasCompacted() {
+			return b.Watch(ctx, s, inc, from, node)
+		}
+		return func(yield func(store.Event, error) bool) {
+			yield(store.Event{}, fmt.Errorf("%w: the generation %d of %v", store.ErrCompacted, from, s))
+		}
+	}))
 }
 
-// commitLaws runs the laws of Commit, core's fence laws among them.
-func (su *suite) commitLaws(t *testing.T) {
-	t.Parallel()
-	su.fences(t)
-	t.Run("is linearizable with Head, Read and Outcome", su.commitsLinearizably)
-	t.Run("returns the error of the encoding of a mutation that does not encode", su.commitsUnencodable)
-	tests := []struct {
-		name    string
-		loss    Loss
-		applied bool
-	}{
-		{name: "applies the retry of a lost request once", loss: LoseRequest},
-		{name: "returns the generation of a lost reply to its retry", loss: LoseReply, applied: true},
-	}
-	if su.cfg.lose != nil {
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				t.Parallel()
-				su.settles(t, tt.loss, tt.applied)
-			})
-		}
-	}
-}
-
-// fences runs core's fence laws over Commit, through a store that the laws share.
-func (su *suite) fences(t *testing.T) {
-	t.Helper()
-	s := su.open(t)
-	ctx := t.Context()
-	write := func(f fenced) error {
-		h, err := f.s.Head(ctx, f.sc)
-		expect.NoError(t, err, "Head returns the header of the scope")
-		seq := f.seq.Add(1)
-		m := store.Mutation{
-			ID:   store.CommitID{Incarnation: incA, Term: f.term, Seq: seq},
-			Spec: []byte(strconv.FormatUint(seq, 10)),
-		}
-		if _, err := f.s.Writer(f.sc, incA, f.term).Commit(ctx, h.Generation, &m); err != nil {
-			return fmt.Errorf("storetest: commit to %v at the term %d: %w", f.sc, f.term, err)
-		}
-		return nil
-	}
-	var scopes atomic.Int64
-	epochtest.AssertFencedWriter(t, epochtest.FencedSystem[fenced]{
-		NewScope: func() epochtest.FencedScope[fenced] {
-			sc := shard.Scope{
-				Namespace: namespace,
-				Cell:      shard.CellID(fencedCell + strconv.FormatInt(scopes.Add(1), 10)),
-			}
-			seq := &atomic.Uint64{}
-			return epochtest.FencedScope[fenced]{
-				Open: func(e epoch.Epoch) (fenced, error) {
-					return fenced{s: s, seq: seq, sc: sc, term: e}, nil
-				},
-				Supersede: func(e epoch.Epoch) {
-					expect.NoError(t, write(fenced{s: s, seq: seq, sc: sc, term: e}),
-						"the commit of the term that supersedes the writer applies")
-				},
-				Snapshot: func() any {
-					state, cur, err := s.Read(ctx, sc, incA, store.Query{}, page.Page{})
-					expect.NoError(t, err, "Read returns the state of the scope")
-					expect.NoError(t, cur.Close(), "Close of a cursor returns nil")
-					return state
-				},
-			}
+// HistoriesAreLinearizable checks that Commit, Head, Read and Outcome are linearizable
+// against the model of a scope.
+//
+// The machine of commits calls them on two clients, and loses up to two commits of each
+// case through a store that implements Faulty. An application requires a share of the
+// cases for each outcome of a commit.
+//
+//dokimi:check Store.Writer defect=admitsFencedCommits options=machineOptions
+func HistoriesAreLinearizable(h *StoreHandle, c *prop.Case) {
+	tab, err := tables()
+	assert.NoError(h, err, "each mutation of the machine of commits encodes")
+	m := &machine{s: h.Subject(), tab: tab, sc: scope}
+	m.lose, _ = m.s.(Faulty)
+	stateful.Steps(c, stateful.Machine[struct{}]{
+		Actions: m.actions(),
+		Settle: func(c *prop.Case, _ struct{}) {
+			history.Linearizable(h, c.History(), commitSpec, h.Statement())
 		},
-		Writes: map[string]func(fenced) error{"applies the fence laws of core": write},
-	})
+	}, stateful.Clients(2))
 }
 
-// commitsLinearizably runs the machine of commits: Commit, Head, Read and Outcome on two
-// clients, linearizable against the model of a scope. The run requires each outcome of
-// Commit in a share of its cases, and the unknown outcome with WithLostCommits.
-func (su *suite) commitsLinearizably(t *testing.T) {
-	t.Parallel()
+// machineOptions returns the least share of the cases of the machine of commits that count
+// each outcome of a commit. A store that implements Faulty also loses commits, so its cases
+// count unknown outcomes too.
+func machineOptions(h *StoreHandle) []prop.Option {
 	opts := []prop.Option{
 		prop.Require(labelApplied, shareHalf),
 		prop.Require(labelIncarnation, shareHalf),
@@ -1594,327 +1773,520 @@ func (su *suite) commitsLinearizably(t *testing.T) {
 		prop.Require(labelReused, shareQuarter),
 		prop.Require(labelReplayed, shareQuarter),
 	}
-	if su.cfg.lose != nil {
+	if _, faulty := h.Subject().(Faulty); faulty {
 		opts = append(opts, prop.Require(labelUnknown, shareThird))
 	}
-	prop.ForAll(t, "Commit, Head, Read and Outcome are linearizable against the model of a scope",
-		func(c *prop.Case) {
-			m := &machine{s: su.open(c), tab: su.tab, lose: su.cfg.lose, sc: scope}
-			stateful.Steps(c, stateful.Machine[*scopeModel]{Spec: commitSpec, Actions: m.actions()},
-				stateful.Clients(2))
-		}, opts...)
+	return opts
 }
 
-// commitsUnencodable checks that Commit returns the error of the encoding of a mutation that
-// does not encode, and leaves the scope unchanged.
-func (su *suite) commitsUnencodable(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
+// admitsFencedCommits returns a planted defect whose writers commit at the watermark of
+// the scope when their term is below it.
+func admitsFencedCommits(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	writer := func(s shard.Scope, inc shard.NamespaceIncarnation, term epoch.Epoch) store.Writer {
+		return NewWriterStub(h, WithWriterCommit(func(ctx context.Context, expect epoch.Epoch, m *store.Mutation) (
+			epoch.Epoch, error,
+		) {
+			head, err := b.Head(ctx, s)
+			if err != nil {
+				return 0, err
+			}
+			return b.Writer(s, inc, max(term, head.Watermark)).Commit(ctx, expect, m)
+		}))
+	}
+	return plant(h, b, WithStoreWriter(writer))
+}
+
+// CommitsRefuseUnencodableMutations checks that Commit returns the error of the encoding of
+// a mutation that does not encode, and leaves the scope unchanged.
+//
+//dokimi:check Store.Writer defect=appliesUnencodableMutations
+func CommitsRefuseUnencodableMutations(h *StoreHandle) {
+	s := h.Subject()
 	m := store.Mutation{
 		ID: store.CommitID{Incarnation: incA, Term: lawTerm, Seq: 1},
 		Transitions: []store.Transition{{
-			Operation: shard.OperationID{Incarnation: incA, Shard: su.fx.shards[0], Sequence: 1},
+			Operation: shard.OperationID{Incarnation: incA, Shard: fx.shards[0], Sequence: 1},
 			Phase:     invalidPhase,
 		}},
 	}
-	_, err := s.Writer(scope, incA, lawTerm).Commit(t.Context(), 0, &m)
-	assert.ErrorIs(t, err, shard.ErrUnknownPhase, "Commit returns the error of the encoding of a mutation")
-	h, err := s.Head(t.Context(), scope)
-	assert.NoError(t, err, "Head returns the header of the scope")
-	assert.Equal(t, h, store.Head{}, "a mutation that does not encode leaves the scope unchanged")
+	_, err := s.Writer(scope, incA, lawTerm).Commit(h.Context(), 0, &m)
+	assert.ErrorIs(h, err, shard.ErrUnknownPhase, h.Statement())
+	got, err := s.Head(h.Context(), scope)
+	assert.NoError(h, err, "Head returns the header of the scope")
+	assert.Equal(h, got, store.Head{}, h.Statement())
 }
 
-// settles checks that Outcome reports whether a commit that the fault l interrupted
-// applied, and that a retry of the commit applies it at most once.
-func (su *suite) settles(t *testing.T, l Loss, applied bool) {
-	t.Helper()
-	s := su.open(t)
-	w := s.Writer(scope, incA, lawTerm)
-	m := store.Mutation{ID: store.CommitID{Incarnation: incA, Term: lawTerm, Seq: 1}, Spec: []byte(`{}`)}
-	d, err := m.Digest()
-	assert.NoError(t, err, "the mutation of the law encodes")
-	su.cfg.lose(t, s, l)
-	_, err = w.Commit(t.Context(), 0, &m)
-	assert.ErrorIs(
-		t,
-		err,
-		version.ErrOutcomeUnknown,
-		"Commit returns ErrOutcomeUnknown for a commit that a fault interrupts",
-	)
-	_, ok, err := s.Outcome(t.Context(), scope, m.ID)
-	assert.NoError(t, err, "Outcome returns the receipt of a commit")
-	assert.Equal(t, ok, applied, "Outcome reports the receipt of a lost commit exactly when the commit applied")
-	g, err := w.Commit(t.Context(), 0, &m)
-	assert.NoError(t, err, "the retry of a lost commit returns the generation of the commit")
-	assert.Equal(t, g, epoch.Epoch(1), "the retry of a lost commit returns the generation that the commit created")
-	r, ok, err := s.Outcome(t.Context(), scope, m.ID)
-	assert.NoError(t, err, "Outcome returns the receipt of a commit")
-	assert.True(t, ok, "Outcome reports the receipt of a settled commit")
-	assert.Equal(t, r, store.Receipt{ID: m.ID, Digest: d, Generation: 1},
-		"the receipt of a settled commit contains its digest and its generation")
-}
-
-// outcomeLaws runs the laws of Outcome apart from the machine of commits.
-func (su *suite) outcomeLaws(t *testing.T) {
-	t.Parallel()
-	if su.cfg.del != nil {
-		t.Run(
-			"returns no receipt of an incarnation whose scope another incarnation created again",
-			su.outcomesRecreated,
-		)
+// appliesUnencodableMutations returns a planted defect whose writers commit a mutation that
+// does not encode without its transitions.
+func appliesUnencodableMutations(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	writer := func(s shard.Scope, inc shard.NamespaceIncarnation, term epoch.Epoch) store.Writer {
+		w := b.Writer(s, inc, term)
+		return NewWriterStub(h, WriterStubDelegateTo(w), WithWriterCommit(
+			func(ctx context.Context, expect epoch.Epoch, m *store.Mutation) (epoch.Epoch, error) {
+				if _, err := m.Digest(); err != nil {
+					encodable := *m
+					encodable.Transitions = nil
+					return w.Commit(ctx, expect, &encodable)
+				}
+				return w.Commit(ctx, expect, m)
+			}))
 	}
+	return plant(h, b, WithStoreWriter(writer))
 }
 
-// outcomesRecreated checks that Outcome returns no receipt of an incarnation whose scope
-// another incarnation created again.
-func (su *suite) outcomesRecreated(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
-	su.recreate(t, s)
-	_, ok, err := s.Outcome(t.Context(), scope, store.CommitID{Incarnation: incA, Term: lawTerm, Seq: 2})
-	assert.NoError(t, err, "Outcome returns the receipt of a commit")
-	assert.False(t, ok, "a receipt does not outlive the incarnation of its commit")
+// LostRequestsApplyOnTheirRetry checks that a commit whose request a fault loses has no
+// receipt until its retry applies it once.
+//
+//dokimi:check Store.Writer defect=appliesLostRequests
+func LostRequestsApplyOnTheirRetry(h *StoreHandle) {
+	settles(h, LoseRequest, false)
 }
 
-// campaignLaws runs the laws of Campaign and of the terms that it grants.
-func (su *suite) campaignLaws(t *testing.T) {
-	t.Parallel()
-	t.Run("grants each term to one candidate at a time", su.campaignsExclusively)
-	t.Run("grants a term above the watermark of the scope", su.campaignsAboveWatermark)
-	t.Run("returns the error of its context while another candidate leads", su.campaignsUntilCancel)
-	t.Run("ends the term once the context of the campaign ends", su.campaignsWithContext)
-	t.Run("grants the next term once the leader resigns", su.campaignsAfterResign)
+// appliesLostRequests returns a planted defect whose lost request applies its commit, as a
+// lost reply does.
+func appliesLostRequests(h *StoreHandle) store.Store {
+	s := plant(h, newBackend(h))
+	s.points = map[Loss]memory.Point{LoseRequest: memory.PointCommitAck, LoseReply: memory.PointCommitAck}
+	return s
 }
 
-// campaignsExclusively checks with concurrent candidates that the election of a scope
-// grants each term to one candidate at a time, each term above the terms before it. Each
-// candidate campaigns once with an ended context, and that campaign returns the error of
-// its context.
-func (su *suite) campaignsExclusively(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
-	live := t.Context()
+// LostRepliesKeepTheirCommit checks that a commit whose reply a fault loses keeps its
+// receipt and returns its generation to its retry.
+//
+//dokimi:check Store.Writer defect=dropsCommitsOfLostReplies
+func LostRepliesKeepTheirCommit(h *StoreHandle) {
+	settles(h, LoseReply, true)
+}
+
+// dropsCommitsOfLostReplies returns a planted defect whose lost reply drops its commit, as
+// a lost request does.
+func dropsCommitsOfLostReplies(h *StoreHandle) store.Store {
+	s := plant(h, newBackend(h))
+	s.points = map[Loss]memory.Point{LoseRequest: memory.PointCommitApply, LoseReply: memory.PointCommitApply}
+	return s
+}
+
+// ReceiptsEndWithTheirIncarnation checks that Outcome returns no receipt of an incarnation
+// whose scope another incarnation created again.
+//
+//dokimi:check Store.Outcome defect=answersDeletedIncarnations
+func ReceiptsEndWithTheirIncarnation(h *StoreHandle) {
+	if _, ok := recreate(h); !ok {
+		return
+	}
+	_, ok, err := h.Subject().Outcome(h.Context(), scope, store.CommitID{Incarnation: incA, Term: lawTerm, Seq: 2})
+	assert.NoError(h, err, "Outcome returns the receipt of a commit")
+	assert.False(h, ok, h.Statement())
+}
+
+// answersDeletedIncarnations returns a planted defect whose Outcome of a commit ID of a
+// deleted scope returns the receipt of the same term and number in the incarnation that
+// created the scope again.
+func answersDeletedIncarnations(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreOutcome(func(ctx context.Context, sc shard.Scope, cid store.CommitID) (
+		store.Receipt, bool, error,
+	) {
+		r, ok, err := b.Outcome(ctx, sc, cid)
+		if err != nil || ok || !b.wasDeleted(sc) {
+			return r, ok, err
+		}
+		head, err := b.Head(ctx, sc)
+		if err != nil {
+			return store.Receipt{}, false, err
+		}
+		return b.Outcome(ctx, sc, store.CommitID{Incarnation: head.Incarnation, Term: cid.Term, Seq: cid.Seq})
+	}))
+}
+
+// TermsAreExclusive checks that Campaign grants each term to one candidate at a time, above
+// the terms before it.
+//
+// Concurrent candidates each lead their terms and resign. Each candidate campaigns once
+// with an ended context, and only such a campaign returns an error.
+//
+//dokimi:check Store.Campaign defect=reusesTerms
+func TermsAreExclusive(h *StoreHandle) {
+	s := h.Subject()
+	live := h.Context()
 	ended, cancel := context.WithCancel(live)
 	cancel()
-	h := history.New()
+	calls := history.New()
 	outcomes := history.Concurrently(candidates, waitFor, func(client int) (any, error) {
 		for round := range rounds {
 			ctx := live
 			if (client+round)%candidates == 0 {
 				ctx = ended
 			}
-			call := h.Invoke(client, opLead, nil)
+			call := calls.Invoke(client, opLead, nil)
 			l, err := s.Campaign(ctx, scope)
 			if err != nil {
-				expect.ErrorIs(t, err, context.Canceled, "Campaign returns an error only for an ended context")
+				expect.Equal(h, ctx, ended, "Campaign returns an error only for an ended context", assert.ByIdentity())
 				call.Fail(err)
 				continue
 			}
 			call.OK(l.Term())
-			call = h.Invoke(client, opResign, nil)
-			expect.NoError(t, l.Resign(live), "Resign returns nil")
+			call = calls.Invoke(client, opResign, nil)
+			expect.NoError(h, l.Resign(live), "Resign returns nil")
 			call.OK(nil)
 		}
 		return client, nil
 	})
 	for _, o := range outcomes {
-		assert.True(t, o.Finished, "each candidate leads its terms within the wait of the suite")
+		assert.True(h, o.Finished, "each candidate leads its terms within the wait of the suite")
 	}
-	history.Linearizable(
-		t,
-		h,
-		termSpec,
-		"Campaign grants each term to one candidate at a time, above the terms before it",
-	)
+	history.Linearizable(h, calls, termSpec, h.Statement())
 }
 
-// campaignsAboveWatermark checks that the election of a scope grants a term above the
-// watermark of the scope.
-func (su *suite) campaignsAboveWatermark(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
+// reusesTerms returns a planted defect whose every term is the term after the watermark of
+// its scope.
+func reusesTerms(h *StoreHandle) store.Store {
+	return termDefect(h, func(_, watermark epoch.Epoch) epoch.Epoch { return watermark + 1 })
+}
+
+// TermsExceedTheWatermark checks that Campaign grants a term above the watermark of the
+// scope.
+//
+//dokimi:check Store.Campaign defect=countsTermsFromTheWatermark
+func TermsExceedTheWatermark(h *StoreHandle) {
+	s := h.Subject()
 	m := store.Mutation{ID: store.CommitID{Incarnation: incA, Term: highTerm, Seq: 1}}
-	_, err := s.Writer(scope, incA, highTerm).Commit(t.Context(), 0, &m)
-	assert.NoError(t, err, "Commit applies the commit that raises the watermark")
-	l, err := s.Campaign(t.Context(), scope)
-	assert.NoError(t, err, "Campaign grants a term")
-	assert.True(t, l.Term() > highTerm, "Campaign grants a term above the watermark of the scope")
-	assert.NoError(t, l.Resign(t.Context()), "Resign returns nil")
+	_, err := s.Writer(scope, incA, highTerm).Commit(h.Context(), 0, &m)
+	assert.NoError(h, err, "Commit applies the commit that raises the watermark")
+	l, err := s.Campaign(h.Context(), scope)
+	assert.NoError(h, err, "Campaign grants a term")
+	assert.True(h, l.Term() > highTerm, h.Statement())
+	assert.NoError(h, l.Resign(h.Context()), "Resign returns nil")
 }
 
-// campaignsUntilCancel checks that Campaign returns the error of its context while another
-// candidate leads.
-func (su *suite) campaignsUntilCancel(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
-	l, err := s.Campaign(t.Context(), scope)
-	assert.NoError(t, err, "Campaign grants a term")
-	assert.HonoursCancellation(t, func(ctx context.Context) error {
+// countsTermsFromTheWatermark returns a planted defect whose every term counts the terms
+// after the watermark of its scope.
+func countsTermsFromTheWatermark(h *StoreHandle) store.Store {
+	return termDefect(h, func(term, watermark epoch.Epoch) epoch.Epoch { return term - watermark })
+}
+
+// CampaignsHonourCancellation checks that Campaign returns the error of its context while
+// another candidate leads.
+//
+//dokimi:check Store.Campaign defect=hidesCampaignCancellations
+func CampaignsHonourCancellation(h *StoreHandle) {
+	s := h.Subject()
+	l, err := s.Campaign(h.Context(), scope)
+	assert.NoError(h, err, "Campaign grants a term")
+	assert.HonoursCancellation(h, func(ctx context.Context) error {
 		_, err := s.Campaign(ctx, scope)
 		// The wrap of a nil error matches no cancellation, so a Campaign that returns nil
 		// fails the check.
 		return fmt.Errorf("storetest: campaign while another candidate leads: %w", err)
-	}, "Campaign returns the error of its context while another candidate leads")
-	assert.NoError(t, l.Resign(t.Context()), "Resign returns nil")
+	}, h.Statement())
+	assert.NoError(h, l.Resign(h.Context()), "Resign returns nil")
 }
 
-// campaignsWithContext checks that a term ends once the context of the campaign that
+// hidesCampaignCancellations returns a planted defect whose Campaign returns errStopped in
+// place of the error of its ended context.
+func hidesCampaignCancellations(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreCampaign(func(ctx context.Context, s shard.Scope) (store.Leadership, error) {
+		l, err := b.Campaign(ctx, s)
+		if err != nil && ctx.Err() != nil {
+			return nil, errStopped
+		}
+		return l, err
+	}))
+}
+
+// TermsEndWithTheirCampaign checks that a term ends once the context of the campaign that
 // granted it ends.
-func (su *suite) campaignsWithContext(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
-	ctx, cancel := context.WithCancel(t.Context())
+//
+//dokimi:check Store.Campaign defect=outlivesCampaigns
+func TermsEndWithTheirCampaign(h *StoreHandle) {
+	ctx, cancel := context.WithCancel(h.Context())
 	defer cancel()
-	l, err := s.Campaign(ctx, scope)
-	assert.NoError(t, err, "Campaign grants a term")
+	l, err := h.Subject().Campaign(ctx, scope)
+	assert.NoError(h, err, "Campaign grants a term")
 	cancel()
-	streamtest.Receive(t, l.Done(), waitFor, "Done is closed once the context of the campaign ends")
+	streamtest.Receive(h, l.Done(), waitFor, h.Statement())
 }
 
-// campaignsAfterResign checks that a waiting candidate leads once the leader resigns, with
-// a term above the term of the leader.
-func (su *suite) campaignsAfterResign(t *testing.T) {
-	t.Parallel()
-	s := su.open(t)
-	first, err := s.Campaign(t.Context(), scope)
-	assert.NoError(t, err, "Campaign grants a term")
+// outlivesCampaigns returns a planted defect whose terms report their end only after Resign
+// or Close.
+func outlivesCampaigns(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	closed := make(chan struct{})
+	var once sync.Once
+	end := func() { once.Do(func() { close(closed) }) }
+	h.Cleanup(end)
+	return plant(h, b,
+		WithStoreClose(func() error {
+			end()
+			return b.Close()
+		}),
+		WithStoreCampaign(func(ctx context.Context, s shard.Scope) (store.Leadership, error) {
+			l, err := b.Campaign(ctx, s)
+			if err != nil {
+				return l, err
+			}
+			done := make(chan struct{})
+			var resign sync.Once
+			stop := func() { resign.Do(func() { close(done) }) }
+			go func() {
+				<-closed
+				stop()
+			}()
+			return NewLeadershipStub(h, LeadershipStubDelegateTo(l),
+				WithLeadershipDone(func() <-chan struct{} { return done }),
+				WithLeadershipResign(func(ctx context.Context) error {
+					defer stop()
+					return l.Resign(ctx)
+				})), nil
+		}))
+}
+
+// ResignationsElectTheNextCandidate checks that a waiting candidate leads once the leader
+// resigns.
+//
+//dokimi:check Store.Campaign defect=keepsTermsAfterResign
+func ResignationsElectTheNextCandidate(h *StoreHandle) {
+	s := h.Subject()
+	first, err := s.Campaign(h.Context(), scope)
+	assert.NoError(h, err, "Campaign grants a term")
 	type grant struct {
 		l   store.Leadership
 		err error
 	}
 	grants := make(chan grant, 1)
 	go func() {
-		l, err := s.Campaign(t.Context(), scope)
+		l, err := s.Campaign(h.Context(), scope)
 		grants <- grant{l: l, err: err}
 	}()
-	assert.NoError(t, first.Resign(t.Context()), "Resign returns nil")
-	streamtest.Receive(t, first.Done(), waitFor, "Done is closed once the leader resigns")
-	next, _ := streamtest.Receive(t, grants, waitFor, "the next candidate leads within the wait of the suite")
-	assert.NoError(t, next.err, "Campaign grants the next candidate a term")
-	assert.True(t, next.l.Term() > first.Term(), "the next term is above the term before it")
-	assert.NoError(t, next.l.Resign(t.Context()), "Resign returns nil")
+	assert.NoError(h, first.Resign(h.Context()), "Resign returns nil")
+	streamtest.Receive(h, first.Done(), waitFor, h.Statement())
+	next, _ := streamtest.Receive(h, grants, waitFor, h.Statement())
+	assert.NoError(h, next.err, h.Statement())
+	assert.NoError(h, next.l.Resign(h.Context()), "Resign returns nil")
 }
 
-// fitsLaws runs the law of Fits.
-func (su *suite) fitsLaws(t *testing.T) {
-	t.Parallel()
-	t.Run("returns ErrTooLarge for exactly the mutations that Commit refuses as too large", func(t *testing.T) {
-		t.Parallel()
-		prop.ForAll(t, "Fits returns ErrTooLarge for each mutation that Commit refuses as too large, and nil "+
-			"for each mutation that Commit applies", func(c *prop.Case) {
-			s := su.open(c)
-			lim := s.Limits(scope)
-			n := c.Draw(prop.Integer(0, min(lim.MaxPlacements, maxFitsPlacements)+fitsPlacementSlack), "placements")
-			size := c.Draw(prop.Integer(0, min(lim.MaxBytes, maxFitsBytes)+fitsByteSlack), "spec bytes")
-			m := store.Mutation{
-				ID:   store.CommitID{Incarnation: incA, Term: lawTerm, Seq: 1},
-				Put:  make([]shard.Placement, n),
-				Spec: make([]byte, size),
+// keepsTermsAfterResign returns a planted defect whose terms report their end after the end
+// of their campaign or after Close, and not after Resign.
+func keepsTermsAfterResign(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreCampaign(func(ctx context.Context, s shard.Scope) (store.Leadership, error) {
+		l, err := b.Campaign(ctx, s)
+		if err != nil {
+			return l, err
+		}
+		done := make(chan struct{})
+		var resigned atomic.Bool
+		go func() {
+			<-l.Done()
+			if !resigned.Load() {
+				close(done)
 			}
-			for i := range m.Put {
-				m.Put[i] = shard.Placement{
-					Shard: shard.ID{ID128: id.ID128{0: tagFits, 14: byte(i >> 8), 15: byte(i)}},
-					Range: shard.Range{Start: []byte{byte(i >> 8), byte(i)}},
+		}()
+		return NewLeadershipStub(h, LeadershipStubDelegateTo(l),
+			WithLeadershipDone(func() <-chan struct{} { return done }),
+			WithLeadershipResign(func(ctx context.Context) error {
+				resigned.Store(true)
+				return l.Resign(ctx)
+			})), nil
+	}))
+}
+
+// FitsMatchesCommit checks that Fits returns ErrTooLarge for each mutation that Commit
+// refuses as too large, and nil for each mutation that Commit applies.
+//
+//dokimi:check Store.Fits defect=fitsEverything
+func FitsMatchesCommit(h *StoreHandle, c *prop.Case) {
+	s := h.Subject()
+	lim := s.Limits(scope)
+	n := c.Draw(prop.Integer(0, min(lim.MaxPlacements, maxFitsPlacements)+fitsPlacementSlack), "placements")
+	size := c.Draw(prop.Integer(0, min(lim.MaxBytes, maxFitsBytes)+fitsByteSlack), "spec bytes")
+	m := store.Mutation{
+		ID:   store.CommitID{Incarnation: incA, Term: lawTerm, Seq: 1},
+		Put:  make([]shard.Placement, n),
+		Spec: make([]byte, size),
+	}
+	for i := range m.Put {
+		m.Put[i] = shard.Placement{
+			Shard: shard.ID{ID128: id.ID128{0: tagFits, 14: byte(i >> 8), 15: byte(i)}},
+			Range: shard.Range{Start: []byte{byte(i >> 8), byte(i)}},
+		}
+	}
+	fits := s.Fits(scope, &m)
+	_, committed := s.Writer(scope, incA, lawTerm).Commit(h.Context(), 0, &m)
+	if fits == nil {
+		assert.NoError(h, committed, h.Statement())
+		return
+	}
+	assert.ErrorIs(h, fits, store.ErrTooLarge, h.Statement())
+	assert.ErrorIs(h, committed, store.ErrTooLarge, h.Statement())
+	got, err := s.Head(h.Context(), scope)
+	assert.NoError(h, err, "Head returns the header of the scope")
+	assert.Equal(h, got, store.Head{}, h.Statement())
+}
+
+// fitsEverything returns a planted defect whose Fits returns nil for every mutation.
+func fitsEverything(h *StoreHandle) store.Store {
+	return plant(h, newBackend(h), WithStoreFits(func(shard.Scope, *store.Mutation) error { return nil }))
+}
+
+// CloseEndsWatchesAndTerms checks that Close ends the watches and the terms of the store.
+//
+//dokimi:check Store.Close defect=keepsWatchesAfterClose
+func CloseEndsWatchesAndTerms(h *StoreHandle) {
+	s := h.Subject()
+	cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
+	cm.commit(h, &store.Mutation{})
+	l, err := s.Campaign(h.Context(), scope)
+	assert.NoError(h, err, "Campaign grants a term")
+	ctx, cancel := context.WithCancel(h.Context())
+	defer cancel()
+	items := streamtest.Follow(ctx, s.Watch(ctx, scope, incA, 0, ""))
+	_, ok := streamtest.Receive(h, items, waitFor, "Watch yields the generation of the scope within the wait")
+	assert.True(h, ok, "Watch yields the generation of the scope")
+	assert.NoError(h, s.Close(), "Close returns nil")
+	streamtest.Receive(h, l.Done(), waitFor, h.Statement())
+	streamtest.End(h, items, waitFor, h.Statement())
+}
+
+// keepsWatchesAfterClose returns a planted defect whose watches wait for the end of their
+// context after Close.
+func keepsWatchesAfterClose(h *StoreHandle) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreWatch(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		from epoch.Epoch, node shard.NodeID,
+	) iter.Seq2[store.Event, error] {
+		events := b.Watch(ctx, s, inc, from, node)
+		return func(yield func(store.Event, error) bool) {
+			for e, err := range events {
+				if errors.Is(err, memory.ErrClosed) {
+					<-ctx.Done()
+					return
+				}
+				if !yield(e, err) {
+					return
 				}
 			}
-			fits := s.Fits(scope, &m)
-			_, committed := s.Writer(scope, incA, lawTerm).Commit(c.Context(), 0, &m)
-			if fits != nil {
-				assert.ErrorIs(c, fits, store.ErrTooLarge, "Fits returns ErrTooLarge for a mutation that does not fit")
-				assert.ErrorIs(
-					c,
-					committed,
-					store.ErrTooLarge,
-					"Commit returns ErrTooLarge for a mutation that Fits refuses",
-				)
-				h, err := s.Head(c.Context(), scope)
-				assert.NoError(c, err, "Head returns the header of the scope")
-				assert.Equal(c, h, store.Head{}, "a commit of a mutation that does not fit leaves the scope unchanged")
-				return
+		}
+	}))
+}
+
+// restartsPages returns a planted defect whose Read of a page token returns the first page
+// of the scope in place of an error that wraps target.
+func restartsPages(h *StoreHandle, target error) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreRead(
+		func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, q store.Query, p page.Page) (
+			store.State, page.Cursor[shard.Placement], error,
+		) {
+			state, cur, err := b.Read(ctx, s, inc, q, p)
+			if errors.Is(err, target) && p.Token != "" {
+				return b.Read(ctx, s, inc, q, page.Page{Limit: p.Limit})
 			}
-			assert.NoError(c, committed, "Commit applies a mutation that fits")
-		})
-	})
+			return state, cur, err
+		}))
 }
 
-// closeLaws runs the law of Close.
-func (su *suite) closeLaws(t *testing.T) {
-	t.Parallel()
-	t.Run("ends the watches and the terms of the store", func(t *testing.T) {
-		t.Parallel()
-		s := su.newStore(t)
-		cm := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
-		cm.commit(t, &store.Mutation{})
-		l, err := s.Campaign(t.Context(), scope)
-		assert.NoError(t, err, "Campaign grants a term")
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		items := streamtest.Follow(ctx, s.Watch(ctx, scope, incA, 0, ""))
-		_, ok := streamtest.Receive(
-			t,
-			items,
-			waitFor,
-			"Watch yields the generation of the scope within the wait of the suite",
-		)
-		assert.True(t, ok, "Watch yields the generation of the scope")
-		assert.NoError(t, s.Close(), "Close returns nil")
-		streamtest.Receive(t, l.Done(), waitFor, "Done of a term is closed once its store closes")
-		streamtest.End(t, items, waitFor, "a watch ends once its store closes")
-	})
+// termDefect returns a planted defect whose every term is the term that term returns for
+// the term that the memory store granted and the watermark of the scope at the grant.
+func termDefect(h *StoreHandle, term func(granted, watermark epoch.Epoch) epoch.Epoch) store.Store {
+	b := newBackend(h)
+	return plant(h, b, WithStoreCampaign(func(ctx context.Context, s shard.Scope) (store.Leadership, error) {
+		l, err := b.Campaign(ctx, s)
+		if err != nil {
+			return l, err
+		}
+		head, err := b.Head(ctx, s)
+		if err != nil {
+			return nil, errors.Join(err, l.Resign(ctx))
+		}
+		changed := term(l.Term(), head.Watermark)
+		return NewLeadershipStub(h, LeadershipStubDelegateTo(l),
+			WithLeadershipTerm(func() epoch.Epoch { return changed })), nil
+	}))
 }
 
-// AssertStore checks the laws of package store against the stores that newStore returns.
-// newStore returns an empty store, and fails tb when it cannot open one. Each case of a law
-// opens a store of its own, so no case observes the scopes of another, and the suite
-// closes each store when its case ends. A case can call newStore on a goroutine other than
-// the goroutine of the test, with an assert.TB that is not a *testing.T.
-//
-// The suite runs one subtest per method of the store:
-//
-//   - Head returns the zero Head of a scope before its first commit.
-//   - Read returns the zero State of such a scope, the state that generated commits leave,
-//     and pages that list each selected placement once at the generation of the read. It
-//     returns shard.ErrIncarnation for a scope of another incarnation.
-//   - Watch yields each later generation once with its whole mutation, each change that
-//     concerns a node, and each commit after its start. It ends with its context, and
-//     yields shard.ErrIncarnation for a scope of another incarnation.
-//   - Writer and Commit pass core's fence laws, and a machine of commits on two clients
-//     checks after every step that Commit, Head, Read and Outcome are linearizable against
-//     a model of the scope. A mutation that does not encode leaves the scope unchanged.
-//   - Campaign grants each term to one candidate at a time, above the watermark and the
-//     terms before it. A term ends with the context of its campaign, and the next
-//     candidate leads once the leader resigns. Campaign returns the error of its context
-//     while another candidate leads.
-//   - Fits returns store.ErrTooLarge for exactly the mutations that Commit refuses as too
-//     large, near the limits of the store.
-//   - Close ends the watches and the terms of the store.
-//
-// The suite commits mutations of up to 3 placements, 3 transitions, 3 reservations and 3
-// drains, so the limits of the store admit them. Each [Option] adds the laws that its
-// docblock lists.
-//
-// # Concurrency
-//
-// The subtests of the suite run in parallel.
-func AssertStore(t *testing.T, newStore func(tb assert.TB) store.Store, opts ...Option) {
-	t.Helper()
-	su := &suite{newStore: newStore, fx: newFixture(), tab: newTable(t)}
-	for _, o := range opts {
-		o(&su.cfg)
+// operation returns the subject of h as the operation O of the kit. It reports false, and
+// ends the check with a fault that wraps ErrOperation, when the subject does not implement
+// O.
+func operation[O any](h *StoreHandle) (O, bool) {
+	o, ok := h.Subject().(O)
+	if !ok {
+		assert.Fault(h, fmt.Errorf("%w: %T does not implement %v", ErrOperation, h.Subject(), reflect.TypeFor[O]()))
 	}
-	t.Run("Head", su.headLaws)
-	t.Run("Read", su.readLaws)
-	t.Run("Watch", su.watchLaws)
-	t.Run("Writer", su.writerLaws)
-	t.Run("Outcome", su.outcomeLaws)
-	t.Run("Campaign", su.campaignLaws)
-	t.Run("Fits", su.fitsLaws)
-	t.Run("Close", su.closeLaws)
+	return o, ok
+}
+
+// recreate commits two generations to the scope of the subject of h through a writer of
+// the incarnation A, and reads the first page of the scope with a limit of one placement.
+// It then deletes the scope and commits two generations through a writer of the
+// incarnation B. It returns the token of the page. It reports false, and ends the check
+// with a fault, when the subject does not implement Deleter.
+func recreate(h *StoreHandle) (string, bool) {
+	deleter, ok := operation[Deleter](h)
+	if !ok {
+		return "", false
+	}
+	s := h.Subject()
+	a := &committer{w: s.Writer(scope, incA, lawTerm), inc: incA}
+	a.commit(h, &store.Mutation{Put: slices.Clone(fx.everywhere[:2])})
+	a.commit(h, &store.Mutation{Spec: []byte(`{}`)})
+	_, cur, err := s.Read(h.Context(), scope, incA, store.Query{}, page.Page{Limit: 1})
+	assert.NoError(h, err, "Read returns the first page of the scope")
+	_, token := drain(h, cur, 1)
+	assert.NotEqual(h, token, "", "Read returns a token for a scope of two placements and a limit of one")
+	deleter.Delete(scope)
+	b := &committer{w: s.Writer(scope, incB, lawTerm), inc: incB}
+	b.commit(h, &store.Mutation{Put: slices.Clone(fx.everywhere[:2])})
+	b.commit(h, &store.Mutation{Spec: []byte(`{}`)})
+	return token, true
+}
+
+// commitsToTheRoot commits the mutations that c draws to the root scope of the namespace,
+// through a writer of the incarnation A, when c draws commits there.
+func commitsToTheRoot(h *StoreHandle, c *prop.Case, s store.Store) {
+	if !c.Draw(prop.Boolean(), "commits to the root scope") {
+		return
+	}
+	cm := &committer{w: s.Writer(root, incA, lawTerm), inc: incA}
+	ms := c.Draw(fx.mutations, "mutations of the root scope")
+	for i := range ms {
+		cm.commit(h, &ms[i])
+	}
+}
+
+// settles checks that Outcome reports whether a commit that the fault l interrupted
+// applied, and that a retry of the commit applies it at most once.
+func settles(h *StoreHandle, l Loss, applied bool) {
+	faulty, ok := operation[Faulty](h)
+	if !ok {
+		return
+	}
+	s := h.Subject()
+	w := s.Writer(scope, incA, lawTerm)
+	m := store.Mutation{ID: store.CommitID{Incarnation: incA, Term: lawTerm, Seq: 1}, Spec: []byte(`{}`)}
+	d, err := m.Digest()
+	assert.NoError(h, err, "the mutation of the check encodes")
+	faulty.LoseCommit(l)
+	_, err = w.Commit(h.Context(), 0, &m)
+	assert.ErrorIs(h, err, version.ErrOutcomeUnknown, "a commit that a fault interrupts returns ErrOutcomeUnknown")
+	_, ok, err = s.Outcome(h.Context(), scope, m.ID)
+	assert.NoError(h, err, "Outcome returns the receipt of a commit")
+	assert.Equal(h, ok, applied, h.Statement())
+	g, err := w.Commit(h.Context(), 0, &m)
+	assert.NoError(h, err, h.Statement())
+	assert.Equal(h, g, epoch.Epoch(1), h.Statement())
+	r, ok, err := s.Outcome(h.Context(), scope, m.ID)
+	assert.NoError(h, err, "Outcome returns the receipt of a commit")
+	assert.True(h, ok, h.Statement())
+	assert.Equal(h, r, store.Receipt{ID: m.ID, Digest: d, Generation: 1}, h.Statement())
 }
 
 // generateCommit generates the input of a commit of the machine of commits. The input has a
 // writer, a number, a variant and the generation that the commit expects.
-func generateCommit(c *prop.Case, _ *scopeModel) any {
+func generateCommit(c *prop.Case, _ struct{}) any {
 	return commitCall{
 		w:       c.Draw(prop.Integer(0, len(writers)-1), "writer"),
 		seq:     c.Draw(prop.Integer(1, seqs), "number"),
@@ -1925,7 +2297,7 @@ func generateCommit(c *prop.Case, _ *scopeModel) any {
 
 // generateOutcome generates the input of a call of Outcome of the machine of commits. The
 // input has a writer and a number.
-func generateOutcome(c *prop.Case, _ *scopeModel) any {
+func generateOutcome(c *prop.Case, _ struct{}) any {
 	return outcomeCall{
 		w:   c.Draw(prop.Integer(0, len(writers)-1), "writer"),
 		seq: c.Draw(prop.Integer(1, seqs), "number"),
@@ -1933,7 +2305,7 @@ func generateOutcome(c *prop.Case, _ *scopeModel) any {
 }
 
 // generateLoss generates the point at which the next commit of the machine of commits fails.
-func generateLoss(c *prop.Case, _ *scopeModel) any {
+func generateLoss(c *prop.Case, _ struct{}) any {
 	return c.Draw(prop.SampledFrom(LoseRequest, LoseReply), "loss")
 }
 
@@ -1973,7 +2345,8 @@ func drain(tb assert.TB, cur page.Cursor[shard.Placement], limit int) ([]shard.P
 }
 
 // capture returns the image of the scope that s returns: its header, its state, its
-// placements on one page, and the receipts of the commits of cm.
+// placements on one page, and the receipts of the commits of cm. The image has the zero
+// Receipt for each commit whose receipt s does not have.
 func capture(tb assert.TB, s store.Store, cm *committer) image {
 	tb.Helper()
 	ctx := assert.Context(tb)
@@ -1990,46 +2363,43 @@ func capture(tb assert.TB, s store.Store, cm *committer) image {
 	for seq := range cm.seq {
 		r, ok, err := s.Outcome(ctx, scope, store.CommitID{Incarnation: cm.inc, Term: lawTerm, Seq: seq + 1})
 		assert.NoError(tb, err, "Outcome returns the receipt of a commit")
-		assert.True(tb, ok, "the scope keeps the receipt of each commit that no commit confirmed")
+		if !ok {
+			r = store.Receipt{}
+		}
 		im.receipts = append(im.receipts, r)
 	}
 	return im
 }
 
-// sameChange fails tb when the event got of a watch of a node differs from want: another
-// generation, commit ID or controller record, other placements, transitions, ended shards
-// or removed shards in any order, or another change of the mutation.
-func sameChange(tb assert.TB, got, want *store.Event) {
-	tb.Helper()
-	assert.Equal(tb, got.Generation, want.Generation, "Watch yields each generation with a change of the node")
-	assert.Permutation(tb, got.Mutation.Put, want.Mutation.Put,
-		"an event of a node lists each placement that names the node or named it before", assert.EquateEmpty())
-	assert.Permutation(tb, got.Mutation.Transitions, want.Mutation.Transitions,
-		"an event of a node lists each transition with an endpoint on the node", assert.EquateEmpty())
-	assert.Permutation(tb, got.Mutation.Done, want.Mutation.Done,
-		"an event of a node lists each ended transition with an endpoint on the node", assert.EquateEmpty())
-	assert.Permutation(tb, got.Removed, want.Removed,
-		"an event of a node lists each shard whose placement stops naming the node", assert.EquateEmpty())
+// sameChange fails h at its statement when the event got of a watch of a node differs from
+// want: another generation, commit ID or controller record, other placements,
+// transitions, ended shards or removed shards in any order, or another change of the
+// mutation.
+func sameChange(h *StoreHandle, got, want *store.Event) {
+	h.Helper()
+	assert.Equal(h, got.Generation, want.Generation, h.Statement())
+	assert.Permutation(h, got.Mutation.Put, want.Mutation.Put, h.Statement(), assert.EquateEmpty())
+	assert.Permutation(h, got.Mutation.Transitions, want.Mutation.Transitions, h.Statement(), assert.EquateEmpty())
+	assert.Permutation(h, got.Mutation.Done, want.Mutation.Done, h.Statement(), assert.EquateEmpty())
+	assert.Permutation(h, got.Removed, want.Removed, h.Statement(), assert.EquateEmpty())
 	rest := got.Mutation
 	rest.Put, rest.Transitions, rest.Done = nil, nil, nil
-	assert.Equal(tb, rest, store.Mutation{ID: want.Mutation.ID, Cell: want.Mutation.Cell},
-		"an event of a node contains the ID of its commit and no change apart from the changes of the node",
+	assert.Equal(h, rest, store.Mutation{ID: want.Mutation.ID, Cell: want.Mutation.Cell}, h.Statement(),
 		assert.EquateEmpty())
 }
 
-// endsWith checks that a watch by s from the generation from, for the incarnation inc,
-// yields an error that wraps target and then ends.
-func endsWith(t *testing.T, s store.Store, inc shard.NamespaceIncarnation, from epoch.Epoch, target error,
-	msg string,
-) {
-	t.Helper()
-	ctx, cancel := context.WithCancel(t.Context())
+// endsWith checks that a watch of the subject of h from the generation from, for the
+// incarnation inc, yields an error that wraps target and then ends. It fails h at its
+// statement otherwise.
+func endsWith(h *StoreHandle, inc shard.NamespaceIncarnation, from epoch.Epoch, target error) {
+	h.Helper()
+	ctx, cancel := context.WithCancel(h.Context())
 	defer cancel()
-	items := streamtest.Follow(ctx, s.Watch(ctx, scope, inc, from, ""))
-	it, ok := streamtest.Receive(t, items, waitFor, "Watch yields an error within the wait of the suite")
-	assert.True(t, ok, "Watch yields an error before it ends")
-	assert.ErrorIs(t, it.Err, target, msg)
-	streamtest.End(t, items, waitFor, "Watch ends after its error")
+	items := streamtest.Follow(ctx, h.Subject().Watch(ctx, scope, inc, from, ""))
+	it, ok := streamtest.Receive(h, items, waitFor, h.Statement())
+	assert.True(h, ok, h.Statement())
+	assert.ErrorIs(h, it.Err, target, h.Statement())
+	streamtest.End(h, items, waitFor, h.Statement())
 }
 
 // until returns the events of items up to the first event at the generation last, for a

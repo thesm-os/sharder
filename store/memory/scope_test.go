@@ -5,11 +5,15 @@ package memory_test
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
+	"go.thesmos.sh/core/coretest/epochtest"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/page"
@@ -25,6 +29,9 @@ import (
 
 // otherCell is the cell of a scope without commits.
 const otherCell shard.CellID = "cell-2"
+
+// fencedCell is the prefix of the cells of the scopes of the fence laws.
+const fencedCell = "fenced-"
 
 // protocol is the handoff protocol of the transitions of the tests.
 const protocol shard.StrategyName = "memory_test"
@@ -70,8 +77,22 @@ var everyPart = store.Mutation{
 	Drain: []store.Drain{{Since: origin, Node: node, Caller: caller}},
 }
 
+// fenced is a handle of core's fence laws: a writer of one scope of a store at one term,
+// with the counter of the commit numbers of the scope.
+type fenced struct {
+	// s is the store of the scope.
+	s *memory.Store
+	// seq counts the commits of the scope.
+	seq *atomic.Uint64
+	// sc is the scope.
+	sc shard.Scope
+	// term is the term of the writer.
+	term epoch.Epoch
+}
+
 // TestScope checks the calls of a Store on one scope after Close, with an ended context, at
-// the end of a watch and after Delete, and the parts of the state that generations share.
+// the end of a watch and after Delete, the fence laws of its commits, and the parts of the
+// state that generations share.
 func TestScope(t *testing.T) {
 	t.Parallel()
 
@@ -80,6 +101,8 @@ func TestScope(t *testing.T) {
 
 		t.Run("Commit", func(t *testing.T) {
 			t.Parallel()
+
+			fences(t, open(t))
 
 			t.Run("returns ErrOutcomeUnknown for an ended context", func(t *testing.T) {
 				t.Parallel()
@@ -291,4 +314,49 @@ func state(t *testing.T, s *memory.Store) store.State {
 	assert.NoError(t, err, "Read returns the state of the scope")
 	assert.NoError(t, cur.Close(), "Close of a cursor returns nil")
 	return st
+}
+
+// fences runs core's fence laws over the commits of s, each law on a scope of its own.
+func fences(t *testing.T, s *memory.Store) {
+	t.Helper()
+	ctx := t.Context()
+	write := func(f fenced) error {
+		h, err := f.s.Head(ctx, f.sc)
+		expect.NoError(t, err, "Head returns the header of the scope")
+		seq := f.seq.Add(1)
+		m := store.Mutation{
+			ID:   store.CommitID{Incarnation: incA, Term: f.term, Seq: seq},
+			Spec: []byte(strconv.FormatUint(seq, 10)),
+		}
+		if _, err := f.s.Writer(f.sc, incA, f.term).Commit(ctx, h.Generation, &m); err != nil {
+			return fmt.Errorf("memory_test: commit to %v at the term %d: %w", f.sc, f.term, err)
+		}
+		return nil
+	}
+	var scopes atomic.Int64
+	epochtest.AssertFencedWriter(t, epochtest.FencedSystem[fenced]{
+		NewScope: func() epochtest.FencedScope[fenced] {
+			sc := shard.Scope{
+				Namespace: namespace,
+				Cell:      shard.CellID(fencedCell + strconv.FormatInt(scopes.Add(1), 10)),
+			}
+			seq := &atomic.Uint64{}
+			return epochtest.FencedScope[fenced]{
+				Open: func(e epoch.Epoch) (fenced, error) {
+					return fenced{s: s, seq: seq, sc: sc, term: e}, nil
+				},
+				Supersede: func(e epoch.Epoch) {
+					expect.NoError(t, write(fenced{s: s, seq: seq, sc: sc, term: e}),
+						"the commit of the term that supersedes the writer applies")
+				},
+				Snapshot: func() any {
+					state, cur, err := s.Read(ctx, sc, incA, store.Query{}, page.Page{})
+					expect.NoError(t, err, "Read returns the state of the scope")
+					expect.NoError(t, cur.Close(), "Close of a cursor returns nil")
+					return state
+				},
+			}
+		},
+		Writes: map[string]func(fenced) error{"applies the fence laws of core": write},
+	})
 }

@@ -111,6 +111,9 @@ type Limits struct {
 // # Concurrency
 //
 // A Reader is safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:out path=storetest/
 type Reader interface {
 	// Head returns the header of s with a linearizable read. A controller reads it to
 	// learn the generation that its acquisition expects, and decides nothing else from
@@ -157,6 +160,9 @@ type Reader interface {
 // # Concurrency
 //
 // A Writer is safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:out path=storetest/
 type Writer interface {
 	// Commit applies m as the generation after expect, and writes the receipt of m in
 	// the same transaction. It returns the generation that m created. Commit does not
@@ -191,6 +197,9 @@ type Writer interface {
 // # Concurrency
 //
 // A Leadership is safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:out path=storetest/
 type Leadership interface {
 	// Term returns the fence epoch of the term. The store grants each term of an
 	// election to one candidate, above the watermark of the scope.
@@ -209,6 +218,10 @@ type Leadership interface {
 // # Concurrency
 //
 // A Store is safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=storetest/
 type Store interface {
 	Reader
 	// Writer returns a writer for s, bound to the namespace incarnation inc and the
@@ -220,6 +233,8 @@ type Store interface {
 	// Campaign blocks until the caller leads the election of s, or until ctx ends. The
 	// term lasts until Resign, until ctx ends, or until the store ends it. The root of
 	// a namespace campaigns in the root scope.
+	//
+	//dokimi:mixin waits
 	Campaign(ctx context.Context, s shard.Scope) (Leadership, error)
 	// Limits returns the bounds of one commit to s.
 	Limits(s shard.Scope) Limits

@@ -8,16 +8,16 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/conform"
 	"go.thesmos.sh/core/clock/fake"
 
-	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
 	"go.thesmos.sh/sharder/store/storetest"
 )
 
-// limits are the limits of the stores of the test. The law of Fits generates mutations on
-// both sides of them, and every other law commits mutations below them.
+// limits are the limits of the stores of the test. The check of Fits generates mutations on
+// both sides of them, and every other check commits mutations below them.
 var limits = store.Limits{MaxPlacements: 8, MaxBytes: 4096}
 
 // origin is the start of the clock of each store of the test.
@@ -30,35 +30,30 @@ var points = map[storetest.Loss]memory.Point{
 	storetest.LoseReply:   memory.PointCommitAck,
 }
 
-// TestStore runs the suite against the memory store with every option.
+// faultyStore is a memory store that loses the commits of the losses of the suite. It
+// deletes scopes and compacts its generations as the memory store does.
+type faultyStore struct {
+	*memory.Store
+}
+
+// LoseCommit arms the fault of the memory store at the point of l.
+func (s faultyStore) LoseCommit(l storetest.Loss) {
+	s.FailAt(points[l])
+}
+
+// TestStore checks that the memory store, the verified fake of the planted defects of the
+// suite, passes the checks of the suite of store.Store.
 func TestStore(t *testing.T) {
 	t.Parallel()
 
-	t.Run("AssertStore", func(t *testing.T) {
-		t.Parallel()
-
-		// The memory store keeps nothing beyond its process, so the reopen returns the same
-		// store. It runs the law of reopens without a second store.
-		t.Run("passes the memory store with every option", func(t *testing.T) {
-			t.Parallel()
-			storetest.AssertStore(t,
-				func(assert.TB) store.Store { return memory.New(fake.New(origin), memory.WithLimits(limits)) },
-				storetest.WithReopen(func(_ assert.TB, s store.Store) store.Store { return s }),
-				storetest.WithLostCommits(func(tb assert.TB, s store.Store, l storetest.Loss) {
-					memoryOf(tb, s).FailAt(points[l])
-				}),
-				storetest.WithDelete(func(tb assert.TB, s store.Store, sc shard.Scope) { memoryOf(tb, s).Delete(sc) }),
-				storetest.WithCompact(func(tb assert.TB, s store.Store) { memoryOf(tb, s).Compact() }),
-			)
-		})
-	})
-}
-
-// memoryOf returns the memory store s, which the suite passes to an option, and fails tb
-// when s is another store.
-func memoryOf(tb assert.TB, s store.Store) *memory.Store {
-	tb.Helper()
-	m, ok := s.(*memory.Store)
-	assert.True(tb, ok, "the suite passes the store that newStore returned")
-	return m
+	storetest.RunStoreSuiteFromHandle(t,
+		func(h *storetest.StoreHandle) faultyStore {
+			s := faultyStore{Store: memory.New(fake.New(origin), memory.WithLimits(limits))}
+			h.Cleanup(func() { assert.NoError(h, s.Close(), "Close returns nil") })
+			return s
+		},
+		// The memory store does not keep anything beyond its process, so its restart
+		// returns the same store. The check of restarts then runs without a second store.
+		conform.Restartable(func(_ *storetest.StoreHandle, s store.Store) store.Store { return s }),
+	)
 }

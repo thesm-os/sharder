@@ -77,11 +77,30 @@ var (
 // both sides of them, and every other law commits mutations below them.
 var limits = store.Limits{MaxPlacements: 8, MaxBytes: 4096}
 
-// commitPoints maps each loss of the laws of package store to the point that loses a commit
+// commitPoints maps each loss of the suite of store.Store to the point that loses a commit
 // there.
 var commitPoints = map[storetest.Loss]memory.Point{
 	storetest.LoseRequest: memory.PointCommitApply,
 	storetest.LoseReply:   memory.PointCommitAck,
+}
+
+// faultyStore is a Store that loses the commits of the losses of the suite of store.Store.
+// It deletes scopes and compacts its generations as a Store does.
+type faultyStore struct {
+	*memory.Store
+}
+
+// newFaultyStore returns a faultyStore over an empty Store with the limits of the tests, the
+// subject of the suite of store.Store, and closes it when the check of h ends.
+func newFaultyStore(h *storetest.StoreHandle) faultyStore {
+	s := faultyStore{Store: memory.New(fake.New(origin), memory.WithLimits(limits))}
+	h.Cleanup(func() { assert.NoError(h, s.Close(), "Close returns nil") })
+	return s
+}
+
+// LoseCommit arms the fault of the store at the point of l.
+func (s faultyStore) LoseCommit(l storetest.Loss) {
+	s.FailAt(commitPoints[l])
 }
 
 // tracked is a context that a test follows with a weak pointer, to learn whether the store
@@ -137,22 +156,10 @@ func (c *timers) peak() int {
 	return c.most
 }
 
-// TestStore checks the laws of package store, and the construction, the capabilities, the
-// limits and the closing of a Store.
+// TestStore checks the construction, the capabilities, the limits and the closing of a
+// Store.
 func TestStore(t *testing.T) {
 	t.Parallel()
-
-	t.Run("passes the laws of package store", func(t *testing.T) {
-		t.Parallel()
-		storetest.AssertStore(t,
-			func(assert.TB) store.Store { return memory.New(fake.New(origin), memory.WithLimits(limits)) },
-			storetest.WithLostCommits(func(tb assert.TB, s store.Store, l storetest.Loss) {
-				memoryOf(tb, s).FailAt(commitPoints[l])
-			}),
-			storetest.WithDelete(func(tb assert.TB, s store.Store, sc shard.Scope) { memoryOf(tb, s).Delete(sc) }),
-			storetest.WithCompact(func(tb assert.TB, s store.Store) { memoryOf(tb, s).Compact() }),
-		)
-	})
 
 	t.Run("New", func(t *testing.T) {
 		t.Parallel()
@@ -297,15 +304,6 @@ func commit(t *testing.T, s *memory.Store, inc shard.NamespaceIncarnation, m *st
 	g, err := s.Writer(scope, inc, term).Commit(t.Context(), h.Generation, m)
 	assert.NoError(t, err, "Commit applies the mutation")
 	return g
-}
-
-// memoryOf returns the memory store s, which the laws pass to an option, and fails tb when s
-// is another store.
-func memoryOf(tb assert.TB, s store.Store) *memory.Store {
-	tb.Helper()
-	m, ok := s.(*memory.Store)
-	assert.True(tb, ok, "the laws pass the store that newStore returned")
-	return m
 }
 
 // open returns a store without limits on a clock of its own, and closes it when t ends.

@@ -55,6 +55,8 @@ func compareEventKeys(a, b eventKey) int {
 // # Concurrency
 //
 // A Membership is safe for concurrent use.
+//
+//dokimi:subject membership.Membership new=newBackedMembership
 type Membership struct {
 	s *Store
 }

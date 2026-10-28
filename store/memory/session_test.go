@@ -12,7 +12,6 @@ import (
 	"weak"
 
 	"go.dokimi.dev/assert"
-	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/fake"
 
 	"go.thesmos.sh/sharder/config"
@@ -24,35 +23,55 @@ import (
 	"go.thesmos.sh/sharder/store/memory"
 )
 
-// renewalPoints maps each loss of the laws of package membership to the point that loses a
-// renewal there.
+// renewalPoints maps each loss of the suite of membership.Membership to the point that
+// loses a renewal there.
 var renewalPoints = map[membershiptest.Loss]memory.Point{
 	membershiptest.LoseRequest: memory.PointRenewApply,
 	membershiptest.LoseReply:   memory.PointRenewAck,
 }
 
-// TestSession checks the laws of package membership, and the capabilities, the joins, the
-// watches and the sessions of a Membership.
+// backedMembership is the Membership of a Store, with the store and the fake clock of its
+// leases. It loses the renewals of the losses of the suite of membership.Membership.
+type backedMembership struct {
+	*memory.Membership
+	// s is the store of the membership.
+	s *memory.Store
+	// clk is the clock of the leases of s.
+	clk *fake.Clock
+}
+
+// newBackedMembership returns the Membership of an empty Store whose leases run on a fake
+// clock, the subject of the suite of membership.Membership, and closes the store when the
+// check of h ends.
+func newBackedMembership(h *membershiptest.MembershipHandle) backedMembership {
+	clk := fake.New(origin)
+	s := memory.New(clk)
+	h.Cleanup(func() { assert.NoError(h, s.Close(), "Close returns nil") })
+	return backedMembership{Membership: s.Membership(), s: s, clk: clk}
+}
+
+// Store returns the store of the membership.
+func (m backedMembership) Store() store.Store {
+	return m.s
+}
+
+// Advance moves the clock of the leases forward by d.
+func (m backedMembership) Advance(d time.Duration) {
+	m.clk.Advance(d)
+}
+
+// LoseRenewals arms the fault of the store at the point of l.
+func (m backedMembership) LoseRenewals(l membershiptest.Loss) {
+	m.s.FailAt(renewalPoints[l])
+}
+
+// TestSession checks the capabilities, the joins, the watches and the sessions of a
+// Membership.
 func TestSession(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Membership", func(t *testing.T) {
 		t.Parallel()
-
-		t.Run("passes the laws of package membership", func(t *testing.T) {
-			t.Parallel()
-			membershiptest.AssertMembership(t,
-				func(_ assert.TB, clk clock.Clock) (membership.Membership, store.Store) {
-					s := memory.New(clk)
-					m := s.Membership()
-					return m, s
-				},
-				membershiptest.WithLostRenewals(
-					func(tb assert.TB, _ membership.Membership, s store.Store, l membershiptest.Loss) {
-						memoryOf(tb, s).FailAt(renewalPoints[l])
-					}),
-			)
-		})
 
 		t.Run("Provides", func(t *testing.T) {
 			t.Parallel()

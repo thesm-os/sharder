@@ -5,9 +5,11 @@
 package storetest_test
 
 import (
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/sharder/store/storetest"
 )
 
@@ -16,6 +18,13 @@ import (
 // an identity of its own.
 func TestErrUnknownLoss(t *testing.T) {
 	t.Parallel()
+
+	others := []struct {
+		name string
+		err  error
+	}{
+		{"ErrOperation", storetest.ErrOperation},
+	}
 
 	t.Run("Error", func(t *testing.T) {
 		t.Parallel()
@@ -35,7 +44,103 @@ func TestErrUnknownLoss(t *testing.T) {
 				"the message of ErrUnknownLoss opens with the package prefix",
 			)
 		})
+
+		t.Run("returns a message of its own", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.NotEqual(
+					t,
+					storetest.ErrUnknownLoss.Error(),
+					other.err.Error(),
+					"ErrUnknownLoss has the message of "+other.name,
+				)
+			}
+		})
+
+		t.Run("opens with the message of no other sentinel", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.False(t, strings.HasPrefix(storetest.ErrUnknownLoss.Error(), other.err.Error()),
+					"the message of ErrUnknownLoss opens with the message of "+other.name)
+			}
+		})
+	})
+
+	t.Run("errors.Is", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("matches no other sentinel of the package", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.ErrorIsNot(t, storetest.ErrUnknownLoss, other.err, "ErrUnknownLoss does not match "+other.name)
+			}
+		})
 	})
 }
 
-// dokimi:provenance sha256:820a1bef09ad5b0ee80cd833329e3bddbff768d5d06b7a8b4be5bac55e5283ac
+// TestErrOperation checks the sentinel error ErrOperation. A caller
+// matches it with errors.Is and reads its message, so it has a message and
+// an identity of its own.
+func TestErrOperation(t *testing.T) {
+	t.Parallel()
+
+	others := []struct {
+		name string
+		err  error
+	}{
+		{"ErrUnknownLoss", storetest.ErrUnknownLoss},
+	}
+
+	t.Run("Error", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a message", func(t *testing.T) {
+			t.Parallel()
+			assert.NotNil(t, storetest.ErrOperation, "ErrOperation is assigned")
+			assert.NotEqual(t, storetest.ErrOperation.Error(), "", "ErrOperation has a message")
+		})
+
+		t.Run("opens the message with the package prefix", func(t *testing.T) {
+			t.Parallel()
+			assert.HasPrefix(
+				t,
+				storetest.ErrOperation.Error(),
+				"storetest: ",
+				"the message of ErrOperation opens with the package prefix",
+			)
+		})
+
+		t.Run("returns a message of its own", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.NotEqual(
+					t,
+					storetest.ErrOperation.Error(),
+					other.err.Error(),
+					"ErrOperation has the message of "+other.name,
+				)
+			}
+		})
+
+		t.Run("opens with the message of no other sentinel", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.False(t, strings.HasPrefix(storetest.ErrOperation.Error(), other.err.Error()),
+					"the message of ErrOperation opens with the message of "+other.name)
+			}
+		})
+	})
+
+	t.Run("errors.Is", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("matches no other sentinel of the package", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.ErrorIsNot(t, storetest.ErrOperation, other.err, "ErrOperation does not match "+other.name)
+			}
+		})
+	})
+}
+
+// dokimi:provenance sha256:e020ace1fc81a11a073ca09e8cd1f75e142d9be02b600475ac461f4d6c1c30a2

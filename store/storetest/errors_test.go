@@ -12,7 +12,7 @@ import (
 	"go.thesmos.sh/sharder/store/storetest"
 )
 
-// TestErrors checks the class of the sentinel error of package storetest.
+// TestErrors checks the classes of the sentinel errors of package storetest.
 func TestErrors(t *testing.T) {
 	t.Parallel()
 
@@ -23,6 +23,16 @@ func TestErrors(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, errs.Classify(storetest.ErrUnknownLoss), errs.Invalid,
 				"ErrUnknownLoss must classify as Invalid")
+		})
+	})
+
+	t.Run("ErrOperation", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("classifies as Unsupported", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, errs.Classify(storetest.ErrOperation), errs.Unsupported,
+				"ErrOperation must classify as Unsupported")
 		})
 	})
 }
