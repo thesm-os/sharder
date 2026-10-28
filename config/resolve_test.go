@@ -46,12 +46,6 @@ const (
 	placeMaxNodes = "cells.maxNodes"
 )
 
-// workerSpec returns a spec of the namespace of the tests in which only the namespace
-// and the preset are set.
-func workerSpec() *config.Spec {
-	return &config.Spec{Namespace: testSpace, Preset: workerPreset}
-}
-
 // TestResolve checks the resolution of specs over their presets, and every problem
 // that Resolve reports.
 func TestResolve(t *testing.T) {
@@ -62,7 +56,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("fills every field that the spec leaves empty", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Version = 3
 			res, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.NoError(t, err, "the spec of the preset must resolve")
@@ -100,7 +94,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("keeps the values of the spec over the preset", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Budget = config.Budget{
 				MaxUnavailable:     new(0),
 				MaxConcurrentNodes: new(2),
@@ -142,7 +136,7 @@ func TestResolve(t *testing.T) {
 			}
 			p.Spec.Cells = config.CellPolicy{MaxNodes: 20, MaxShards: 200}
 			assert.NoError(t, config.RegisterPreset(r, p), "the preset must register")
-			res, err := config.Resolve(r, &config.Spec{Namespace: testSpace, Preset: tunedPreset}, testProvided)
+			res, err := config.Resolve(r, newSpec(tunedPreset), testProvided)
 			assert.NoError(t, err, "the spec must resolve")
 			expect.Equal(t, res.Spec.Budget, p.Spec.Budget, "Resolve must take the budget of the preset")
 			expect.Equal(t, res.Spec.Load, p.Spec.Load, "Resolve must take the load model of the preset")
@@ -151,7 +145,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("takes NodeCallbacks from MaxNodeTransitions", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Budget.MaxNodeTransitions = new(8)
 			res, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.NoError(t, err, "the spec must resolve")
@@ -175,7 +169,7 @@ func TestResolve(t *testing.T) {
 				func(c *prop.Case) {
 					count := counts[c.Draw(prop.Integer(0, len(counts)-1), drawCount)]
 					v := c.Draw(prop.Integer(-3, 3), drawValue)
-					spec := workerSpec()
+					spec := newSpec(workerPreset)
 					count.set(&spec.Budget, &v)
 					_, err := config.Resolve(r, spec, testProvided)
 					if v < count.least {
@@ -188,7 +182,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("returns ErrSpec for an interruption that is not planned", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Budget.Interruption = config.PlannedInterruption + 1
 			_, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.ErrorIs(t, err, config.ErrSpec, "Resolve must refuse an interruption other than planned")
@@ -201,13 +195,13 @@ func TestResolve(t *testing.T) {
 			p.Name = barePreset
 			p.Spec.Budget.Interruption = 0
 			assert.NoError(t, config.RegisterPreset(r, p), "the preset must register")
-			_, err := config.Resolve(r, &config.Spec{Namespace: testSpace, Preset: barePreset}, testProvided)
+			_, err := config.Resolve(r, newSpec(barePreset), testProvided)
 			assert.ErrorIs(t, err, config.ErrSpec, "Resolve must refuse a namespace without an interruption")
 		})
 
 		t.Run("returns ErrSpec for a negative load window", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Load.Window = -1
 			_, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.ErrorIs(t, err, config.ErrSpec, "Resolve must refuse a negative window")
@@ -215,7 +209,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("returns ErrSpec for a metric without a name", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Load.Metrics = []config.Metric{{Capacity: diskCapacity}}
 			_, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.ErrorIs(t, err, config.ErrSpec, "Resolve must refuse a metric without a name")
@@ -223,7 +217,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("returns ErrSpec for a metric listed twice", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Load.Metrics = []config.Metric{{Name: cpuMetric}, {Name: bytesMetric}, {Name: cpuMetric}}
 			_, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.ErrorIs(t, err, config.ErrSpec, "Resolve must refuse a metric listed twice")
@@ -231,7 +225,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("returns ErrSpec for a negative most nodes of a cell", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Cells.MaxNodes = -1
 			_, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.ErrorIs(t, err, config.ErrSpec, "Resolve must refuse a negative bound of nodes")
@@ -239,7 +233,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("returns ErrSpec for a negative most shards of a cell", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Cells.MaxShards = -1
 			_, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.ErrorIs(t, err, config.ErrSpec, "Resolve must refuse a negative bound of shards")
@@ -262,8 +256,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("returns ErrUnknown for a preset that the registry does not have", func(t *testing.T) {
 			t.Parallel()
-			spec := &config.Spec{Namespace: testSpace, Preset: tunedPreset}
-			_, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
+			_, err := config.Resolve(newRegistry(t, newSupport()), newSpec(tunedPreset), testProvided)
 			assert.ErrorIs(t, err, config.ErrUnknown, "Resolve must refuse an unknown preset")
 		})
 
@@ -274,13 +267,13 @@ func TestResolve(t *testing.T) {
 			p.Name = barePreset
 			p.Spec.Routing = config.Selection{}
 			assert.NoError(t, config.RegisterPreset(r, p), "the preset must register")
-			_, err := config.Resolve(r, &config.Spec{Namespace: testSpace, Preset: barePreset}, testProvided)
+			_, err := config.Resolve(r, newSpec(barePreset), testProvided)
 			assert.ErrorIs(t, err, config.ErrSpec, "Resolve must refuse an axis without a strategy")
 		})
 
 		t.Run("returns ErrUnsupported for a selection outside the support matrix", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Ownership = config.Selection{Name: overlappingName}
 			_, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			expect.ErrorIs(t, err, config.ErrUnsupported, "Resolve must refuse a selection outside the matrix")
@@ -290,7 +283,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("returns only the problems with the support matrix when it has them", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Ownership = config.Selection{Name: overlappingName}
 			spec.Load.Window = -1
 			_, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
@@ -300,7 +293,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("selects a registered name on an open axis that the support matrix does not list", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Placement = config.Selection{Name: balanceName}
 			res, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.NoError(t, err, "Resolve must accept a registered name on an open axis")
@@ -309,7 +302,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("returns ErrUnknown for a supported name without a factory", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Topology = config.Selection{Name: serviceName}
 			_, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.ErrorIs(t, err, config.ErrUnknown, "Resolve must refuse a name without a factory")
@@ -356,7 +349,7 @@ func TestResolve(t *testing.T) {
 				r := newRegistry(t, newSupport())
 				register(t, r, config.Placement, newFactory(t, zoneName, config.Capabilities{},
 					configtest.WithFactoryParse[struct{}](tt.parse)))
-				spec := workerSpec()
+				spec := newSpec(workerPreset)
 				spec.Placement = config.Selection{Name: zoneName}
 				_, err := config.Resolve(r, spec, testProvided)
 				for _, want := range tt.wantErrs {
@@ -437,7 +430,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("merges a patch over a preset without a configuration", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Partitioning = config.Selection{Config: json.RawMessage(`{"a":{"b":null},"c":1}`)}
 			res, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.NoError(t, err, "the spec must resolve")
@@ -447,7 +440,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("merges a selection that names the strategy of the preset", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Placement = config.Selection{Name: plannerName, Config: json.RawMessage(`{"limit":6}`)}
 			res, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.NoError(t, err, "the spec must resolve")
@@ -457,7 +450,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("starts a selection of another strategy from its defaults", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Placement = config.Selection{Name: balanceName, Config: json.RawMessage(`{"x":1}`)}
 			res, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.NoError(t, err, "the spec must resolve")
@@ -490,14 +483,14 @@ func TestResolve(t *testing.T) {
 
 		t.Run("returns ErrSpec for a requirement that no strategy meets", func(t *testing.T) {
 			t.Parallel()
-			_, err := config.Resolve(newRegistry(t, newSupport()), workerSpec(),
+			_, err := config.Resolve(newRegistry(t, newSupport()), newSpec(workerPreset),
 				map[config.Axis][]config.Capability{config.Store: {config.Durable}})
 			assert.ErrorIs(t, err, config.ErrSpec, "Resolve must refuse a namespace without leases")
 		})
 
 		t.Run("does not meet a requirement on the membership with a capability of the store", func(t *testing.T) {
 			t.Parallel()
-			_, err := config.Resolve(newRegistry(t, newSupport()), workerSpec(),
+			_, err := config.Resolve(newRegistry(t, newSupport()), newSpec(workerPreset),
 				map[config.Axis][]config.Capability{config.Store: {config.Durable, config.Leases}})
 			assert.ErrorIs(t, err, config.ErrSpec, "Resolve must check each requirement against its own role")
 		})
@@ -505,7 +498,7 @@ func TestResolve(t *testing.T) {
 		t.Run("returns ErrUnsupported for a capability of the support matrix that the namespace does not have",
 			func(t *testing.T) {
 				t.Parallel()
-				spec := workerSpec()
+				spec := newSpec(workerPreset)
 				spec.Ownership = config.Selection{Name: unfencedName}
 				_, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 				expect.ErrorIs(t, err, config.ErrUnsupported, "Resolve must refuse a namespace without fencing")
@@ -519,7 +512,7 @@ func TestResolve(t *testing.T) {
 				configtest.WithFactoryParse[struct{}](func(json.RawMessage) (config.Parsed, error) {
 					return nil, errTest
 				})))
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Ownership = config.Selection{Name: unfencedName}
 			spec.Placement = config.Selection{Name: zoneName}
 			_, err := config.Resolve(r, spec, testProvided)
@@ -600,7 +593,7 @@ func TestResolve(t *testing.T) {
 				s.Strategies[tt.axis] = append(s.Strategies[tt.axis], zoneName)
 				r := newRegistry(t, s)
 				assert.NoError(t, tt.factory(t, r), "the factory of the case must register")
-				spec := workerSpec()
+				spec := newSpec(workerPreset)
 				if tt.axis == config.Partitioning {
 					spec.Partitioning.Name = zoneName
 				} else {
@@ -616,7 +609,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("returns ErrSpec for a drain role that the model does not declare", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Budget.DrainRoles = []shard.Role{shard.RolePrimary, shard.RoleLeader}
 			_, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
 			assert.ErrorIs(t, err, config.ErrSpec, "Resolve must refuse a drain role outside the model")
@@ -629,13 +622,13 @@ func TestResolve(t *testing.T) {
 			p.Name = tunedPreset
 			p.Spec.Budget.DrainRoles = []shard.Role{shard.RolePrimary, shard.RoleLeader}
 			assert.NoError(t, config.RegisterPreset(r, p), "the preset must register")
-			_, err := config.Resolve(r, &config.Spec{Namespace: testSpace, Preset: tunedPreset}, testProvided)
+			_, err := config.Resolve(r, newSpec(tunedPreset), testProvided)
 			assert.ErrorIs(t, err, config.ErrSpec, "Resolve must check the drain roles of the preset against the model")
 		})
 
 		t.Run("reports every problem of one class in one error", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Load.Window = -1
 			spec.Cells.MaxNodes = -1
 			_, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
@@ -647,7 +640,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("returns a resolved spec that shares no slices with the spec", func(t *testing.T) {
 			t.Parallel()
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Budget.DrainRoles = []shard.Role{shard.RolePrimary}
 			spec.Load.Metrics = []config.Metric{{Name: cpuMetric}}
 			res, err := config.Resolve(newRegistry(t, newSupport()), spec, testProvided)
@@ -668,7 +661,7 @@ func TestResolve(t *testing.T) {
 			p.Spec.Budget.DrainRoles = []shard.Role{shard.RolePrimary}
 			p.Spec.Load.Metrics = []config.Metric{{Name: cpuMetric}}
 			assert.NoError(t, config.RegisterPreset(r, p), "the preset must register")
-			res, err := config.Resolve(r, &config.Spec{Namespace: testSpace, Preset: tunedPreset}, testProvided)
+			res, err := config.Resolve(r, newSpec(tunedPreset), testProvided)
 			assert.NoError(t, err, "the spec must resolve")
 			p.Spec.Budget.DrainRoles[0] = shard.RoleLeader
 			p.Spec.Load.Metrics[0].Name = bytesMetric
@@ -690,7 +683,7 @@ func TestResolve(t *testing.T) {
 					}()
 					return rawConfig(emptyConfig), <-registered
 				})))
-			spec := workerSpec()
+			spec := newSpec(workerPreset)
 			spec.Placement = config.Selection{Name: zoneName}
 			var err error
 			assert.CompletesWithin(t, 5*time.Second, func(context.Context) error {
@@ -712,10 +705,7 @@ func resolveMerge(t *testing.T, target, patch string) (*config.Resolved, error) 
 	p.Name = mergePreset
 	p.Spec.Placement.Config = json.RawMessage(target)
 	assert.NoError(t, config.RegisterPreset(r, p), "the preset must register")
-	spec := &config.Spec{
-		Namespace: testSpace,
-		Preset:    mergePreset,
-		Placement: config.Selection{Config: json.RawMessage(patch)},
-	}
+	spec := newSpec(mergePreset)
+	spec.Placement = config.Selection{Config: json.RawMessage(patch)}
 	return config.Resolve(r, spec, testProvided)
 }

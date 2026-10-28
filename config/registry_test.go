@@ -204,7 +204,7 @@ func TestRegistry(t *testing.T) {
 			s.Strategies[config.Topology] = nil
 			s.Open[0] = config.Hash
 			s.Requires[0] = config.Durable
-			res, err := config.Resolve(r, &config.Spec{Namespace: testSpace, Preset: workerPreset},
+			res, err := config.Resolve(r, newSpec(workerPreset),
 				map[config.Axis][]config.Capability{config.Membership: {config.Leases}})
 			assert.NoError(t, err, "a change of the support matrix of the caller must not change the registry")
 			assert.Equal(t, res.Spec.Ownership.Name, exclusiveName, "the registry must keep its own strategies")
@@ -288,7 +288,7 @@ func TestRegistry(t *testing.T) {
 		t.Run("returns the strategy of the selection", func(t *testing.T) {
 			t.Parallel()
 			r := newRegistry(t, newSupport())
-			res, err := config.Resolve(r, &config.Spec{Namespace: testSpace, Preset: workerPreset}, testProvided)
+			res, err := config.Resolve(r, newSpec(workerPreset), testProvided)
 			assert.NoError(t, err, "the spec of the test must resolve")
 			got, err := config.Build[partition.Partitioner](r, res, config.Partitioning)
 			assert.NoError(t, err, "Build must build the partitioner")

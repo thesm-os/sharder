@@ -28,7 +28,8 @@ func TestPreset(t *testing.T) {
 			p.Spec.Routing = config.Selection{}
 			p.Spec.Placement = config.Selection{Name: balanceName}
 			assert.NoError(t, config.RegisterPreset(r, p), "RegisterPreset must accept a preset inside the matrix")
-			spec := &config.Spec{Namespace: testSpace, Preset: tunedPreset, Routing: config.Selection{Name: watchName}}
+			spec := newSpec(tunedPreset)
+			spec.Routing = config.Selection{Name: watchName}
 			res, err := config.Resolve(r, spec, testProvided)
 			assert.NoError(t, err, "Resolve must resolve a spec of the preset")
 			assert.Equal(t, res.Spec.Placement.Name, balanceName, "Resolve must take the placer of the preset")

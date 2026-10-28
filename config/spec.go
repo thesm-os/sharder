@@ -24,6 +24,9 @@ import (
 // # Concurrency
 //
 // A copy of a Spec shares the slices of its fields with the original.
+//
+//dokimi:builder
+//dokimi:out path=configtest/
 type Spec struct {
 	// Namespace is the namespace of the spec.
 	Namespace shard.Namespace `json:"namespace"`
@@ -89,6 +92,9 @@ func (s *Spec) selection(a Axis) *Selection {
 // # Concurrency
 //
 // A copy of a Selection shares the bytes of Config with the original.
+//
+//dokimi:builder
+//dokimi:out path=configtest/
 type Selection struct {
 	// Name is the registered name of the strategy, or empty for the strategy of the
 	// preset.
