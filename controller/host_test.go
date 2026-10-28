@@ -60,10 +60,10 @@ func TestHost(t *testing.T) {
 				first := r.request(t, protocol.Add, procA.ID, firstEpoch, 1)
 				second := r.request(t, protocol.Add, procA.ID, firstEpoch, 2)
 				synctest.Wait()
-				f.st.StartOutage()
+				f.mem.StartOutage()
 				assert.ErrorIs(t, p.ctrl.Do(t.Context(), rootMetadata, first), context.DeadlineExceeded,
 					"an add whose acquisition does not apply in time must return the error of its context")
-				f.st.EndOutage()
+				f.mem.EndOutage()
 				f.clock.Advance(follow.RetryMax)
 				synctest.Wait()
 				assert.NoError(t, p.ctrl.Do(t.Context(), rootMetadata, second),
@@ -97,7 +97,7 @@ func TestHost(t *testing.T) {
 					r := f.newRoot(t)
 					p := f.start(t, procA, spec(namespace))
 					synctest.Wait()
-					f.st.block()
+					f.faults.block()
 					assert.NoError(t, r.host(t, p, procA.ID, firstEpoch, 1), "the first add starts a controller")
 					r.place(t, procA.ID, secondEpoch)
 					add := r.request(t, protocol.Add, procA.ID, secondEpoch, 2)
@@ -109,7 +109,7 @@ func TestHost(t *testing.T) {
 						context.DeadlineExceeded,
 						"the add of the newer term must return the error of its context while the older controller runs",
 					)
-					f.st.unblock()
+					f.faults.unblock()
 					synctest.Wait()
 					f.clock.Advance(agent.RetryMax)
 					synctest.Wait()
@@ -163,12 +163,12 @@ func TestHost(t *testing.T) {
 					r := f.newRoot(t)
 					p := f.start(t, procA, spec(namespace))
 					synctest.Wait()
-					f.st.block()
+					f.faults.block()
 					assert.NoError(t, r.host(t, p, procA.ID, firstEpoch, 1), "the add starts a controller")
 					drop := r.request(t, protocol.Drop, procA.ID, firstEpoch, 2)
 					assert.ErrorIs(t, p.ctrl.Do(t.Context(), rootMetadata, drop), context.DeadlineExceeded,
 						"a drop must return the error of its context when the controller has not stopped")
-					f.st.unblock()
+					f.faults.unblock()
 					again := r.request(t, protocol.Drop, procA.ID, firstEpoch, 3)
 					assert.NoError(t, p.ctrl.Do(t.Context(), rootMetadata, again),
 						"a later drop must return once the controller has stopped")
@@ -196,10 +196,10 @@ func TestHost(t *testing.T) {
 				r := f.newRoot(t)
 				p := f.start(t, procA, spec(namespace))
 				synctest.Wait()
-				f.st.broken.Store(true)
+				f.faults.broken.Store(true)
 				assert.ErrorIs(t, r.host(t, p, procA.ID, firstEpoch, 1), errBroken,
 					"the add must return the error of the acquisition")
-				f.st.broken.Store(false)
+				f.faults.broken.Store(false)
 				synctest.Wait()
 				streamtest.Blocks(t, p.errc, "Run must not return after an acquisition that fails")
 				assert.NoError(t, r.host(t, p, procA.ID, secondEpoch, 2), "a later add must start a controller")
@@ -237,7 +237,7 @@ func TestHost(t *testing.T) {
 				p := f.start(t, procA, spec(namespace))
 				synctest.Wait()
 				assert.NoError(t, r.host(t, p, procA.ID, firstEpoch, 1), "the add starts a controller")
-				f.st.broken.Store(true)
+				f.faults.broken.Store(true)
 				_, err := p.ctrl.Disrupt(t.Context(), operatorMetadata, disruption(procB.ID, 1))
 				assert.HasError(t, err, "the failed controller must not decide the disruption")
 				assert.ErrorIs(t, p.result(t), errBroken, "Run must return the error of the controller of the cell")
@@ -253,7 +253,7 @@ func TestHost(t *testing.T) {
 					p := f.start(t, procA, spec(namespace))
 					synctest.Wait()
 					assert.NoError(t, r.host(t, p, procA.ID, firstEpoch, 1), "the add starts a controller")
-					f.st.tight.Store(true)
+					f.faults.tight.Store(true)
 					_, err := p.ctrl.Disrupt(t.Context(), operatorMetadata, disruption(procB.ID, 1))
 					assert.HasError(t, err, "the failed controller must not decide the disruption")
 					assert.ErrorIs(t, p.result(t), store.ErrTooLarge,

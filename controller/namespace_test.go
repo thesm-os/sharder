@@ -13,7 +13,6 @@ import (
 
 	"go.thesmos.sh/sharder/controller"
 	"go.thesmos.sh/sharder/internal/machine/root"
-	"go.thesmos.sh/sharder/membership"
 	"go.thesmos.sh/sharder/shard"
 )
 
@@ -26,12 +25,6 @@ const (
 	// cpus is the capacity cpuCapacity of the node of the process.
 	cpus = 4
 )
-
-// bare is a membership that does not implement config.Provider, so it provides no
-// capability.
-type bare struct {
-	membership.Membership
-}
 
 // TestNamespace checks what a controller process runs for each namespace.
 func TestNamespace(t *testing.T) {
@@ -53,7 +46,7 @@ func TestNamespace(t *testing.T) {
 				t.Parallel()
 				f := newFixture(t)
 				cfg := f.config(procA, noop.New())
-				cfg.Membership = bare{Membership: f.st.Membership()}
+				cfg.Membership = f.members.MembershipStub
 				ctrl, err := controller.New(cfg)
 				assert.NoError(t, err, "New accepts a membership without capabilities")
 				assert.ErrorIs(t, ctrl.Run(t.Context(), spec(namespace)), controller.ErrConfig,
@@ -68,7 +61,7 @@ func TestNamespace(t *testing.T) {
 					f.newRoot(t)
 					p := f.start(t, procA, spec(namespace))
 					synctest.Wait()
-					f.st.Delete(rootScope)
+					f.mem.Delete(rootScope)
 					assert.ErrorIs(t, p.result(t), shard.ErrIncarnation,
 						"Run must return the error of the agent of the root")
 				})

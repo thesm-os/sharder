@@ -22,6 +22,7 @@ import (
 	"go.thesmos.sh/core/telemetry/noop"
 
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/config/configtest"
 	"go.thesmos.sh/sharder/controller"
 	"go.thesmos.sh/sharder/internal/streamtest"
 	"go.thesmos.sh/sharder/protocol"
@@ -32,17 +33,6 @@ import (
 
 // errCause is the cause with which a test ends the context of Run.
 var errCause = errors.New("test: the test ends the context")
-
-// durable is a store that provides the capability durable, as a store that persists every
-// commit does.
-type durable struct {
-	*faulty
-}
-
-// Provides returns the capability durable.
-func (durable) Provides() []config.Capability {
-	return []config.Capability{config.Durable}
-}
 
 // The labels of the cases of the property of Run.
 const (
@@ -151,10 +141,10 @@ func (s *system) stop(c *prop.Case, i int) {
 // toggle starts an outage of the store, or ends the outage that runs.
 func (s *system) toggle(c *prop.Case) {
 	if s.outage {
-		s.f.st.EndOutage()
+		s.f.mem.EndOutage()
 	} else {
 		c.Classify(labelOutage)
-		s.f.st.StartOutage()
+		s.f.mem.StartOutage()
 	}
 	s.outage = !s.outage
 }
@@ -487,7 +477,13 @@ func TestController(t *testing.T) {
 			t.Parallel()
 			f := newFixture(t)
 			cfg := f.config(procA, noop.New())
-			cfg.Store, cfg.Volatile = durable{faulty: f.st}, false
+			durable := &providingStore{
+				StoreStub: f.st.StoreStub,
+				ProviderStub: configtest.NewProviderStub(t, configtest.WithProviderProvides(func() []config.Capability {
+					return []config.Capability{config.Durable}
+				})),
+			}
+			cfg.Store, cfg.Volatile = durable, false
 			_, err := controller.New(cfg)
 			assert.NoError(t, err, "New must take a durable store without Volatile")
 		})
@@ -632,13 +628,13 @@ func TestController(t *testing.T) {
 				r := f.newRoot(t)
 				p := f.start(t, procA, spec(namespace))
 				synctest.Wait()
-				f.st.block()
+				f.faults.block()
 				assert.NoError(t, r.host(t, p, procA.ID, firstEpoch, 1), "the add starts a controller")
 				closed := make(chan error, 1)
 				go func() { closed <- p.ctrl.Close(t.Context()) }()
 				synctest.Wait()
 				streamtest.Blocks(t, closed, "Close must wait while the controller of the cell runs")
-				f.st.unblock()
+				f.faults.unblock()
 				assert.NoError(t, received(t, closed, "Close returns"), "Close must return once Run has returned")
 			})
 		})
@@ -650,7 +646,7 @@ func TestController(t *testing.T) {
 				f.newRoot(t)
 				p := f.start(t, procA, spec(namespace))
 				synctest.Wait()
-				f.st.StartOutage()
+				f.mem.StartOutage()
 				assert.ErrorIs(
 					t,
 					p.ctrl.Close(t.Context()),
@@ -667,7 +663,7 @@ func TestController(t *testing.T) {
 				f.newRoot(t)
 				p := f.start(t, procA, spec(namespace))
 				synctest.Wait()
-				f.st.stalled.Store(true)
+				f.faults.stalled.Store(true)
 				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 				defer cancel()
 				assert.ErrorIs(t, p.ctrl.Close(ctx), context.DeadlineExceeded,
@@ -679,7 +675,7 @@ func TestController(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				f.st.StartOutage()
+				f.mem.StartOutage()
 				p := f.start(t, procA, spec(namespace))
 				synctest.Wait()
 				assert.NoError(t, p.ctrl.Close(t.Context()), "an agent of the root that does not serve has no session")

@@ -28,9 +28,11 @@ import (
 	"go.thesmos.sh/sharder/budget"
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/config/configtest"
 	"go.thesmos.sh/sharder/controller"
 	"go.thesmos.sh/sharder/internal/streamtest"
 	"go.thesmos.sh/sharder/membership"
+	"go.thesmos.sh/sharder/membership/membershiptest"
 	"go.thesmos.sh/sharder/ownership"
 	"go.thesmos.sh/sharder/partition/fixedslots"
 	"go.thesmos.sh/sharder/protocol"
@@ -38,6 +40,7 @@ import (
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
+	"go.thesmos.sh/sharder/store/storetest"
 )
 
 // The names and the identities of the tests.
@@ -103,8 +106,8 @@ var (
 	}
 )
 
-// errBroken is the error of each commit to the scope of a cell while a faulty store is
-// broken. A retry does not fix it.
+// errBroken is the error of each commit to the scope of a cell while the store of a fixture
+// is broken. A retry does not fix it.
 var errBroken = errs.WithClass(errors.New("test: the store is broken"), errs.Invalid)
 
 // cleaner is an assert.TB that runs functions when its test ends, such as a *testing.T or
@@ -115,19 +118,16 @@ type cleaner interface {
 	Cleanup(f func())
 }
 
-// faulty is a memory store whose commits to the scope of a cell fail with errBroken while
-// the test breaks them. While the test blocks the store, a watch of the views of the scope
-// of a cell does not return after its context ends. While the test stalls the leaves of the
-// store, the Leave of a session returns once its context ends.
-type faulty struct {
-	*memory.Store
+// faults are the switches of the faults of the store and the membership of a fixture. A
+// test flips them while the processes run.
+type faults struct {
 	// blocked is the channel that each new watch of the views of the scope of a cell waits
 	// on once it ends. It is closed until block replaces it with an open channel, which
 	// unblock closes.
 	blocked chan struct{}
 	// mu guards blocked.
 	mu sync.Mutex
-	// broken is true while the commits to the scope of a cell fail.
+	// broken is true while the commits to the scope of a cell fail with errBroken.
 	broken atomic.Bool
 	// tight is true while no mutation of the scope of a cell fits one commit.
 	tight atomic.Bool
@@ -135,117 +135,114 @@ type faulty struct {
 	stalled atomic.Bool
 }
 
-var _ store.Store = (*faulty)(nil)
-
-// Writer returns the writer of the scope s. While f is broken, a commit of the writer of
-// the scope of a cell fails with errBroken.
-func (f *faulty) Writer(s shard.Scope, inc shard.NamespaceIncarnation, term epoch.Epoch) store.Writer {
-	return &faultyWriter{Writer: f.Store.Writer(s, inc, term), f: f, cell: s.Cell != ""}
-}
-
-// Fits returns an error that wraps store.ErrTooLarge for a mutation of the scope of a cell
-// while f is tight. It returns what the memory store returns otherwise.
-func (f *faulty) Fits(s shard.Scope, m *store.Mutation) error {
-	if s.Cell != "" && f.tight.Load() {
-		return fmt.Errorf("test: the mutation of %v: %w", s, store.ErrTooLarge)
-	}
-	return f.Store.Fits(s, m)
-}
-
-// Membership returns the membership of the store. While f is blocked, a watch of the views
-// of the scope of a cell waits for unblock once it ends.
-func (f *faulty) Membership() membership.Membership {
-	return &faultyMembership{Membership: f.Store.Membership(), f: f}
-}
-
 // block makes each later watch of the views of the scope of a cell wait for unblock once it
 // ends.
-func (f *faulty) block() {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.blocked = make(chan struct{})
+func (fs *faults) block() {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	fs.blocked = make(chan struct{})
 }
 
 // unblock ends the waits of the watches that started after block.
-func (f *faulty) unblock() {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	close(f.blocked)
+func (fs *faults) unblock() {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	close(fs.blocked)
 }
 
-// faultyMembership is the membership of a faulty store.
-type faultyMembership struct {
-	*memory.Membership
-	// f is the store of the membership.
-	f *faulty
+// providingStore is a store that implements config.Provider. It embeds the double of each
+// interface.
+type providingStore struct {
+	*storetest.StoreStub
+	*configtest.ProviderStub
 }
 
-// Join joins the node n to the scope s, as the membership of the memory store does. While
-// the test stalls the leaves of the store, the Leave of the session returns once its context
-// ends.
-func (m *faultyMembership) Join(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, n *shard.Node,
-	l ownership.Lease,
-) (membership.Session, error) {
-	ss, err := m.Membership.Join(ctx, s, inc, n, l)
-	if err != nil {
-		return nil, fmt.Errorf("test: the join of %s: %w", n.ID, err)
+// providingMembership is a membership that implements config.Provider. It embeds the double
+// of each interface.
+type providingMembership struct {
+	*membershiptest.MembershipStub
+	*configtest.ProviderStub
+}
+
+// newFaultyStore returns a double of mem that provides the capabilities of mem. A commit of
+// a writer of the scope of a cell fails with errBroken while fs is broken. Fits returns an
+// error that wraps store.ErrTooLarge for a mutation of the scope of a cell while fs is
+// tight. The doubles record no call and report to no test, because the processes create the
+// writers on their own goroutines.
+func newFaultyStore(mem *memory.Store, fs *faults) *providingStore {
+	writer := func(s shard.Scope, inc shard.NamespaceIncarnation, term epoch.Epoch) store.Writer {
+		w := mem.Writer(s, inc, term)
+		commit := func(ctx context.Context, expect epoch.Epoch, m *store.Mutation) (epoch.Epoch, error) {
+			if s.Cell != "" && fs.broken.Load() {
+				return 0, errBroken
+			}
+			return w.Commit(ctx, expect, m)
+		}
+		return storetest.NewWriterStub(nil, storetest.WriterStubBenchMode(), storetest.WriterStubDelegateTo(w),
+			storetest.WithWriterCommit(commit))
 	}
-	return &faultySession{Session: ss, f: m.f}, nil
-}
-
-// faultySession is a session of the membership of a faulty store.
-type faultySession struct {
-	membership.Session
-	// f is the store of the session.
-	f *faulty
-}
-
-// Leave returns the cause of ctx once ctx ends while the test stalls the leaves of the store.
-// It leaves the session through the memory store otherwise.
-func (s *faultySession) Leave(ctx context.Context) error {
-	if s.f.stalled.Load() {
-		<-ctx.Done()
-		return context.Cause(ctx)
+	fits := func(s shard.Scope, m *store.Mutation) error {
+		if s.Cell != "" && fs.tight.Load() {
+			return fmt.Errorf("test: the mutation of %v: %w", s, store.ErrTooLarge)
+		}
+		return mem.Fits(s, m)
 	}
-	return s.Session.Leave(ctx)
+	return &providingStore{
+		StoreStub: storetest.NewStoreStub(nil, storetest.StoreStubBenchMode(), storetest.StoreStubDelegateTo(mem),
+			storetest.WithStoreWriter(writer), storetest.WithStoreFits(fits)),
+		ProviderStub: configtest.NewProviderStub(nil, configtest.ProviderStubDelegateTo(mem)),
+	}
 }
 
-// Watch yields the views of the scope s, as the membership of the memory store does. Once
-// the watch of the scope of a cell ends, it waits until the store is unblocked.
-func (m *faultyMembership) Watch(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
-) iter.Seq2[membership.View, error] {
-	m.f.mu.Lock()
-	blocked := m.f.blocked
-	m.f.mu.Unlock()
-	inner := m.Membership.Watch(ctx, s, inc)
-	return func(yield func(membership.View, error) bool) {
-		for v, err := range inner {
-			if !yield(v, err) {
-				break
+// newFaultyMembership returns a double of m that provides the capabilities of m. While fs
+// is stalled, the Leave of a session that Join returns waits until its context ends, and
+// returns its cause. Once a watch of the views of the scope of a cell ends, it waits until
+// fs is unblocked. The doubles record no call and report to no test, because the processes
+// create the sessions on their own goroutines.
+func newFaultyMembership(m *memory.Membership, fs *faults) *providingMembership {
+	join := func(
+		ctx context.Context,
+		s shard.Scope,
+		inc shard.NamespaceIncarnation,
+		n *shard.Node,
+		l ownership.Lease,
+	) (membership.Session, error) {
+		ss, err := m.Join(ctx, s, inc, n, l)
+		if err != nil {
+			return nil, fmt.Errorf("test: the join of %s: %w", n.ID, err)
+		}
+		leave := func(ctx context.Context) error {
+			if fs.stalled.Load() {
+				<-ctx.Done()
+				return context.Cause(ctx)
+			}
+			return ss.Leave(ctx)
+		}
+		return membershiptest.NewSessionStub(nil, membershiptest.SessionStubBenchMode(),
+			membershiptest.SessionStubDelegateTo(ss), membershiptest.WithSessionLeave(leave)), nil
+	}
+	watch := func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation) iter.Seq2[membership.View, error] {
+		fs.mu.Lock()
+		blocked := fs.blocked
+		fs.mu.Unlock()
+		inner := m.Watch(ctx, s, inc)
+		return func(yield func(membership.View, error) bool) {
+			for v, err := range inner {
+				if !yield(v, err) {
+					break
+				}
+			}
+			if s.Cell != "" {
+				<-blocked
 			}
 		}
-		if s.Cell != "" {
-			<-blocked
-		}
 	}
-}
-
-// faultyWriter is a writer of a faulty store.
-type faultyWriter struct {
-	store.Writer
-	// f is the store of the writer.
-	f *faulty
-	// cell is true for the writer of the scope of a cell.
-	cell bool
-}
-
-// Commit fails with errBroken while the store is broken and w writes the scope of a cell.
-// It commits m through the memory store otherwise.
-func (w *faultyWriter) Commit(ctx context.Context, expect epoch.Epoch, m *store.Mutation) (epoch.Epoch, error) {
-	if w.cell && w.f.broken.Load() {
-		return 0, errBroken
+	return &providingMembership{
+		MembershipStub: membershiptest.NewMembershipStub(nil, membershiptest.MembershipStubBenchMode(),
+			membershiptest.MembershipStubDelegateTo(m), membershiptest.WithMembershipJoin(join),
+			membershiptest.WithMembershipWatch(watch)),
+		ProviderStub: configtest.NewProviderStub(nil, configtest.ProviderStubDelegateTo(m)),
 	}
-	return w.Writer.Commit(ctx, expect, m)
 }
 
 // cells is a telemetry.Reporter that counts the controllers of each cell of a process. The
@@ -355,8 +352,16 @@ func (g *unplaced) Release() {
 // fixture is the store, the network, the clock and the registry that the processes of a
 // test share.
 type fixture struct {
-	// st is the store and the membership of the processes.
-	st *faulty
+	// st is the store of the processes. It delegates to mem, and fails the calls that faults
+	// switch on.
+	st *providingStore
+	// members is the membership of the processes. It delegates to the membership of mem, and
+	// waits where faults switch it on.
+	members *providingMembership
+	// mem is the memory store under st and members.
+	mem *memory.Store
+	// faults are the switches of the faults of st and members.
+	faults *faults
 	// net connects the processes and the root of the tests.
 	net *local.Network
 	// clock is the clock of the store and of the processes.
@@ -369,12 +374,21 @@ type fixture struct {
 func newFixture(tb cleaner) *fixture {
 	tb.Helper()
 	clk := fake.New(origin)
-	st := &faulty{Store: memory.New(clk), blocked: make(chan struct{})}
-	close(st.blocked)
-	tb.Cleanup(func() { assert.NoError(tb, st.Close(), "the store closes") })
+	mem := memory.New(clk)
+	tb.Cleanup(func() { assert.NoError(tb, mem.Close(), "the store closes") })
+	fs := &faults{blocked: make(chan struct{})}
+	close(fs.blocked)
 	r := config.NewRegistry(builtin.Support())
 	assert.NoError(tb, builtin.Register(r), "the built-ins register")
-	return &fixture{st: st, net: local.NewNetwork(), clock: clk, reg: r}
+	return &fixture{
+		st:      newFaultyStore(mem, fs),
+		members: newFaultyMembership(mem.Membership(), fs),
+		mem:     mem,
+		faults:  fs,
+		net:     local.NewNetwork(),
+		clock:   clk,
+		reg:     r,
+	}
 }
 
 // config returns the Config of the controller process of node over f, whose instruments r
@@ -382,7 +396,7 @@ func newFixture(tb cleaner) *fixture {
 func (f *fixture) config(node shard.Node, r telemetry.Reporter) *controller.Config {
 	return &controller.Config{
 		Store:      f.st,
-		Membership: f.st.Membership(),
+		Membership: f.members,
 		Agents:     f.net.Local(protocol.Metadata{Caller: node.Identity, Version: protocol.Current}),
 		Clock:      f.clock,
 		Rand:       seeded.New(1),
@@ -589,7 +603,7 @@ func view(tb assert.TB, f *fixture, s shard.Scope) membership.View {
 	tb.Helper()
 	ctx, cancel := context.WithCancel(assert.Context(tb))
 	cancel()
-	for v, err := range f.st.Membership().Watch(ctx, s, incA) {
+	for v, err := range f.members.Watch(ctx, s, incA) {
 		assert.NoError(tb, err, "the membership returns the view of the scope")
 		return v
 	}
