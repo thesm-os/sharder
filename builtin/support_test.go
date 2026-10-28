@@ -17,6 +17,7 @@ import (
 
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/config/configtest"
 	"go.thesmos.sh/sharder/partition"
 	"go.thesmos.sh/sharder/placement"
 	"go.thesmos.sh/sharder/shard"
@@ -143,9 +144,8 @@ func TestSupport(t *testing.T) {
 		t.Run("excludes a partitioner that an application registers", func(t *testing.T) {
 			t.Parallel()
 			r := newRegistry(t)
-			err := config.Register(r, config.Partitioning, &renamed[partition.Partitioner]{
-				Factory: builtin.Singleton(), name: appPartitioner,
-			})
+			err := config.Register(r, config.Partitioning,
+				renamed[partition.Partitioner](t, builtin.Singleton(), appPartitioner))
 			assert.NoError(t, err, "the registry must take the partitioner of the application")
 			_, err = config.Resolve(r, selecting(config.Partitioning, appPartitioner), provided)
 			assert.ErrorIs(t, err, config.ErrUnsupported, "Resolve must refuse a partitioner of the application")
@@ -154,9 +154,8 @@ func TestSupport(t *testing.T) {
 		t.Run("includes a constraint that an application registers", func(t *testing.T) {
 			t.Parallel()
 			r := newRegistry(t)
-			err := config.Register(r, config.Constraint, &renamed[placement.Constraint]{
-				Factory: builtin.Capacity(), name: appConstraint,
-			})
+			err := config.Register(r, config.Constraint,
+				renamed[placement.Constraint](t, builtin.Capacity(), appConstraint))
 			assert.NoError(t, err, "the registry must take the constraint of the application")
 			spec := &config.Spec{
 				Namespace: testSpace,
@@ -171,17 +170,12 @@ func TestSupport(t *testing.T) {
 	})
 }
 
-// renamed is a factory that registers the strategies of another factory under another
-// name, as an application does.
-type renamed[T any] struct {
-	config.Factory[T]
-
-	name shard.StrategyName
-}
-
-// Name returns the name of the factory.
-func (f *renamed[T]) Name() shard.StrategyName {
-	return f.name
+// renamed returns a double of the factory f under the name name, as an application
+// registers the strategies of a factory under another name.
+func renamed[T any](tb assert.TB, f config.Factory[T], name shard.StrategyName) *configtest.FactoryStub[T] {
+	tb.Helper()
+	return configtest.NewFactoryStub(tb, configtest.FactoryStubDelegateTo(f),
+		configtest.WithFactoryName[T](func() shard.StrategyName { return name }))
 }
 
 // selecting returns a spec of the preset exclusive-worker that selects name on axis.

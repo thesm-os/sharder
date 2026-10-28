@@ -115,9 +115,9 @@ func TestPartitioning(t *testing.T) {
 				t.Run(tt.name, func(t *testing.T) {
 					t.Parallel()
 					r := newRegistry(t)
-					assert.NoError(t, config.Register(r, config.Hash, &renamed[partition.Hash]{
-						Factory: builtin.XXHash64(), name: otherHash,
-					}), "the registry must take the hash of the application")
+					hash := renamed[partition.Hash](t, builtin.XXHash64(), otherHash)
+					assert.NoError(t, config.Register(r, config.Hash, hash),
+						"the registry must take the hash of the application")
 					from, err := config.Resolve(r, &config.Spec{Namespace: testSpace, Preset: builtin.ExclusiveWorker},
 						provided)
 					assert.NoError(t, err, "the preset must resolve")

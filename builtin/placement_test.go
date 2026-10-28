@@ -14,6 +14,7 @@ import (
 
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/config/configtest"
 	"go.thesmos.sh/sharder/placement"
 	"go.thesmos.sh/sharder/placement/constraint"
 	"go.thesmos.sh/sharder/placement/goal"
@@ -55,22 +56,6 @@ func (unencodable) Validate() error {
 // MarshalJSON returns errUnencodable.
 func (unencodable) MarshalJSON() ([]byte, error) {
 	return nil, errUnencodable
-}
-
-// unencodableGoal is a factory of goals whose Parse returns an unencodable
-// configuration. Its other methods are those of the factory of count.
-type unencodableGoal struct {
-	config.Factory[placement.Goal]
-}
-
-// Name returns unencodableName.
-func (unencodableGoal) Name() shard.StrategyName {
-	return unencodableName
-}
-
-// Parse returns an unencodable configuration.
-func (unencodableGoal) Parse(json.RawMessage) (config.Parsed, error) {
-	return unencodable{}, nil
 }
 
 // TestPlacement checks the factory of the planner.
@@ -144,7 +129,12 @@ func TestPlacement(t *testing.T) {
 			t.Run("returns ErrConfig for the configuration of a goal that does not encode", func(t *testing.T) {
 				t.Parallel()
 				r := newRegistry(t)
-				assert.NoError(t, config.Register(r, config.Goal, unencodableGoal{builtin.Count()}),
+				unencodableGoal := configtest.NewFactoryStub(t, configtest.FactoryStubDelegateTo(builtin.Count()),
+					configtest.WithFactoryName[placement.Goal](func() shard.StrategyName { return unencodableName }),
+					configtest.WithFactoryParse[placement.Goal](func(json.RawMessage) (config.Parsed, error) {
+						return unencodable{}, nil
+					}))
+				assert.NoError(t, config.Register(r, config.Goal, unencodableGoal),
 					"the registry must take the goal of the test")
 				_, err := builtin.Planner(r).Parse(json.RawMessage(unencodableGoalConfig))
 				assert.ErrorIs(t, err, builtin.ErrConfig, "Parse must refuse a configuration that does not encode")
