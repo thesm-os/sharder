@@ -39,6 +39,7 @@ import (
 	"go.thesmos.sh/sharder/replica"
 	"go.thesmos.sh/sharder/replica/replicatest"
 	"go.thesmos.sh/sharder/shard"
+	"go.thesmos.sh/sharder/shard/shardtest"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
 )
@@ -610,13 +611,13 @@ func (f *fixture) rejoin(tb assert.TB) epoch.Epoch {
 // epoch e. Its range starts at the bytes of sid, so the placements of two shards of the
 // tests never start at one position.
 func placement(sid shard.ID, e epoch.Epoch, n shard.NodeID) shard.Placement {
-	return shard.Placement{
-		Shard:    sid,
-		Range:    shard.Range{Start: slices.Clone(sid.ID128[:])},
-		Epoch:    e,
-		Reserved: e,
-		Replicas: []shard.Replica{{Node: n, Role: shard.RolePrimary}},
-	}
+	return shardtest.NewPlacementBuilder().
+		WithShard(sid).
+		WithRange(shard.Range{Start: slices.Clone(sid.ID128[:])}).
+		WithEpoch(e).
+		WithReserved(e).
+		WithReplicas(shard.Replica{Node: n, Role: shard.RolePrimary}).
+		Build()
 }
 
 // closing returns the context of a Close, whose deadline is grace after the time of the
