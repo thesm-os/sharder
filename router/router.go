@@ -47,6 +47,9 @@ type Endpoint = routes.Endpoint
 
 // Router maps keys to the routes of their shards. An implementation is safe for concurrent
 // use.
+//
+//dokimi:stub
+//dokimi:out path=routertest/
 type Router interface {
 	// Route returns the route of the shard of req.Key. It returns an error of class
 	// errs.Transient when the router has no route for the key, such as for a shard without a

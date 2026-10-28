@@ -19,6 +19,7 @@ import (
 	"go.thesmos.sh/core/errs"
 
 	"go.thesmos.sh/sharder/router"
+	"go.thesmos.sh/sharder/router/routertest"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 )
@@ -75,40 +76,51 @@ type routed struct {
 	route router.Route
 }
 
-// script is a router of the tests. Route returns the next result of routes, and Refresh
-// returns the next error of refreshes. A call without a result left returns errScript. The
-// script records a copy of the key of each Route and each request of Refresh.
-type script struct {
+// scripting is the behaviour of a script: the results of its calls.
+type scripting struct {
 	// routes lists the result of each call of Route, in order.
 	routes []routed
 	// refreshes lists the error of each call of Refresh, in order.
 	refreshes []error
+}
+
+// script is a router of the tests. It keeps a copy of the key of each Route and each request
+// of Refresh. Its double records no call, so the script keeps no reference to a key.
+type script struct {
+	// RouterStub is the double that Do calls.
+	*routertest.RouterStub
+	scripting
 	// keys lists a copy of the key of each call of Route, in order.
 	keys [][]byte
 	// refreshed lists the request of each call of Refresh, in order.
 	refreshed []router.RefreshRequest
 }
 
-var _ router.Router = (*script)(nil)
-
-// Route records a copy of req.Key, and returns the next result of routes.
-func (s *script) Route(_ context.Context, req *router.RouteRequest) (router.RouteResult, error) {
-	n := len(s.keys)
-	s.keys = append(s.keys, slices.Clone(req.Key))
-	if n >= len(s.routes) {
-		return router.RouteResult{}, errScript
+// newScript returns a script with the behaviour b. Route returns the next result of routes,
+// and Refresh returns the next error of refreshes. A call without a result left returns
+// errScript. Its double reports to tb.
+func newScript(tb assert.TB, b scripting) *script {
+	tb.Helper()
+	s := &script{scripting: b}
+	route := func(_ context.Context, req *router.RouteRequest) (router.RouteResult, error) {
+		n := len(s.keys)
+		s.keys = append(s.keys, slices.Clone(req.Key))
+		if n >= len(s.routes) {
+			return router.RouteResult{}, errScript
+		}
+		return router.RouteResult{Route: s.routes[n].route}, s.routes[n].err
 	}
-	return router.RouteResult{Route: s.routes[n].route}, s.routes[n].err
-}
-
-// Refresh records req, and returns the next error of refreshes.
-func (s *script) Refresh(_ context.Context, req *router.RefreshRequest) (router.RefreshResult, error) {
-	n := len(s.refreshed)
-	s.refreshed = append(s.refreshed, *req)
-	if n >= len(s.refreshes) {
-		return router.RefreshResult{}, errScript
+	refresh := func(_ context.Context, req *router.RefreshRequest) (router.RefreshResult, error) {
+		n := len(s.refreshed)
+		s.refreshed = append(s.refreshed, *req)
+		if n >= len(s.refreshes) {
+			return router.RefreshResult{}, errScript
+		}
+		return router.RefreshResult{}, s.refreshes[n]
 	}
-	return router.RefreshResult{}, s.refreshes[n]
+	s.RouterStub = routertest.NewRouterStub(tb, routertest.RouterStubBenchMode(), routertest.WithRouterRoute(route),
+		routertest.WithRouterRefresh(refresh))
+	return s
 }
 
 // server is a server of the tests that serves only the routes for which current reports
@@ -141,7 +153,7 @@ func TestRouter(t *testing.T) {
 
 		t.Run("calls call with the route of the key", func(t *testing.T) {
 			t.Parallel()
-			s := &script{routes: []routed{{route: first}}}
+			s := newScript(t, scripting{routes: []routed{{route: first}}})
 			var got []router.Route
 			err := router.Do(t.Context(), s, []byte(scriptKey), 1, func(r router.Route) error {
 				got = append(got, r)
@@ -154,7 +166,7 @@ func TestRouter(t *testing.T) {
 
 		t.Run("returns ErrConfig for fewer than one attempt", func(t *testing.T) {
 			t.Parallel()
-			s := &script{routes: []routed{{route: first}}}
+			s := newScript(t, scripting{routes: []routed{{route: first}}})
 			err := router.Do(t.Context(), s, []byte(scriptKey), 0, func(router.Route) error { return nil })
 			assert.ErrorIs(t, err, router.ErrConfig, "Do must refuse fewer than one attempt")
 			assert.Empty(t, s.keys, "Do must not route a key without an attempt")
@@ -162,7 +174,7 @@ func TestRouter(t *testing.T) {
 
 		t.Run("returns an error that wraps the error of Route", func(t *testing.T) {
 			t.Parallel()
-			s := &script{routes: []routed{{err: router.ErrNoRoute}}}
+			s := newScript(t, scripting{routes: []routed{{err: router.ErrNoRoute}}})
 			calls := 0
 			err := router.Do(t.Context(), s, []byte(scriptKey), 2, func(router.Route) error {
 				calls++
@@ -174,7 +186,7 @@ func TestRouter(t *testing.T) {
 
 		t.Run("returns the error of call when the error is not a NotOwnerError", func(t *testing.T) {
 			t.Parallel()
-			s := &script{routes: []routed{{route: first}, {route: second}}}
+			s := newScript(t, scripting{routes: []routed{{route: first}, {route: second}}})
 			err := router.Do(t.Context(), s, []byte(scriptKey), 3, func(router.Route) error { return errTransport })
 			assert.Equal(t, err, errTransport, "Do must return the error of the callback unchanged")
 			expect.Length(t, s.keys, 1, "Do must not route the key again after a lost reply")
@@ -183,7 +195,7 @@ func TestRouter(t *testing.T) {
 
 		t.Run("refreshes the router to the generation of a NotOwnerError", func(t *testing.T) {
 			t.Parallel()
-			s := &script{routes: []routed{{route: first}, {route: second}}, refreshes: []error{nil}}
+			s := newScript(t, scripting{routes: []routed{{route: first}, {route: second}}, refreshes: []error{nil}})
 			srv := &server{
 				current: func(r router.Route) bool { return r.Epoch == second.Epoch },
 				moved:   func(router.Route) *router.NotOwnerError { return redirect },
@@ -199,7 +211,7 @@ func TestRouter(t *testing.T) {
 
 		t.Run("routes the key again after a NotOwnerError", func(t *testing.T) {
 			t.Parallel()
-			s := &script{routes: []routed{{route: first}, {route: second}}, refreshes: []error{nil}}
+			s := newScript(t, scripting{routes: []routed{{route: first}, {route: second}}, refreshes: []error{nil}})
 			srv := &server{
 				current: func(r router.Route) bool { return r.Epoch == second.Epoch },
 				moved:   func(router.Route) *router.NotOwnerError { return redirect },
@@ -213,7 +225,7 @@ func TestRouter(t *testing.T) {
 
 		t.Run("routes the key again after a NotOwnerError that call wraps", func(t *testing.T) {
 			t.Parallel()
-			s := &script{routes: []routed{{route: first}, {route: second}}, refreshes: []error{nil}}
+			s := newScript(t, scripting{routes: []routed{{route: first}, {route: second}}, refreshes: []error{nil}})
 			calls := 0
 			err := router.Do(t.Context(), s, []byte(scriptKey), 2, func(router.Route) error {
 				calls++
@@ -229,10 +241,10 @@ func TestRouter(t *testing.T) {
 		t.Run("routes the key again when Refresh returns an error that wraps shard.ErrIncarnation",
 			func(t *testing.T) {
 				t.Parallel()
-				s := &script{
+				s := newScript(t, scripting{
 					routes:    []routed{{route: first}, {route: second}},
 					refreshes: []error{fmt.Errorf("test: the refresh: %w", shard.ErrIncarnation)},
-				}
+				})
 				srv := &server{
 					current: func(r router.Route) bool { return r.Epoch == second.Epoch },
 					moved:   func(router.Route) *router.NotOwnerError { return redirect },
@@ -245,7 +257,7 @@ func TestRouter(t *testing.T) {
 
 		t.Run("returns an error that wraps the error of Refresh", func(t *testing.T) {
 			t.Parallel()
-			s := &script{routes: []routed{{route: first}, {route: second}}, refreshes: []error{errStop}}
+			s := newScript(t, scripting{routes: []routed{{route: first}, {route: second}}, refreshes: []error{errStop}})
 			srv := &server{
 				current: func(r router.Route) bool { return r.Epoch == second.Epoch },
 				moved:   func(router.Route) *router.NotOwnerError { return redirect },
@@ -257,7 +269,7 @@ func TestRouter(t *testing.T) {
 
 		t.Run("returns the NotOwnerError of the last attempt", func(t *testing.T) {
 			t.Parallel()
-			s := &script{routes: []routed{{route: first}, {route: first}}, refreshes: []error{nil}}
+			s := newScript(t, scripting{routes: []routed{{route: first}, {route: first}}, refreshes: []error{nil}})
 			srv := &server{
 				current: func(router.Route) bool { return false },
 				moved:   func(router.Route) *router.NotOwnerError { return redirect },
@@ -271,7 +283,7 @@ func TestRouter(t *testing.T) {
 
 		t.Run("keeps no reference to the key after it returns", func(t *testing.T) {
 			t.Parallel()
-			s := &script{routes: []routed{{err: router.ErrNoRoute}}}
+			s := newScript(t, scripting{routes: []routed{{err: router.ErrNoRoute}}})
 			gone := func() weak.Pointer[[released]byte] {
 				key := new([released]byte)
 				err := router.Do(t.Context(), s, key[:], 1, func(router.Route) error { return nil })
@@ -287,7 +299,7 @@ func TestRouter(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				w := f.start(t, func(c *router.Config) { c.Store = newGated(f.st) })
+				w := f.start(t, func(c *router.Config) { c.Store = newGated(t, f.st) })
 				p := f.placement(0, nodeB.ID, 2)
 				gen := f.write(t, cellScope, &store.Mutation{Put: []shard.Placement{p}})
 				srv := &server{
@@ -314,7 +326,7 @@ func TestRouter(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				w := f.start(t, func(c *router.Config) { c.Store = newGated(f.st) })
+				w := f.start(t, func(c *router.Config) { c.Store = newGated(t, f.st) })
 				f.recreate(t)
 				srv := &server{
 					current: func(r router.Route) bool { return r.Incarnation == incB },

@@ -65,6 +65,10 @@ type Config struct {
 // # Concurrency
 //
 // A Watcher is safe for concurrent use.
+//
+//dokimi:suite
+//dokimi:out path=routertest/
+//dokimi:subject Watcher new=newWatcher
 type Watcher struct {
 	// err is the error that ended the run, or nil after a Close. The run sets it before it
 	// closes done.
@@ -148,6 +152,9 @@ func New(ctx context.Context, cfg *Config) (*Watcher, error) {
 // # Allocation contract
 //
 // Zero alloc. A request in a local variable of the caller remains on the stack of the caller.
+//
+//dokimi:budget allocs=0
+//dokimi:mixin concurrent
 func (w *Watcher) Route(ctx context.Context, req *RouteRequest) (RouteResult, error) {
 	r, err := w.machine.Route(ctx, req.Key)
 	//nolint:wrapcheck // Route returns the sentinels of the router as they are, so errors.Is matches them without an allocation.
@@ -169,6 +176,8 @@ func (w *Watcher) Route(ctx context.Context, req *RouteRequest) (RouteResult, er
 //   - an error that wraps ErrClosed once the run of the router has ended, also for a call
 //     that waits when the run ends.
 //   - an error that wraps the cause of ctx when ctx ends first.
+//
+//dokimi:mixin waits
 func (w *Watcher) Refresh(ctx context.Context, req *RefreshRequest) (RefreshResult, error) {
 	if req.Incarnation.IsZero() {
 		return RefreshResult{}, fmt.Errorf("%w: a refresh without a namespace incarnation", ErrConfig)

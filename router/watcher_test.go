@@ -13,17 +13,18 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
 
-	"go.thesmos.sh/sharder/membership"
+	"go.thesmos.sh/sharder/config/configtest"
+	"go.thesmos.sh/sharder/membership/membershiptest"
 	"go.thesmos.sh/sharder/router"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
+	"go.thesmos.sh/sharder/store/storetest"
 )
 
 // The operations of the history of the route of a shard.
@@ -82,35 +83,43 @@ var routings = history.Spec[routing]{
 }
 
 // faulty is a store whose watches pass errBroken in place of their next item once broken
-// is true. It embeds a memory.Store, so it provides the capabilities of that store.
+// is true. It provides the capabilities of the memory store under it.
 type faulty struct {
-	*memory.Store
+	*providingStore
 	// broken is true once the watches fail.
 	broken atomic.Bool
 }
 
-// Watch yields the items of the watch of the memory store until broken is true, and then
-// yields errBroken in place of the next item.
-func (s *faulty) Watch(ctx context.Context, sc shard.Scope, inc shard.NamespaceIncarnation, from epoch.Epoch,
-	n shard.NodeID,
-) iter.Seq2[store.Event, error] {
-	return func(yield func(store.Event, error) bool) {
-		for ev, err := range s.Store.Watch(ctx, sc, inc, from, n) {
-			if s.broken.Load() {
-				yield(store.Event{}, errBroken)
-				return
-			}
-			if !yield(ev, err) {
-				return
+// newFaulty returns a double of st whose watches yield the items of the watches of st until
+// broken is true. A watch then yields errBroken in place of its next item. The doubles report
+// to tb.
+func newFaulty(tb assert.TB, st *memory.Store) *faulty {
+	tb.Helper()
+	f := &faulty{}
+	watch := func(
+		ctx context.Context,
+		sc shard.Scope,
+		inc shard.NamespaceIncarnation,
+		from epoch.Epoch,
+		n shard.NodeID,
+	) iter.Seq2[store.Event, error] {
+		return func(yield func(store.Event, error) bool) {
+			for ev, err := range st.Watch(ctx, sc, inc, from, n) {
+				if f.broken.Load() {
+					yield(store.Event{}, errBroken)
+					return
+				}
+				if !yield(ev, err) {
+					return
+				}
 			}
 		}
 	}
-}
-
-// plainMembership is a membership that does not provide a capability. Its method set has the
-// methods of membership.Membership alone.
-type plainMembership struct {
-	membership.Membership
+	f.providingStore = &providingStore{
+		StoreStub:    storetest.NewStoreStub(tb, storetest.StoreStubDelegateTo(st), storetest.WithStoreWatch(watch)),
+		ProviderStub: configtest.NewProviderStub(tb, configtest.ProviderStubDelegateTo(st)),
+	}
+	return f
 }
 
 // TestWatcher checks the start of a router, its routes, its Refresh, its Close and the end of
@@ -183,7 +192,8 @@ func TestWatcher(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				cfg := f.config()
-				cfg.Membership = plainMembership{Membership: f.st.Membership()}
+				cfg.Membership = membershiptest.NewMembershipStub(t,
+					membershiptest.MembershipStubDelegateTo(f.st.Membership()))
 				_, err := router.New(t.Context(), cfg)
 				assert.ErrorIs(t, err, router.ErrMapping,
 					"New must refuse a membership that does not provide the capabilities of the spec")
@@ -206,7 +216,7 @@ func TestWatcher(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := bare(t)
-				g := newGated(f.st)
+				g := newGated(t, f.st)
 				cfg := f.config()
 				cfg.Store = g
 				ctx, cancel := context.WithTimeoutCause(t.Context(), time.Minute, errStop)
@@ -320,7 +330,7 @@ func TestWatcher(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				g := newGated(f.st)
+				g := newGated(t, f.st)
 				w := f.start(t, func(c *router.Config) { c.Store = g })
 				gen := f.write(t, cellScope, &store.Mutation{Put: []shard.Placement{f.placement(0, nodeB.ID, 2)}})
 				_, err := w.Refresh(t.Context(), &router.RefreshRequest{Incarnation: incA, Cell: cellID, Min: gen})
@@ -333,7 +343,7 @@ func TestWatcher(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				g := newGated(f.st)
+				g := newGated(t, f.st)
 				w := f.start(t, func(c *router.Config) { c.Store = g })
 				_, err := w.Refresh(t.Context(), &router.RefreshRequest{Incarnation: incA, Cell: cellID, Min: f.placed})
 				assert.NoError(t, err, "Refresh must return for a generation that the router has applied")
@@ -387,7 +397,7 @@ func TestWatcher(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				w := f.start(t, func(c *router.Config) { c.Store = newGated(f.st) })
+				w := f.start(t, func(c *router.Config) { c.Store = newGated(t, f.st) })
 				gen := f.write(t, cellScope, &store.Mutation{Put: []shard.Placement{f.placement(0, nodeB.ID, 2)}})
 				ctx, cancel := context.WithTimeoutCause(t.Context(), time.Minute, errStop)
 				defer cancel()
@@ -412,7 +422,7 @@ func TestWatcher(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				w := f.start(t, func(c *router.Config) { c.Store = newGated(f.st) })
+				w := f.start(t, func(c *router.Config) { c.Store = newGated(t, f.st) })
 				gen := f.write(t, cellScope, &store.Mutation{Put: []shard.Placement{f.placement(0, nodeB.ID, 2)}})
 				refreshed := make(chan error, 1)
 				go func() {
@@ -438,7 +448,7 @@ func TestWatcher(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				g := newGated(f.st)
+				g := newGated(t, f.st)
 				w := f.start(t, func(c *router.Config) { c.Store = g })
 				assert.NoError(t, w.Close(), "Close must stop the router")
 				assert.True(t, g.opened.Load(), "Close must return once the watches of the router have returned")
@@ -471,7 +481,7 @@ func TestWatcher(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				s := &faulty{Store: f.st}
+				s := newFaulty(t, f.st)
 				w := f.start(t, func(c *router.Config) { c.Store = s })
 				s.broken.Store(true)
 				f.write(t, cellScope, &store.Mutation{Put: []shard.Placement{f.placement(0, nodeB.ID, 2)}})
@@ -503,7 +513,7 @@ func TestWatcher(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				s := &faulty{Store: f.st}
+				s := newFaulty(t, f.st)
 				w := f.start(t, func(c *router.Config) { c.Store = s })
 				s.broken.Store(true)
 				f.write(t, cellScope, &store.Mutation{Put: []shard.Placement{f.placement(0, nodeB.ID, 2)}})
@@ -514,8 +524,10 @@ func TestWatcher(t *testing.T) {
 	})
 }
 
-// TestWatcherAllocs checks the allocation contract of Route. MaxAllocs counts the allocations
-// of the whole process, so the test does not run in parallel.
+// TestWatcherAllocs checks that Route does not allocate for a request in a local variable of
+// its caller. The budget of the suite of Watcher does not count the escape of such a request.
+// MaxAllocs counts the allocations of the whole process, so the test does not run in
+// parallel.
 func TestWatcherAllocs(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		f := newFixture(t)
@@ -529,52 +541,6 @@ func TestWatcherAllocs(t *testing.T) {
 		}, 0, "Route must not allocate")
 		assert.NoError(t, err, "the test must measure the route of a placed shard")
 		assert.Equal(t, res.Route.Epoch, firstEpoch, "the test must measure the route of a placed shard")
-	})
-}
-
-// BenchmarkWatcher measures Route for the key of a placed shard.
-func BenchmarkWatcher(b *testing.B) {
-	f := newFixture(b)
-	w := f.start(b)
-	ctx, key := b.Context(), f.keys[0]
-
-	b.Run("Route", func(b *testing.B) {
-		b.Run("serial", func(b *testing.B) {
-			var res router.RouteResult
-			var err error
-			c := bench.Start(b).MaxAllocs(0)
-			defer c.End()
-			for c.Loop() {
-				req := router.RouteRequest{Key: key}
-				res, err = w.Route(ctx, &req)
-			}
-			assert.NoError(b, err, "the benchmark must measure the route of a placed shard")
-			assert.Equal(b, res.Route.Epoch, firstEpoch, "the benchmark must measure the route of a placed shard")
-		})
-
-		b.Run("parallel", func(b *testing.B) {
-			c := bench.Start(b).MaxAllocs(0)
-			defer c.End()
-			c.RunParallel(func(pb *bench.PB) {
-				var res router.RouteResult
-				var err error
-				routed := 0
-				for pb.Next() {
-					req := router.RouteRequest{Key: key}
-					res, err = w.Route(ctx, &req)
-					routed++
-				}
-				if routed > 0 {
-					expect.NoError(b, err, "the benchmark must measure the route of a placed shard")
-					expect.Equal(
-						b,
-						res.Route.Epoch,
-						firstEpoch,
-						"the benchmark must measure the route of a placed shard",
-					)
-				}
-			})
-		})
 	})
 }
 

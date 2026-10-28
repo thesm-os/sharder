@@ -24,6 +24,7 @@ import (
 
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/config/configtest"
 	"go.thesmos.sh/sharder/ownership"
 	"go.thesmos.sh/sharder/partition"
 	"go.thesmos.sh/sharder/partition/fixedslots"
@@ -31,6 +32,7 @@ import (
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
+	"go.thesmos.sh/sharder/store/storetest"
 )
 
 // The names of the tests.
@@ -285,40 +287,53 @@ func (f *fixture) join(tb assert.TB, s shard.Scope, nodes ...shard.Node) {
 	}
 }
 
+// providingStore is a store that implements config.Provider. It embeds the double of each
+// interface.
+type providingStore struct {
+	*storetest.StoreStub
+	*configtest.ProviderStub
+}
+
 // gated is a store whose watches pass no item until waitFor has passed since newGated built
-// it. A watch then passes the items of the watch of the memory store. It embeds a
-// memory.Store, so it provides the capabilities of that store.
+// it. It provides the capabilities of the memory store under it.
 type gated struct {
-	*memory.Store
-	// gate is closed once waitFor has passed.
-	gate chan struct{}
-	// opened is true once gate is closed.
+	*providingStore
+	// opened is true once waitFor has passed.
 	opened atomic.Bool
 }
 
-// newGated returns a store over st whose watches pass no item until waitFor has passed.
-func newGated(st *memory.Store) *gated {
-	g := &gated{Store: st, gate: make(chan struct{})}
+// newGated returns a double of st whose watches pass no item until waitFor has passed. Each
+// watch waits until then, also when its context ends first. It then yields the items of the
+// watch of st. The doubles report to tb.
+func newGated(tb assert.TB, st *memory.Store) *gated {
+	tb.Helper()
+	g := &gated{}
+	gate := make(chan struct{})
 	time.AfterFunc(waitFor, func() {
 		g.opened.Store(true)
-		close(g.gate)
+		close(gate)
 	})
-	return g
-}
-
-// Watch waits until gate is closed, also when ctx ends first. It then yields the items of
-// the watch of the memory store.
-func (g *gated) Watch(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, from epoch.Epoch,
-	n shard.NodeID,
-) iter.Seq2[store.Event, error] {
-	return func(yield func(store.Event, error) bool) {
-		<-g.gate
-		for ev, err := range g.Store.Watch(ctx, s, inc, from, n) {
-			if !yield(ev, err) {
-				return
+	watch := func(
+		ctx context.Context,
+		s shard.Scope,
+		inc shard.NamespaceIncarnation,
+		from epoch.Epoch,
+		n shard.NodeID,
+	) iter.Seq2[store.Event, error] {
+		return func(yield func(store.Event, error) bool) {
+			<-gate
+			for ev, err := range st.Watch(ctx, s, inc, from, n) {
+				if !yield(ev, err) {
+					return
+				}
 			}
 		}
 	}
+	g.providingStore = &providingStore{
+		StoreStub:    storetest.NewStoreStub(tb, storetest.StoreStubDelegateTo(st), storetest.WithStoreWatch(watch)),
+		ProviderStub: configtest.NewProviderStub(tb, configtest.ProviderStubDelegateTo(st)),
+	}
+	return g
 }
 
 // keysOf returns a key of each of the n slots of p, in slot order.
