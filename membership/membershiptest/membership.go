@@ -5,13 +5,17 @@ package membershiptest
 
 import (
 	"context"
-	"testing"
+	"errors"
+	"fmt"
+	"iter"
+	"reflect"
+	"slices"
+	"sync"
 	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/assert/stateful"
-	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
@@ -23,6 +27,7 @@ import (
 	"go.thesmos.sh/sharder/ownership"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
+	"go.thesmos.sh/sharder/store/memory"
 )
 
 // The names in the records of the suite.
@@ -35,6 +40,9 @@ const (
 	cpu = "cpu"
 	// zone is the label of the zone of a node.
 	zone = "zone"
+	// anonymous is the ID that the planted defect of JoinsRefuseNodesWithoutAnID gives a
+	// node without an ID.
+	anonymous shard.NodeID = "anonymous"
 )
 
 // The names of the actions of the machine of leases.
@@ -82,8 +90,8 @@ const (
 	// maxAdvance is the longest step of the clock of the machine of leases, in whole
 	// seconds.
 	maxAdvance = 12
-	// lostRenewals is the number of renewals of the laws of lost renewals before the local
-	// deadline of the join, each of which a fault interrupts.
+	// lostRenewals is the number of renewals of the checks of lost renewals before the
+	// local deadline of the join, each of which a fault interrupts.
 	lostRenewals = 2
 	// beforeDeadline is the time after the join, with shortLease, of the last renewal before
 	// the local deadline of the join at 8.5 seconds.
@@ -97,7 +105,8 @@ const (
 	atLateExpiry = 18 * time.Second
 )
 
-// lawTerm is the term of the commits that create the scopes of the laws of incarnations.
+// lawTerm is the term of the commits that create the scopes of the checks of
+// incarnations.
 const lawTerm epoch.Epoch = 1
 
 // tagIncarnation is the first byte of the namespace incarnations of the suite.
@@ -105,13 +114,14 @@ const tagIncarnation byte = 0x3e
 
 // The identities, the nodes and the leases of the suite.
 var (
-	// incA is the namespace incarnation of the joins of the laws.
+	// incA is the namespace incarnation of the joins of the checks.
 	incA = shard.NamespaceIncarnation{ID: id.New128([16]byte{0: tagIncarnation, 15: 0x0a})}
-	// incB is the namespace incarnation of the joins of the laws of another incarnation.
+	// incB is the namespace incarnation of the joins of the checks of another incarnation.
 	incB = shard.NamespaceIncarnation{ID: id.New128([16]byte{0: tagIncarnation, 15: 0x0b})}
 	// scope is the scope that the nodes join.
 	scope = shard.Scope{Namespace: namespace, Cell: cell}
-	// origin is the start of the clock of each case.
+	// origin is the start of the time of the machine of leases, and of the clock of the
+	// memory stores of the planted defects.
 	origin = time.Date(2026, time.October, 11, 0, 0, 0, 0, time.UTC)
 	// nodes lists the nodes of the suite, in the order of their IDs.
 	nodes = [...]shard.Node{
@@ -146,7 +156,7 @@ var (
 		MaxDriftRate: 0.5,
 		OnLoss:       ownership.Stop,
 	}
-	// shortLease is the lease of the laws of lost renewals. It renews at 4 and 8 seconds
+	// shortLease is the lease of the checks of lost renewals. It renews at 4 and 8 seconds
 	// after the join, with a validity of 8.5 seconds and a TTL of 10 seconds.
 	shortLease = ownership.Lease{
 		TTL:          shard.Duration(10 * time.Second),
@@ -156,10 +166,12 @@ var (
 	}
 	// advances generates the steps of the clock of the machine of leases, in whole seconds.
 	advances = prop.Integer(1, maxAdvance).Map(func(s int) time.Duration { return time.Duration(s) * time.Second })
+	// lossPoints maps each loss to the point of a memory store that loses a renewal there.
+	lossPoints = map[Loss]memory.Point{LoseRequest: memory.PointRenewApply, LoseReply: memory.PointRenewAck}
 )
 
-// Loss is the point at which a fault that [WithLostRenewals] injects interrupts a renewal of
-// a lease.
+// Loss is the point at which a fault that [Faulty.LoseRenewals] injects interrupts a renewal
+// of a lease.
 //
 // [Loss.IsValid] refuses the zero Loss.
 //
@@ -180,31 +192,23 @@ const (
 	LoseReply Loss = 2 // reply
 )
 
-// config is the result of the Options of one run of AssertMembership.
-type config struct {
-	// lose makes the next renewal of a lease fail, or is nil.
-	lose func(tb assert.TB, m membership.Membership, s store.Store, l Loss)
+// Backed is a membership over a store whose leases run on a clock that the checks advance.
+// The checks of incarnations create a scope through its store, and the checks of leases
+// advance its clock.
+type Backed interface {
+	// Store returns the store over the backend of the membership.
+	Store() store.Store
+	// Advance moves the clock of the leases of the membership forward by d, and applies
+	// every renewal, deadline and expiry that is due by then.
+	Advance(d time.Duration)
 }
 
-// Option configures a run of [AssertMembership]. Each Option adds the laws that its docblock
-// lists.
-type Option func(*config)
-
-// WithLostRenewals gives the suite a way to make the next renewal of a lease of m fail at the
-// point that l selects. s is the store that newMembership returned with m. The suite then
-// checks that a session closes its Done at the local deadline after its join when every
-// renewal or every reply of a renewal is lost, and that the backend keeps the node in the
-// view until the expiry of the last renewal that it applied.
-func WithLostRenewals(lose func(tb assert.TB, m membership.Membership, s store.Store, l Loss)) Option {
-	return func(c *config) { c.lose = lose }
-}
-
-// cleanupTB is an assert.TB that runs a function when its test or case ends, as a
-// *testing.T and a *prop.Case do.
-type cleanupTB interface {
-	assert.TB
-	// Cleanup registers f to run when the test or the case ends.
-	Cleanup(f func())
+// Faulty is a membership whose next renewals a fault interrupts. The checks of lost
+// renewals call it.
+type Faulty interface {
+	// LoseRenewals makes the next renewal of a lease of the membership fail at the point
+	// that l selects.
+	LoseRenewals(l Loss)
 }
 
 // sessionModel is the model of the session of one node in the machine of leases.
@@ -242,13 +246,15 @@ func (sm *sessionModel) at(now time.Time) (live, lost bool) {
 }
 
 // leases is the subject and the model of the machine of leases in one case: the membership,
-// the clock of its leases, the time of the clock, and the session of each node.
+// its clock, the time of the model, and the session of each node.
 type leases struct {
+	// h is the handle of the case.
+	h *MembershipHandle
 	// m is the membership of the case.
 	m membership.Membership
-	// clk is the clock of the leases.
-	clk *fake.Clock
-	// now is the time of clk.
+	// backed advances the clock of the leases of m.
+	backed Backed
+	// now is the time of the model, which moves with the clock of m.
 	now time.Time
 	// sessions lists the session of each node of nodes.
 	sessions [len(nodes)]sessionModel
@@ -309,11 +315,10 @@ func (ls *leases) join(c *prop.Case, _ int, in any) {
 	c.Cleanup(cancel)
 	n := nodes[i]
 	ss, err := ls.m.Join(ctx, scope, incA, &n, lease)
-	assert.NoError(c, err, "Join registers a node")
+	assert.NoError(c, err, ls.h.Statement())
 	if before := &ls.sessions[i]; before.s != nil {
 		c.Classify(labelRejoined)
-		assert.True(c, ss.Incarnation() > before.inc,
-			"Join gives a node a session of a higher incarnation than its session before")
+		assert.True(c, ss.Incarnation() > before.inc, ls.h.Statement())
 	}
 	ls.sessions[i] = sessionModel{s: ss, cancel: cancel, joined: ls.now, inc: ss.Incarnation()}
 }
@@ -323,7 +328,7 @@ func (ls *leases) leave(c *prop.Case, _ int, in any) {
 	i, _ := in.(int)
 	sm := &ls.sessions[i]
 	c.Classify(labelLeft)
-	assert.NoError(c, sm.s.Leave(c.Context()), "Leave returns nil")
+	assert.NoError(c, sm.s.Leave(c.Context()), ls.h.Statement())
 	sm.left = true
 	sm.cancel()
 }
@@ -340,26 +345,33 @@ func (ls *leases) stop(_ *prop.Case, _ int, in any) {
 // advance advances the clock of the leases by the duration of the input.
 func (ls *leases) advance(_ *prop.Case, _ int, in any) {
 	d, _ := in.(time.Duration)
-	ls.clk.Advance(d)
+	ls.backed.Advance(d)
 	ls.now = ls.now.Add(d)
 }
 
-// check fails c when the current view differs from the model, or when the Done of a session
-// is closed while the session has its lease, or open after the session lost its lease.
+// check fails c at the statement of the check when the current view differs from the
+// model, or when the Done of a session is closed while the session has its lease, or open
+// after the session lost its lease.
 func (ls *leases) check(c *prop.Case) {
 	v := current(c, ls.m)
 	var want []shard.Node
 	for i := range ls.sessions {
 		sm := &ls.sessions[i]
-		live, lost := sm.at(ls.now)
-		if live {
+		if live, _ := sm.at(ls.now); live {
 			n := nodes[i]
 			n.Incarnation = sm.inc
 			want = append(want, n)
 		}
+	}
+	assert.Equal(c, v.Nodes, want, ls.h.Statement(), assert.EquateEmpty())
+	assert.Equal(c, v.Scope, scope, ls.h.Statement())
+	assert.Equal(c, v.Incarnation, incA, ls.h.Statement())
+	for i := range ls.sessions {
+		sm := &ls.sessions[i]
 		if sm.s == nil {
 			continue
 		}
+		live, lost := sm.at(ls.now)
 		if live && lost {
 			c.Classify(labelDeadline)
 		}
@@ -367,307 +379,496 @@ func (ls *leases) check(c *prop.Case) {
 			c.Classify(labelExpired)
 		}
 		if lost {
-			streamtest.Receive(c, sm.s.Done(), waitFor, "Done is closed once the session loses its lease")
+			streamtest.Receive(c, sm.s.Done(), waitFor, ls.h.Statement())
 			continue
 		}
-		streamtest.Blocks(c, sm.s.Done(), "Done is open while the session has its lease")
+		streamtest.Blocks(c, sm.s.Done(), ls.h.Statement())
 	}
-	assert.Equal(c, v.Nodes, want,
-		"the view lists the node of each session whose lease is live, in the order of their IDs", assert.EquateEmpty())
-	assert.Equal(c, v.Scope, scope, "the view is a view of the scope of the watch")
-	assert.Equal(c, v.Incarnation, incA, "the view is a view of the incarnation of the watch")
 }
 
-// settle fails c when the watch that sends to items did not yield every view up to the
-// current view, in the order of their revisions.
+// settle fails c at the statement of the check when the watch that sends to items did not
+// yield every view up to the current view, in the order of their revisions.
 func (ls *leases) settle(c *prop.Case, items <-chan streamtest.Item[membership.View]) {
 	last := current(c, ls.m)
 	var views []membership.View
 	for range last.Revision + 1 {
-		it, ok := streamtest.Receive(c, items, waitFor, "Watch yields each later view within the wait of the suite")
-		assert.True(c, ok, "Watch yields each later view before its context ends")
-		assert.NoError(c, it.Err, "Watch yields the views of the scope")
+		it, ok := streamtest.Receive(c, items, waitFor, ls.h.Statement())
+		assert.True(c, ok, ls.h.Statement())
+		assert.NoError(c, it.Err, ls.h.Statement())
 		views = append(views, it.Value)
 		if it.Value.Revision >= last.Revision {
 			break
 		}
 	}
 	assert.Pairwise(c, views, func(earlier, later membership.View) bool { return earlier.Revision < later.Revision },
-		"Watch yields the views in the order of their revisions")
-	assert.Equal(c, views[len(views)-1], last, "the last view of a watch is the current view", assert.EquateEmpty())
+		ls.h.Statement())
+	assert.Equal(c, views[len(views)-1], last, ls.h.Statement(), assert.EquateEmpty())
 }
 
-// suite is one run of AssertMembership: the memberships that newMembership returns, and the
-// options.
-type suite struct {
-	// newMembership returns an empty membership and the store over the same backend.
-	newMembership func(tb assert.TB, clk clock.Clock) (membership.Membership, store.Store)
-	// cfg is the result of the options.
-	cfg config
+// backend is the memory store under a planted defect of the suite, the verified fake of the
+// planted defects, with the fake clock of its leases.
+type backend struct {
+	*memory.Store
+	// clk is the clock of the leases of the store.
+	clk *fake.Clock
 }
 
-// open returns a membership and its store that newMembership returns with leases on clk,
-// and closes the store when tb ends.
-func (su *suite) open(tb cleanupTB, clk clock.Clock) (membership.Membership, store.Store) {
-	tb.Helper()
-	m, s := su.newMembership(tb, clk)
-	tb.Cleanup(func() { assert.NoError(tb, s.Close(), "Close returns nil") })
-	return m, s
+// newBackend returns an empty memory store whose leases run on a fake clock at origin, and
+// closes it when the check of h ends.
+func newBackend(h *MembershipHandle) *backend {
+	clk := fake.New(origin)
+	b := &backend{Store: memory.New(clk), clk: clk}
+	h.Cleanup(func() { assert.NoError(h, b.Close(), "Close of the memory store returns nil") })
+	return b
 }
 
-// joinLaws runs the laws of Join.
-func (su *suite) joinLaws(t *testing.T) {
-	t.Parallel()
-	t.Run("registers each node until its lease expires", su.joinsUntilExpiry)
-	t.Run("returns ErrIncarnation for a scope of another incarnation", su.joinsOtherIncarnation)
-	t.Run("returns an error of the class Invalid for a node without an ID", su.joinsWithoutID)
-	t.Run("returns an error of the class Invalid for a lease that the configuration refuses", su.joinsInvalidLease)
-	t.Run("does not modify the node", su.joinsWithoutChange)
-	t.Run("does not keep the node", su.joinsWithCopy)
+// plantedMembership is a planted defect of the suite: the double of membership.Membership
+// over the membership of a backend, with the operations of the kit on the backend.
+//
+// # Concurrency
+//
+// A plantedMembership is safe for concurrent use.
+type plantedMembership struct {
+	membership.Membership
+	// b is the backend of the double.
+	b *backend
+	// points maps each loss to the point of the backend at which LoseRenewals arms a
+	// fault.
+	points map[Loss]memory.Point
 }
 
-// joinsUntilExpiry runs the machine of leases: joins, leaves, stopped renewals and steps of
-// the clock, with the current view and the Done of each session checked after every step,
-// and the views of one watch checked at the end.
-func (su *suite) joinsUntilExpiry(t *testing.T) {
-	t.Parallel()
-	prop.ForAll(t, "the views of Watch list the node of each session whose lease is live", func(c *prop.Case) {
-		clk := fake.New(origin)
-		m, _ := su.open(c, clk)
-		ls := &leases{m: m, clk: clk, now: origin}
-		ctx, cancel := context.WithCancel(c.Context())
-		defer cancel()
-		items := streamtest.Follow(ctx, m.Watch(ctx, scope, incA))
-		stateful.Steps(c, stateful.Machine[struct{}]{
-			Actions:   ls.actions(),
-			Invariant: func(c *prop.Case, _ struct{}) { ls.check(c) },
-			Settle:    func(c *prop.Case, _ struct{}) { ls.settle(c, items) },
-		}, stateful.Swarm(false))
-	},
+// The operations of the kit that a planted membership implements.
+var (
+	_ Backed = plantedMembership{}
+	_ Faulty = plantedMembership{}
+)
+
+// plant returns the double of the membership of b, with the options opts that replace the
+// calls of the membership that break a law. LoseRenewals of the double arms the faults of
+// lossPoints.
+func plant(h *MembershipHandle, b *backend, opts ...MembershipStubOption) plantedMembership {
+	return plantedMembership{
+		Membership: NewMembershipStub(h,
+			append([]MembershipStubOption{MembershipStubDelegateTo(b.Membership())}, opts...)...),
+		b:      b,
+		points: lossPoints,
+	}
+}
+
+// Store returns the memory store of the backend.
+func (p plantedMembership) Store() store.Store {
+	return p.b.Store
+}
+
+// Advance moves the clock of the backend forward by d.
+func (p plantedMembership) Advance(d time.Duration) {
+	p.b.clk.Advance(d)
+}
+
+// LoseRenewals arms the fault of the backend at the point of l.
+func (p plantedMembership) LoseRenewals(l Loss) {
+	p.b.FailAt(p.points[l])
+}
+
+// ViewsListTheLiveSessions checks that each view of Watch lists the node of each session
+// whose lease is live, and Done closes once a session loses its lease.
+//
+// A machine joins, leaves and stops the renewals of nodes, and advances the clock of a
+// membership that implements Backed. After every step it checks the current view and the
+// Done of each session. At the end it checks that a watch from the start yielded every
+// view in the order of their revisions. An application requires a share of the cases for
+// each event of a lease.
+//
+//dokimi:check Membership.Join defect=keepsLeftNodes options=leaseOptions
+func ViewsListTheLiveSessions(h *MembershipHandle, c *prop.Case) {
+	backed, ok := operation[Backed](h)
+	if !ok {
+		return
+	}
+	m := h.Subject()
+	ls := &leases{h: h, m: m, backed: backed, now: origin}
+	ctx, cancel := context.WithCancel(h.Context())
+	defer cancel()
+	items := streamtest.Follow(ctx, m.Watch(ctx, scope, incA))
+	stateful.Steps(c, stateful.Machine[struct{}]{
+		Actions:   ls.actions(),
+		Invariant: func(c *prop.Case, _ struct{}) { ls.check(c) },
+		Settle:    func(c *prop.Case, _ struct{}) { ls.settle(c, items) },
+	}, stateful.Swarm(false))
+}
+
+// leaseOptions returns the least share of the cases of the machine of leases that count
+// each event of a lease.
+func leaseOptions(*MembershipHandle) []prop.Option {
+	return []prop.Option{
 		prop.Require(labelLeft, shareFrequent),
 		prop.Require(labelRejoined, shareFrequent),
 		prop.Require(labelExpired, shareCommon),
 		prop.Require(labelDeadline, shareCommon),
-	)
+	}
 }
 
-// joinsOtherIncarnation checks that Join returns shard.ErrIncarnation for a scope that
+// keepsLeftNodes returns a planted defect whose sessions return nil from Leave without
+// ending, so the views keep the node of a session that left.
+func keepsLeftNodes(h *MembershipHandle) membership.Membership {
+	b := newBackend(h)
+	return plant(h, b, WithMembershipJoin(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		n *shard.Node, l ownership.Lease,
+	) (membership.Session, error) {
+		ss, err := b.Membership().Join(ctx, s, inc, n, l)
+		if err != nil {
+			return ss, err
+		}
+		return NewSessionStub(h, SessionStubDelegateTo(ss), WithSessionLeave(func(context.Context) error {
+			return nil
+		})), nil
+	}))
+}
+
+// JoinsRefuseOtherIncarnations checks that Join returns ErrIncarnation for a scope that
 // another incarnation created.
-func (su *suite) joinsOtherIncarnation(t *testing.T) {
-	t.Parallel()
-	m, s := su.open(t, fake.New(origin))
-	create(t, s)
+//
+//dokimi:check Membership.Join defect=joinsOtherIncarnations
+func JoinsRefuseOtherIncarnations(h *MembershipHandle) {
+	backed, ok := operation[Backed](h)
+	if !ok {
+		return
+	}
+	create(h, backed.Store())
 	n := nodes[0]
-	_, err := m.Join(t.Context(), scope, incB, &n, lease)
-	assert.ErrorIs(t, err, shard.ErrIncarnation, "Join returns ErrIncarnation for a scope of another incarnation")
+	_, err := h.Subject().Join(h.Context(), scope, incB, &n, lease)
+	assert.ErrorIs(h, err, shard.ErrIncarnation, h.Statement())
 }
 
-// joinsWithoutID checks that Join returns an error of the class Invalid for a node without
-// an ID.
-func (su *suite) joinsWithoutID(t *testing.T) {
-	t.Parallel()
-	m, _ := su.open(t, fake.New(origin))
+// joinsOtherIncarnations returns a planted defect whose Join of a scope that another
+// incarnation created joins the node in the incarnation of the scope.
+func joinsOtherIncarnations(h *MembershipHandle) membership.Membership {
+	b := newBackend(h)
+	return plant(h, b, WithMembershipJoin(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		n *shard.Node, l ownership.Lease,
+	) (membership.Session, error) {
+		ss, err := b.Membership().Join(ctx, s, inc, n, l)
+		if !errors.Is(err, shard.ErrIncarnation) {
+			return ss, err
+		}
+		head, err := b.Head(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		return b.Membership().Join(ctx, s, head.Incarnation, n, l)
+	}))
+}
+
+// JoinsRefuseNodesWithoutAnID checks that Join returns an error of the class Invalid for a
+// node without an ID.
+//
+//dokimi:check Membership.Join defect=namesAnonymousNodes
+func JoinsRefuseNodesWithoutAnID(h *MembershipHandle) {
 	n := nodes[0]
 	n.ID = ""
-	_, err := m.Join(t.Context(), scope, incA, &n, lease)
-	assert.Equal(
-		t,
-		errs.Classify(err),
-		errs.Invalid,
-		"Join returns an error of the class Invalid for a node without an ID",
-	)
+	_, err := h.Subject().Join(h.Context(), scope, incA, &n, lease)
+	assert.Equal(h, errs.Classify(err), errs.Invalid, h.Statement())
 }
 
-// joinsInvalidLease checks that Join returns an error of the class Invalid for a lease whose
-// renewal interval is not below its validity.
-func (su *suite) joinsInvalidLease(t *testing.T) {
-	t.Parallel()
-	m, _ := su.open(t, fake.New(origin))
+// namesAnonymousNodes returns a planted defect whose Join gives a node without an ID the ID
+// anonymous.
+func namesAnonymousNodes(h *MembershipHandle) membership.Membership {
+	b := newBackend(h)
+	return plant(h, b, WithMembershipJoin(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		n *shard.Node, l ownership.Lease,
+	) (membership.Session, error) {
+		if n.ID == "" {
+			named := *n
+			named.ID = anonymous
+			n = &named
+		}
+		return b.Membership().Join(ctx, s, inc, n, l)
+	}))
+}
+
+// JoinsRefuseInvalidLeases checks that Join returns an error of the class Invalid for a
+// lease that the configuration refuses.
+//
+//dokimi:check Membership.Join defect=replacesInvalidLeases
+func JoinsRefuseInvalidLeases(h *MembershipHandle) {
 	n := nodes[0]
 	invalid := lease
 	invalid.Renew = invalid.TTL
-	_, err := m.Join(t.Context(), scope, incA, &n, invalid)
-	assert.Equal(t, errs.Classify(err), errs.Invalid,
-		"Join returns an error of the class Invalid for a lease that the configuration refuses")
+	_, err := h.Subject().Join(h.Context(), scope, incA, &n, invalid)
+	assert.Equal(h, errs.Classify(err), errs.Invalid, h.Statement())
 }
 
-// joinsWithoutChange checks that Join does not modify the node that it registers.
-func (su *suite) joinsWithoutChange(t *testing.T) {
-	t.Parallel()
-	m, _ := su.open(t, fake.New(origin))
-	n := nodes[0].CloneKanon()
-	assert.Pure(t, func() *shard.Node { return n.CloneKanon() }, func() {
-		_, err := m.Join(t.Context(), scope, incA, n, lease)
-		assert.NoError(t, err, "Join registers a node")
-	}, "Join does not modify the node that it registers")
+// replacesInvalidLeases returns a planted defect whose Join replaces a lease that the
+// configuration refuses with the lease of the machine of leases.
+func replacesInvalidLeases(h *MembershipHandle) membership.Membership {
+	b := newBackend(h)
+	return plant(h, b, WithMembershipJoin(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		n *shard.Node, l ownership.Lease,
+	) (membership.Session, error) {
+		if err := (ownership.Config{Lease: l, Fenced: true}).Validate(); err != nil {
+			l = lease
+		}
+		return b.Membership().Join(ctx, s, inc, n, l)
+	}))
 }
 
-// joinsWithCopy checks that a view does not change when the caller changes the node of a
-// join after the join returned.
-func (su *suite) joinsWithCopy(t *testing.T) {
-	t.Parallel()
-	m, _ := su.open(t, fake.New(origin))
+// JoinsLeaveTheNodeUnchanged checks that Join does not modify the node that it registers.
+//
+//dokimi:check Membership.Join defect=stampsNodes
+func JoinsLeaveTheNodeUnchanged(h *MembershipHandle) {
+	m := h.Subject()
 	n := nodes[0].CloneKanon()
-	ss, err := m.Join(t.Context(), scope, incA, n, lease)
-	assert.NoError(t, err, "Join registers a node")
+	assert.Pure(h, func() *shard.Node { return n.CloneKanon() }, func() {
+		_, err := m.Join(h.Context(), scope, incA, n, lease)
+		assert.NoError(h, err, "Join registers a node")
+	}, h.Statement())
+}
+
+// stampsNodes returns a planted defect whose Join writes the incarnation of the session
+// into the node of the caller.
+func stampsNodes(h *MembershipHandle) membership.Membership {
+	b := newBackend(h)
+	return plant(h, b, WithMembershipJoin(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		n *shard.Node, l ownership.Lease,
+	) (membership.Session, error) {
+		ss, err := b.Membership().Join(ctx, s, inc, n, l)
+		if err == nil {
+			n.Incarnation = ss.Incarnation()
+		}
+		return ss, err
+	}))
+}
+
+// ViewsCopyTheJoinedNode checks that a view does not change when the caller changes the
+// node of a join after the join.
+//
+//dokimi:check Membership.Join defect=sharesNodes
+func ViewsCopyTheJoinedNode(h *MembershipHandle) {
+	m := h.Subject()
+	n := nodes[0].CloneKanon()
+	ss, err := m.Join(h.Context(), scope, incA, n, lease)
+	assert.NoError(h, err, "Join registers a node")
 	want := nodes[0]
 	want.Incarnation = ss.Incarnation()
 	n.Address = nodes[1].Address
 	n.Capacity[cpu] = nodes[1].Capacity[cpu]
 	n.Labels[0] = nodes[1].Labels[0]
-	assert.Equal(t, current(t, m).Nodes, []shard.Node{want},
-		"a view does not change when the caller changes the node of a join")
+	assert.Equal(h, current(h, m).Nodes, []shard.Node{want}, h.Statement())
 }
 
-// watchLaws runs the laws of Watch apart from the machine of leases.
-func (su *suite) watchLaws(t *testing.T) {
-	t.Parallel()
-	t.Run("yields ErrIncarnation for a scope of another incarnation", su.watchesOtherIncarnation)
-	t.Run("yields ErrIncarnation when another incarnation creates the scope", su.watchesCreation)
-	t.Run("ends once its context ends", su.watchesUntilCancel)
+// sharesNodes returns a planted defect whose views list the node of the caller of each
+// join, with the incarnation of its session.
+func sharesNodes(h *MembershipHandle) membership.Membership {
+	b := newBackend(h)
+	var mu sync.Mutex
+	joined := make(map[shard.NodeID]*shard.Node)
+	return plant(h, b,
+		WithMembershipJoin(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+			n *shard.Node, l ownership.Lease,
+		) (membership.Session, error) {
+			mu.Lock()
+			joined[n.ID] = n
+			mu.Unlock()
+			return b.Membership().Join(ctx, s, inc, n, l)
+		}),
+		WithMembershipWatch(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+		) iter.Seq2[membership.View, error] {
+			views := b.Membership().Watch(ctx, s, inc)
+			return func(yield func(membership.View, error) bool) {
+				for v, err := range views {
+					v.Nodes = slices.Clone(v.Nodes)
+					mu.Lock()
+					for i := range v.Nodes {
+						if n, ok := joined[v.Nodes[i].ID]; ok {
+							incarnation := v.Nodes[i].Incarnation
+							v.Nodes[i] = *n
+							v.Nodes[i].Incarnation = incarnation
+						}
+					}
+					mu.Unlock()
+					if !yield(v, err) {
+						return
+					}
+				}
+			}
+		}))
 }
 
-// watchesOtherIncarnation checks that a watch of a scope of another incarnation yields
-// shard.ErrIncarnation and ends.
-func (su *suite) watchesOtherIncarnation(t *testing.T) {
-	t.Parallel()
-	m, s := su.open(t, fake.New(origin))
-	create(t, s)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	items := streamtest.Follow(ctx, m.Watch(ctx, scope, incB))
-	it, ok := streamtest.Receive(t, items, waitFor, "Watch yields an error within the wait of the suite")
-	assert.True(t, ok, "Watch yields an error before it ends")
-	assert.ErrorIs(t, it.Err, shard.ErrIncarnation, "Watch yields ErrIncarnation for a scope of another incarnation")
-	streamtest.End(t, items, waitFor, "Watch ends after ErrIncarnation")
-}
-
-// watchesCreation checks that a watch of a scope before its first commit yields
-// shard.ErrIncarnation and ends when another incarnation creates the scope.
-func (su *suite) watchesCreation(t *testing.T) {
-	t.Parallel()
-	m, s := su.open(t, fake.New(origin))
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	items := streamtest.Follow(ctx, m.Watch(ctx, scope, incB))
-	it, ok := streamtest.Receive(t, items, waitFor, "Watch yields the current view within the wait of the suite")
-	assert.True(t, ok, "Watch yields the current view of a scope before its first commit")
-	assert.NoError(t, it.Err, "Watch yields the current view of a scope before its first commit")
-	create(t, s)
-	it, ok = streamtest.Receive(t, items, waitFor, "Watch yields an error within the wait of the suite")
-	assert.True(t, ok, "Watch yields an error before it ends")
-	assert.ErrorIs(
-		t,
-		it.Err,
-		shard.ErrIncarnation,
-		"Watch yields ErrIncarnation when another incarnation creates the scope",
-	)
-	streamtest.End(t, items, waitFor, "Watch ends after ErrIncarnation")
-}
-
-// watchesUntilCancel checks that a watch ends once its context ends.
-func (su *suite) watchesUntilCancel(t *testing.T) {
-	t.Parallel()
-	m, _ := su.open(t, fake.New(origin))
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	items := streamtest.Follow(ctx, m.Watch(ctx, scope, incA))
-	_, ok := streamtest.Receive(t, items, waitFor, "Watch yields the current view within the wait of the suite")
-	assert.True(t, ok, "Watch yields the current view")
-	cancel()
-	streamtest.End(t, items, waitFor, "Watch ends once its context ends")
-}
-
-// sessionLaws runs the laws of the sessions that WithLostRenewals adds.
-func (su *suite) sessionLaws(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		loss Loss
-		// listed is the number of nodes that the view lists at the expiry of the join.
-		listed int
-	}{
-		{name: "closes Done at the deadline of the join when each renewal is lost", loss: LoseRequest},
-		{
-			name:   "closes Done at the deadline of the join when the reply of each renewal is lost",
-			loss:   LoseReply,
-			listed: 1,
-		},
+// WatchesRefuseOtherIncarnations checks that Watch yields ErrIncarnation for a scope that
+// another incarnation created, and ends.
+//
+//dokimi:check Membership.Watch defect=watchesOtherIncarnations
+func WatchesRefuseOtherIncarnations(h *MembershipHandle) {
+	backed, ok := operation[Backed](h)
+	if !ok {
+		return
 	}
-	if su.cfg.lose != nil {
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				t.Parallel()
-				su.losesRenewals(t, tt.loss, tt.listed)
-			})
+	create(h, backed.Store())
+	ctx, cancel := context.WithCancel(h.Context())
+	defer cancel()
+	items := streamtest.Follow(ctx, h.Subject().Watch(ctx, scope, incB))
+	it, ok := streamtest.Receive(h, items, waitFor, h.Statement())
+	assert.True(h, ok, h.Statement())
+	assert.ErrorIs(h, it.Err, shard.ErrIncarnation, h.Statement())
+	streamtest.End(h, items, waitFor, h.Statement())
+}
+
+// watchesOtherIncarnations returns a planted defect whose watch of a scope that another
+// incarnation created when the watch starts yields the views of the incarnation of the
+// scope.
+func watchesOtherIncarnations(h *MembershipHandle) membership.Membership {
+	b := newBackend(h)
+	return plant(h, b, WithMembershipWatch(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+	) iter.Seq2[membership.View, error] {
+		head, err := b.Head(ctx, s)
+		if err == nil && !head.Incarnation.IsZero() && head.Incarnation != inc {
+			return b.Membership().Watch(ctx, s, head.Incarnation)
 		}
+		return b.Membership().Watch(ctx, s, inc)
+	}))
+}
+
+// WatchesRefuseCreationsByOtherIncarnations checks that Watch yields ErrIncarnation when
+// another incarnation creates the scope, and ends.
+//
+//dokimi:check Membership.Watch defect=endsAtCreations
+func WatchesRefuseCreationsByOtherIncarnations(h *MembershipHandle) {
+	backed, ok := operation[Backed](h)
+	if !ok {
+		return
 	}
+	ctx, cancel := context.WithCancel(h.Context())
+	defer cancel()
+	items := streamtest.Follow(ctx, h.Subject().Watch(ctx, scope, incB))
+	it, ok := streamtest.Receive(h, items, waitFor, "Watch yields the current view within the wait of the suite")
+	assert.True(h, ok, "Watch yields the current view of a scope before its first commit")
+	assert.NoError(h, it.Err, "Watch yields the current view of a scope before its first commit")
+	create(h, backed.Store())
+	it, ok = streamtest.Receive(h, items, waitFor, h.Statement())
+	assert.True(h, ok, h.Statement())
+	assert.ErrorIs(h, it.Err, shard.ErrIncarnation, h.Statement())
+	streamtest.End(h, items, waitFor, h.Statement())
+}
+
+// endsAtCreations returns a planted defect whose watch ends without an error when another
+// incarnation creates the scope after the watch yielded a view.
+func endsAtCreations(h *MembershipHandle) membership.Membership {
+	b := newBackend(h)
+	return plant(h, b, WithMembershipWatch(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+	) iter.Seq2[membership.View, error] {
+		views := b.Membership().Watch(ctx, s, inc)
+		return func(yield func(membership.View, error) bool) {
+			yielded := false
+			for v, err := range views {
+				if yielded && errors.Is(err, shard.ErrIncarnation) {
+					return
+				}
+				yielded = err == nil
+				if !yield(v, err) {
+					return
+				}
+			}
+		}
+	}))
+}
+
+// WatchesEndWithTheirContext checks that Watch ends once its context ends.
+//
+//dokimi:check Membership.Watch defect=ignoresWatchContexts
+func WatchesEndWithTheirContext(h *MembershipHandle) {
+	ctx, cancel := context.WithCancel(h.Context())
+	defer cancel()
+	items := streamtest.Follow(ctx, h.Subject().Watch(ctx, scope, incA))
+	_, ok := streamtest.Receive(h, items, waitFor, "Watch yields the current view within the wait of the suite")
+	assert.True(h, ok, "Watch yields the current view")
+	cancel()
+	streamtest.End(h, items, waitFor, h.Statement())
+}
+
+// ignoresWatchContexts returns a planted defect whose watch continues after its context
+// ends.
+func ignoresWatchContexts(h *MembershipHandle) membership.Membership {
+	b := newBackend(h)
+	return plant(h, b, WithMembershipWatch(func(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation,
+	) iter.Seq2[membership.View, error] {
+		return b.Membership().Watch(context.WithoutCancel(ctx), s, inc)
+	}))
+}
+
+// LostRenewalsEndTheSession checks that a session whose renewals a fault loses closes Done
+// at the deadline of its join, and its node leaves the view at the expiry of the join.
+//
+//dokimi:check Membership.Join defect=appliesLostRenewals
+func LostRenewalsEndTheSession(h *MembershipHandle) {
+	losesRenewals(h, LoseRequest, 0)
+}
+
+// appliesLostRenewals returns a planted defect whose lost renewals apply, as renewals whose
+// replies are lost do.
+func appliesLostRenewals(h *MembershipHandle) membership.Membership {
+	p := plant(h, newBackend(h))
+	p.points = map[Loss]memory.Point{LoseRequest: memory.PointRenewAck, LoseReply: memory.PointRenewAck}
+	return p
+}
+
+// LostRepliesEndTheSession checks that a session whose renewal replies a fault loses closes
+// Done at the deadline of its join, and the view lists its node until the expiry of its last
+// renewal.
+//
+//dokimi:check Membership.Join defect=dropsRenewalsOfLostReplies
+func LostRepliesEndTheSession(h *MembershipHandle) {
+	losesRenewals(h, LoseReply, 1)
+}
+
+// dropsRenewalsOfLostReplies returns a planted defect whose renewals with lost replies do
+// not apply, as lost renewals do.
+func dropsRenewalsOfLostReplies(h *MembershipHandle) membership.Membership {
+	p := plant(h, newBackend(h))
+	p.points = map[Loss]memory.Point{LoseRequest: memory.PointRenewApply, LoseReply: memory.PointRenewApply}
+	return p
+}
+
+// operation returns the subject of h as the operation O of the kit. It reports false, and
+// ends the check with a fault that wraps ErrOperation, when the subject does not implement
+// O.
+func operation[O any](h *MembershipHandle) (O, bool) {
+	o, ok := h.Subject().(O)
+	if !ok {
+		assert.Fault(h, fmt.Errorf("%w: %T does not implement %v", ErrOperation, h.Subject(), reflect.TypeFor[O]()))
+	}
+	return o, ok
 }
 
 // losesRenewals checks that a session whose renewals the fault l interrupts closes its Done
 // at the deadline of its join, and that the view lists its node until the expiry of the last
 // renewal that applied. listed is the number of nodes that the view lists at the expiry of
 // the join: one when the renewals applied, and none otherwise.
-func (su *suite) losesRenewals(t *testing.T, l Loss, listed int) {
-	t.Helper()
-	clk := fake.New(origin)
-	m, s := su.open(t, clk)
+func losesRenewals(h *MembershipHandle, l Loss, listed int) {
+	backed, ok := operation[Backed](h)
+	if !ok {
+		return
+	}
+	faulty, ok := operation[Faulty](h)
+	if !ok {
+		return
+	}
+	m := h.Subject()
 	n := nodes[0]
-	ss, err := m.Join(t.Context(), scope, incA, &n, shortLease)
-	assert.NoError(t, err, "Join registers a node")
+	ss, err := m.Join(h.Context(), scope, incA, &n, shortLease)
+	assert.NoError(h, err, "Join registers a node")
 	for range lostRenewals {
-		su.cfg.lose(t, m, s, l)
+		faulty.LoseRenewals(l)
 	}
-	clk.Advance(beforeDeadline)
-	assert.Length(t, current(t, m).Nodes, 1, "the view lists the node before its deadline")
-	streamtest.Blocks(t, ss.Done(), "Done is open before the deadline of the join")
-	clk.Advance(afterDeadline - beforeDeadline)
-	assert.Length(t, current(t, m).Nodes, 1, "the view lists the node until the expiry of its lease")
-	streamtest.Receive(t, ss.Done(), waitFor, "Done is closed at the deadline of the join when no renewal is accepted")
-	clk.Advance(atExpiry - afterDeadline)
-	assert.Length(t, current(t, m).Nodes, listed,
-		"the view lists the node at the expiry of the join exactly when the renewals applied")
-	clk.Advance(atLateExpiry - atExpiry)
-	assert.Empty(t, current(t, m).Nodes, "the view lists the node until the expiry of the last renewal that applied")
-}
-
-// AssertMembership checks the laws of package membership against the memberships that
-// newMembership returns. newMembership returns an empty membership whose leases run on
-// clk, and the store over the same backend, and fails tb when it cannot open them. Each case
-// of a law opens a membership of its own on a clock of its own, and the suite closes the
-// store when its case ends. A case can call newMembership on a goroutine other than the
-// goroutine of the test, with an assert.TB that is not a *testing.T.
-//
-// The suite runs one subtest per method of the membership:
-//
-//   - Join registers each node until its lease expires. A machine joins, leaves and stops
-//     the renewals of nodes and advances the clock. After every step it checks that the
-//     current view lists the node of each session whose lease is live, and that the Done
-//     of a session is closed exactly when the session lost its lease. Join returns
-//     shard.ErrIncarnation for a scope of another incarnation. It returns an error of the
-//     class Invalid for a node without an ID, and for a lease that the configuration
-//     refuses. It does not modify the node, and does not keep it.
-//   - Watch yields every view in the order of their revisions, ends with its context, and
-//     yields shard.ErrIncarnation for a scope of another incarnation.
-//
-// Each [Option] adds the laws that its docblock lists.
-//
-// # Concurrency
-//
-// The subtests of the suite run in parallel.
-func AssertMembership(
-	t *testing.T,
-	newMembership func(tb assert.TB, clk clock.Clock) (membership.Membership, store.Store),
-	opts ...Option,
-) {
-	t.Helper()
-	su := &suite{newMembership: newMembership}
-	for _, o := range opts {
-		o(&su.cfg)
-	}
-	t.Run("Join", su.joinLaws)
-	t.Run("Watch", su.watchLaws)
-	t.Run("Session", su.sessionLaws)
+	backed.Advance(beforeDeadline)
+	assert.Length(h, current(h, m).Nodes, 1, h.Statement())
+	streamtest.Blocks(h, ss.Done(), h.Statement())
+	backed.Advance(afterDeadline - beforeDeadline)
+	assert.Length(h, current(h, m).Nodes, 1, h.Statement())
+	streamtest.Receive(h, ss.Done(), waitFor, h.Statement())
+	backed.Advance(atExpiry - afterDeadline)
+	assert.Length(h, current(h, m).Nodes, listed, h.Statement())
+	backed.Advance(atLateExpiry - atExpiry)
+	assert.Empty(h, current(h, m).Nodes, h.Statement())
 }
 
 // create creates the scope through a commit of the incarnation A.

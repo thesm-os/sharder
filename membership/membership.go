@@ -57,6 +57,9 @@ func (v *View) Node(id shard.NodeID) (shard.Node, bool) {
 // # Concurrency
 //
 // A Session is safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:out path=membershiptest/
 type Session interface {
 	// Incarnation returns the incarnation of the session. It is higher than the
 	// incarnation of every earlier session of the same node in the same scope.
@@ -77,6 +80,10 @@ type Session interface {
 // # Concurrency
 //
 // A Membership is safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=membershiptest/
 type Membership interface {
 	// Join registers n in s, the root or one cell, in the namespace incarnation inc.
 	// It renews the lease every l.Renew, for a lease of l.TTL, until ctx ends or Leave

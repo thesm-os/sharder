@@ -9,6 +9,15 @@ import (
 	"go.thesmos.sh/core/errs"
 )
 
-// ErrUnknownLoss reports text that is not the spelling of a loss. ParseLoss and
-// Loss.UnmarshalText return an error that wraps it. It classifies as errs.Invalid.
-var ErrUnknownLoss = errs.WithClass(errors.New("membershiptest: unknown loss"), errs.Invalid)
+// The sentinel errors of package membershiptest.
+var (
+	// ErrUnknownLoss reports text that is not the spelling of a loss. ParseLoss and
+	// Loss.UnmarshalText return an error that wraps it. It classifies as errs.Invalid.
+	ErrUnknownLoss = errs.WithClass(errors.New("membershiptest: unknown loss"), errs.Invalid)
+
+	// ErrOperation reports a check that calls an operation of the kit, such as Backed, on
+	// a membership that does not implement it. The check ends with a fault that wraps it.
+	// It classifies as errs.Unsupported.
+	ErrOperation = errs.WithClass(errors.New("membershiptest: the membership does not implement the operation"),
+		errs.Unsupported)
+)
