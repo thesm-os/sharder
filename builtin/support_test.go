@@ -121,7 +121,7 @@ func TestSupport(t *testing.T) {
 		for _, tt := range excluded {
 			t.Run("excludes "+string(tt.name)+" from "+tt.axis.String(), func(t *testing.T) {
 				t.Parallel()
-				_, err := config.Resolve(newRegistry(t), selecting(tt.axis, tt.name), provided)
+				_, err := config.Resolve(newRegistry(t), selecting(tt.axis, config.Selection{Name: tt.name}), provided)
 				assert.ErrorIs(t, err, config.ErrUnsupported, "Resolve must refuse a strategy outside the matrix")
 				assert.Equal(t, errs.Classify(err), errs.Unsupported, "the refusal must classify as Unsupported")
 				assert.Contains(t, err.Error(), tt.axis.String()+` "`+string(tt.name)+`"`,
@@ -131,12 +131,8 @@ func TestSupport(t *testing.T) {
 
 		t.Run("requires an ownership with a fence", func(t *testing.T) {
 			t.Parallel()
-			spec := &config.Spec{
-				Namespace: testSpace,
-				Preset:    builtin.ExclusiveWorker,
-				Ownership: config.Selection{Config: json.RawMessage(`{"fenced":false}`)},
-			}
-			_, err := config.Resolve(newRegistry(t), spec, provided)
+			unfenced := selecting(config.Ownership, config.Selection{Config: json.RawMessage(`{"fenced":false}`)})
+			_, err := config.Resolve(newRegistry(t), unfenced, provided)
 			assert.ErrorIs(t, err, config.ErrUnsupported, "Resolve must refuse an exclusive ownership without a fence")
 			assert.Equal(t, errs.Classify(err), errs.Unsupported, "the refusal must classify as Unsupported")
 		})
@@ -147,7 +143,7 @@ func TestSupport(t *testing.T) {
 			err := config.Register(r, config.Partitioning,
 				renamed[partition.Partitioner](t, builtin.Singleton(), appPartitioner))
 			assert.NoError(t, err, "the registry must take the partitioner of the application")
-			_, err = config.Resolve(r, selecting(config.Partitioning, appPartitioner), provided)
+			_, err = config.Resolve(r, selecting(config.Partitioning, config.Selection{Name: appPartitioner}), provided)
 			assert.ErrorIs(t, err, config.ErrUnsupported, "Resolve must refuse a partitioner of the application")
 		})
 
@@ -157,14 +153,10 @@ func TestSupport(t *testing.T) {
 			err := config.Register(r, config.Constraint,
 				renamed[placement.Constraint](t, builtin.Capacity(), appConstraint))
 			assert.NoError(t, err, "the registry must take the constraint of the application")
-			spec := &config.Spec{
-				Namespace: testSpace,
-				Preset:    builtin.ExclusiveWorker,
-				Placement: config.Selection{
-					Config: json.RawMessage(fmt.Sprintf(`{"constraints":[{"name":%q}]}`, appConstraint)),
-				},
-			}
-			_, err = config.Resolve(r, spec, provided)
+			constrained := selecting(config.Placement, config.Selection{
+				Config: json.RawMessage(fmt.Sprintf(`{"constraints":[{"name":%q}]}`, appConstraint)),
+			})
+			_, err = config.Resolve(r, constrained, provided)
 			assert.NoError(t, err, "Resolve must accept a constraint of the application")
 		})
 	})
@@ -176,29 +168,6 @@ func renamed[T any](tb assert.TB, f config.Factory[T], name shard.StrategyName) 
 	tb.Helper()
 	return configtest.NewFactoryStub(tb, configtest.FactoryStubDelegateTo(f),
 		configtest.WithFactoryName[T](func() shard.StrategyName { return name }))
-}
-
-// selecting returns a spec of the preset exclusive-worker that selects name on axis.
-func selecting(axis config.Axis, name shard.StrategyName) *config.Spec {
-	spec := &config.Spec{Namespace: testSpace, Preset: builtin.ExclusiveWorker}
-	sel := config.Selection{Name: name}
-	switch axis {
-	case config.Partitioning:
-		spec.Partitioning = sel
-	case config.Placement:
-		spec.Placement = sel
-	case config.Replication:
-		spec.Replication = sel
-	case config.Ownership:
-		spec.Ownership = sel
-	case config.Handoff:
-		spec.Handoff = sel
-	case config.Topology:
-		spec.Topology = sel
-	default:
-		spec.Routing = sel
-	}
-	return spec
 }
 
 // supportTable returns the support table of the README for the matrix s and the presets.

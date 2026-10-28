@@ -85,8 +85,7 @@ func TestPreset(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				res, err := config.Resolve(newRegistry(t), &config.Spec{Namespace: testSpace, Preset: tt.preset},
-					provided)
+				res, err := config.Resolve(newRegistry(t), spec(tt.preset), provided)
 				assert.NoError(t, err, "the preset must resolve without a problem")
 				expect.Equal(t, res.Spec.Partitioning.Name, tt.partition, "the preset must select its partitioner")
 				if tt.wantSlots != nil {

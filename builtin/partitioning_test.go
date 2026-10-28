@@ -118,14 +118,10 @@ func TestPartitioning(t *testing.T) {
 					hash := renamed[partition.Hash](t, builtin.XXHash64(), otherHash)
 					assert.NoError(t, config.Register(r, config.Hash, hash),
 						"the registry must take the hash of the application")
-					from, err := config.Resolve(r, &config.Spec{Namespace: testSpace, Preset: builtin.ExclusiveWorker},
-						provided)
+					from, err := config.Resolve(r, spec(builtin.ExclusiveWorker), provided)
 					assert.NoError(t, err, "the preset must resolve")
-					to, err := config.Resolve(r, &config.Spec{
-						Namespace:    testSpace,
-						Preset:       builtin.ExclusiveWorker,
-						Partitioning: config.Selection{Config: json.RawMessage(tt.give)},
-					}, provided)
+					to, err := config.Resolve(r,
+						selecting(config.Partitioning, config.Selection{Config: json.RawMessage(tt.give)}), provided)
 					assert.NoError(t, err, "the changed spec must resolve")
 					assert.ErrorIs(t, config.Change(from, to), config.ErrChange,
 						"Change must refuse an edit of the mapping")

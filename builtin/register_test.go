@@ -84,7 +84,7 @@ func TestRegister(t *testing.T) {
 		t.Parallel()
 		r := newRegistry(t)
 		assert.Total(t, func(p config.Preset) error {
-			_, err := config.Resolve(r, &config.Spec{Namespace: testSpace, Preset: p.Name}, provided)
+			_, err := config.Resolve(r, spec(p.Name), provided)
 			return err
 		}, builtin.Presets(), "Register must add every preset, and each must resolve")
 	})
@@ -104,7 +104,7 @@ func TestRegister(t *testing.T) {
 		assert.NoError(t, config.Register(r, config.Partitioning, builtin.Singleton()),
 			"the registry of the test must take the singleton")
 		assert.HasError(t, builtin.Register(r), "Register must report the duplicate singleton")
-		_, err := config.Resolve(r, &config.Spec{Namespace: testSpace, Preset: builtin.ExclusiveWorker}, provided)
+		_, err := config.Resolve(r, spec(builtin.ExclusiveWorker), provided)
 		assert.NoError(t, err, "Register must add the other strategies and the presets")
 	})
 
