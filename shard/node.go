@@ -39,6 +39,9 @@ type Identity string
 // # Allocation contract
 //
 // Construction does not allocate.
+//
+//dokimi:builder
+//dokimi:out path=shardtest/
 type Node struct {
 	// ID is the identity of the node.
 	ID NodeID

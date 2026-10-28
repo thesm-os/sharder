@@ -27,6 +27,9 @@ import "go.thesmos.sh/core/epoch"
 // # Allocation contract
 //
 // Construction does not allocate.
+//
+//dokimi:builder
+//dokimi:out path=shardtest/
 type Placement struct {
 	// Range is the range of positions that the shard covers.
 	Range Range
