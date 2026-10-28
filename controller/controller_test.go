@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -19,6 +20,7 @@ import (
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id/ulid"
 	"go.thesmos.sh/core/page"
+	"go.thesmos.sh/core/telemetry"
 	"go.thesmos.sh/core/telemetry/noop"
 
 	"go.thesmos.sh/sharder/config"
@@ -242,9 +244,15 @@ func (s *system) disrupt(c *prop.Case, i int) {
 //   - Each term of each scope has one controller.
 func (s *system) check(c *prop.Case) {
 	c.Helper()
+	root := func(a telemetry.Attr) bool { return a.Key == attrCell && a.Value.Str == "" }
 	for _, p := range s.procs {
 		if p != nil {
-			assert.InRange(c, p.cells.most(), 0, 1, "a process must run one controller of each cell at most")
+			for _, attrs := range p.metrics.Series(unplacedInstrument) {
+				if !slices.ContainsFunc(attrs, root) {
+					assert.InRange(c, p.metrics.Bound(unplacedInstrument, attrs...), 0, 1,
+						"a process must run one controller of each cell at most")
+				}
+			}
 			streamtest.Blocks(c, p.errc, "a process must run until the case stops it")
 		}
 	}
@@ -306,8 +314,12 @@ func (s *system) hosted(c *prop.Case) bool {
 		return false
 	}
 	rec := record(c, s.f, shard.Scope{Namespace: namespace, Cell: ids[0]})
+	attrs := []telemetry.Attr{
+		telemetry.AttrString(attrNamespace, string(namespace)),
+		telemetry.AttrString(attrCell, string(ids[0])),
+	}
 	for i, p := range s.procs {
-		if p != nil && nodes[i].Address == rec.Controller && p.cells.controllers(ids[0]) == 1 {
+		if p != nil && nodes[i].Address == rec.Controller && p.metrics.Bound(unplacedInstrument, attrs...) == 1 {
 			return true
 		}
 	}

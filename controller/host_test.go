@@ -68,7 +68,8 @@ func TestHost(t *testing.T) {
 				synctest.Wait()
 				assert.NoError(t, p.ctrl.Do(t.Context(), rootMetadata, second),
 					"a later add of the term must return once the controller of the term serves")
-				assert.Equal(t, p.cells.started(cellID), 1, "the process must start one controller of the term")
+				assert.Equal(t, p.metrics.Bindings(unplacedInstrument, cellAttrs...), 1,
+					"the process must start one controller of the term")
 			})
 		})
 
@@ -85,7 +86,8 @@ func TestHost(t *testing.T) {
 				assert.Equal(t, record(t, f, cellScope).Epoch, secondEpoch,
 					"the controller of the newer term must have acquired the scope of the cell")
 				synctest.Wait()
-				assert.Equal(t, p.cells.controllers(cellID), 1, "the process must run one controller of the cell")
+				assert.Equal(t, p.metrics.Bound(unplacedInstrument, cellAttrs...), 1,
+					"the process must run one controller of the cell")
 			})
 		})
 
@@ -117,7 +119,8 @@ func TestHost(t *testing.T) {
 						"a repeated add of the newer term must return once the older controller has stopped")
 					assert.Equal(t, record(t, f, cellScope).Epoch, secondEpoch,
 						"the controller of the newer term must acquire the scope once the older controller has stopped")
-					assert.Equal(t, p.cells.controllers(cellID), 1, "the process must run one controller of the cell")
+					assert.Equal(t, p.metrics.Bound(unplacedInstrument, cellAttrs...), 1,
+						"the process must run one controller of the cell")
 				})
 			})
 
@@ -131,7 +134,7 @@ func TestHost(t *testing.T) {
 				assert.NoError(t, r.host(t, p, procA.ID, firstEpoch, 1), "the add starts a controller")
 				drop := r.request(t, protocol.Drop, procA.ID, firstEpoch, 2)
 				assert.NoError(t, p.ctrl.Do(t.Context(), rootMetadata, drop), "the drop must stop the controller")
-				assert.Equal(t, p.cells.controllers(cellID), 0,
+				assert.Equal(t, p.metrics.Bound(unplacedInstrument, cellAttrs...), 0,
 					"the controller of the cell must have stopped when the drop returns")
 			})
 		})
@@ -172,7 +175,8 @@ func TestHost(t *testing.T) {
 					again := r.request(t, protocol.Drop, procA.ID, firstEpoch, 3)
 					assert.NoError(t, p.ctrl.Do(t.Context(), rootMetadata, again),
 						"a later drop must return once the controller has stopped")
-					assert.Equal(t, p.cells.controllers(cellID), 0, "the controller of the cell must have stopped")
+					assert.Equal(t, p.metrics.Bound(unplacedInstrument, cellAttrs...), 0,
+						"the controller of the cell must have stopped")
 				})
 			})
 
@@ -222,7 +226,7 @@ func TestHost(t *testing.T) {
 					streamtest.Blocks(t, p.errc, "Run must not return after a newer controller fenced a cell")
 					assert.Equal(
 						t,
-						p.cells.controllers(cellID),
+						p.metrics.Bound(unplacedInstrument, cellAttrs...),
 						0,
 						"the fenced controller of the cell must have stopped",
 					)
@@ -274,7 +278,8 @@ func TestHost(t *testing.T) {
 				synctest.Wait()
 				assert.NoError(t, r.host(t, p, procA.ID, firstEpoch, 1), "the add starts a controller")
 				assert.ErrorIs(t, p.halt(t), context.Canceled, "Run returns the cause of its context")
-				assert.Equal(t, p.cells.controllers(cellID), 0, "Run must stop the controller of the cell")
+				assert.Equal(t, p.metrics.Bound(unplacedInstrument, cellAttrs...), 0,
+					"Run must stop the controller of the cell")
 			})
 		})
 

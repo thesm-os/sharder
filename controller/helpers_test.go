@@ -16,6 +16,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.thesmos.sh/core/clock/fake"
+	"go.thesmos.sh/core/coretest/telemetrytest"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
@@ -23,7 +24,6 @@ import (
 	"go.thesmos.sh/core/page"
 	"go.thesmos.sh/core/rand/seeded"
 	"go.thesmos.sh/core/telemetry"
-	"go.thesmos.sh/core/telemetry/noop"
 
 	"go.thesmos.sh/sharder/budget"
 	"go.thesmos.sh/sharder/builtin"
@@ -59,6 +59,8 @@ const (
 	operator shard.Identity = "operator"
 	// unplacedInstrument is the gauge that the controller of each scope binds to its cell.
 	unplacedInstrument telemetry.InstrumentName = "sharder.shards.unplaced"
+	// attrNamespace is the attribute of an instrument that has the namespace of the scope.
+	attrNamespace = "namespace"
 	// attrCell is the attribute of an instrument that has the cell of the scope.
 	attrCell = "cell"
 )
@@ -93,6 +95,12 @@ var (
 	cellID = shard.CellID(ulid.Format(cellKey.ID()))
 	// cellScope is the scope of the cell of the tests.
 	cellScope = shard.Scope{Namespace: namespace, Cell: cellID}
+	// cellAttrs is the attribute set of the instruments of the controller of the cell of the
+	// tests.
+	cellAttrs = []telemetry.Attr{
+		telemetry.AttrString(attrNamespace, string(namespace)),
+		telemetry.AttrString(attrCell, string(cellID)),
+	}
 	// rootMetadata is the metadata of the callbacks of the root of the tests.
 	rootMetadata = protocol.Metadata{Caller: rootIdentity, Version: protocol.Current}
 	// operatorMetadata is the metadata of the calls of the operator of the tests.
@@ -245,110 +253,6 @@ func newFaultyMembership(m *memory.Membership, fs *faults) *providingMembership 
 	}
 }
 
-// cells is a telemetry.Reporter that counts the controllers of each cell of a process. The
-// controller of a scope binds the gauge of its unplaced shards to its cell, and releases
-// the gauge when it stops. Every other instrument discards its records.
-type cells struct {
-	// live maps each cell to the controllers of the cell that have bound the gauge and not
-	// released it.
-	live map[shard.CellID]int
-	// bound maps each cell to the controllers of the cell that have bound the gauge.
-	bound map[shard.CellID]int
-	// mu guards live and bound.
-	mu sync.Mutex
-}
-
-var _ telemetry.Reporter = (*cells)(nil)
-
-// Counter returns a counter that discards its records.
-func (*cells) Counter(spec telemetry.InstrumentSpec) telemetry.Counter {
-	return noop.New().Counter(spec)
-}
-
-// Gauge returns the gauge of the unplaced shards, which counts its bindings, and a gauge
-// that discards its records for every other spec.
-func (c *cells) Gauge(spec telemetry.InstrumentSpec) telemetry.Gauge {
-	if spec.Name != unplacedInstrument {
-		return noop.New().Gauge(spec)
-	}
-	return &unplaced{cells: c}
-}
-
-// Histogram returns a histogram that discards its records.
-func (*cells) Histogram(spec telemetry.InstrumentSpec) telemetry.Histogram {
-	return noop.New().Histogram(spec)
-}
-
-// Tracer returns a tracer that discards every span.
-func (*cells) Tracer(name telemetry.InstrumentName) telemetry.Tracer {
-	return noop.New().Tracer(name)
-}
-
-// controllers returns the controllers of the cell id that run in the process.
-func (c *cells) controllers(id shard.CellID) int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.live[id]
-}
-
-// started returns the controllers of the cell id that the process has started.
-func (c *cells) started(id shard.CellID) int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.bound[id]
-}
-
-// most returns the largest number of controllers that run in the process for one cell.
-func (c *cells) most() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	n := 0
-	for cell, live := range c.live {
-		if cell != "" {
-			n = max(n, live)
-		}
-	}
-	return n
-}
-
-// unplaced is the gauge of the unplaced shards of a cells reporter.
-type unplaced struct {
-	// cells is the reporter of the gauge.
-	cells *cells
-	// cell is the cell that the gauge is bound to.
-	cell shard.CellID
-}
-
-var _ telemetry.Gauge = (*unplaced)(nil)
-
-// Set discards value.
-func (*unplaced) Set(context.Context, float64) {}
-
-// Add discards delta.
-func (*unplaced) Add(context.Context, float64) {}
-
-// With returns the gauge bound to the cell of attrs, and counts the binding.
-func (g *unplaced) With(attrs []telemetry.Attr) telemetry.Gauge {
-	bound := &unplaced{cells: g.cells}
-	for _, a := range attrs {
-		if a.Key == attrCell {
-			bound.cell = shard.CellID(a.Value.Str)
-		}
-	}
-	g.cells.mu.Lock()
-	defer g.cells.mu.Unlock()
-	g.cells.live[bound.cell]++
-	g.cells.bound[bound.cell]++
-	return bound
-}
-
-// Release counts the end of the binding.
-func (g *unplaced) Release() {
-	g.cells.mu.Lock()
-	defer g.cells.mu.Unlock()
-	g.cells.live[g.cell]--
-}
-
 // fixture is the store, the network, the clock and the registry that the processes of a
 // test share.
 type fixture struct {
@@ -413,8 +317,10 @@ func (f *fixture) config(node shard.Node, r telemetry.Reporter) *controller.Conf
 type process struct {
 	// ctrl is the controller of the process.
 	ctrl *controller.Controller
-	// cells counts the controllers of the cells of the process.
-	cells *cells
+	// metrics records the instruments of the process. The controller of each scope binds the
+	// gauge of its unplaced shards to its scope when it starts, and releases the gauge when it
+	// stops.
+	metrics *telemetrytest.Recorder
 	// stop ends the context of Run.
 	stop context.CancelFunc
 	// errc receives the result of Run.
@@ -429,9 +335,9 @@ type process struct {
 // The process halts when tb ends.
 func (f *fixture) start(tb cleaner, node shard.Node, specs ...config.Spec) *process {
 	tb.Helper()
-	r := &cells{live: make(map[shard.CellID]int), bound: make(map[shard.CellID]int)}
+	r := telemetrytest.NewRecorder()
 	p := f.launch(tb, f.config(node, r), specs...)
-	p.cells = r
+	p.metrics = r
 	return p
 }
 
