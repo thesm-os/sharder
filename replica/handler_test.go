@@ -13,6 +13,7 @@ import (
 
 	"go.thesmos.sh/sharder/fence"
 	"go.thesmos.sh/sharder/protocol"
+	"go.thesmos.sh/sharder/replica/replicatest"
 	"go.thesmos.sh/sharder/shard"
 )
 
@@ -48,11 +49,11 @@ func TestHandler(t *testing.T) {
 				f := newFixture(t)
 				a := f.start(t)
 				f.serve(t, a, shardA, 1)
-				assert.Length(t, f.app.adds, 1, "the handler must receive one add")
-				expect.Nil(t, f.app.adds[0].Request, "the agent must clear the request once the call returns")
+				adds := f.app.OnAddShard.AssertCalledN(t, 1, "the handler must receive one add")
+				expect.Nil(t, adds[0].Req.Request, "the agent must clear the request once the call returns")
 				expect.Equal(
 					t,
-					f.app.adds[0].Token,
+					adds[0].Req.Token,
 					fence.Token{},
 					"the agent must clear the token once the call returns",
 				)
@@ -66,11 +67,11 @@ func TestHandler(t *testing.T) {
 				a := f.start(t)
 				f.serve(t, a, shardA, 1)
 				assert.Length(t, f.app.tokens, 1, "the handler must receive one add")
-				assert.Length(t, f.guard.acquired, 1, "the agent must acquire one fence")
+				acquired := f.guard.OnAcquire.AssertCalledN(t, 1, "the agent must acquire one fence")
 				assert.Equal(
 					t,
 					f.app.tokens[0],
-					f.guard.acquired[0],
+					acquired[0].T,
 					"the handler must receive the token that the add acquired",
 				)
 			})
@@ -113,8 +114,8 @@ func TestHandler(t *testing.T) {
 				f.serve(t, a, shardA, 1)
 				r := request(protocol.Drop, shardA, 2, 1, f.incarnation(t))
 				assert.NoError(t, a.Do(t.Context(), controllerMetadata, r), "the drop must succeed")
-				assert.Length(t, f.app.drops, 1, "the handler must receive one drop")
-				assert.Nil(t, f.app.drops[0].Request, "the agent must clear the request once the call returns")
+				drops := f.app.OnDropShard.AssertCalledN(t, 1, "the handler must receive one drop")
+				assert.Nil(t, drops[0].Req.Request, "the agent must clear the request once the call returns")
 			})
 		})
 
@@ -141,7 +142,7 @@ func TestHandler(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				f.stop(t)
-				h := &revoking{application: f.app}
+				h := newRevoking(t, f.app, nil)
 				ctx, stop := context.WithCancel(t.Context())
 				a := f.run(t, ctx, h)
 				t.Cleanup(func() {
@@ -153,7 +154,8 @@ func TestHandler(t *testing.T) {
 				h.mu.Lock()
 				defer h.mu.Unlock()
 				assert.Length(t, h.revoked, 1, "the handler must receive one revocation")
-				assert.Equal(t, h.revoked[0], f.guard.acquired[0], "the handler must receive the token of the tenure")
+				assert.Equal(t, h.revoked[0], f.guard.OnAcquire.Calls()[0].T,
+					"the handler must receive the token of the tenure")
 			})
 		})
 
@@ -162,7 +164,7 @@ func TestHandler(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				f.stop(t)
-				h := &revoking{application: f.app}
+				h := newRevoking(t, f.app, nil)
 				ctx, stop := context.WithCancel(t.Context())
 				a := f.run(t, ctx, h)
 				t.Cleanup(func() {
@@ -171,10 +173,8 @@ func TestHandler(t *testing.T) {
 				})
 				f.serve(t, a, shardA, 1)
 				f.lose(t)
-				h.mu.Lock()
-				defer h.mu.Unlock()
-				assert.Length(t, h.revocations, 1, "the handler must receive one revocation")
-				assert.Equal(t, h.revocations[0].Token, fence.Token{},
+				revocations := h.OnRevokeShard.AssertCalledN(t, 1, "the handler must receive one revocation")
+				assert.Equal(t, revocations[0].Req.Token, fence.Token{},
 					"the agent must clear the token once the call returns")
 			})
 		})
@@ -184,7 +184,7 @@ func TestHandler(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				f.stop(t)
-				h := &revoking{application: f.app, err: errBroken}
+				h := newRevoking(t, f.app, errBroken)
 				ctx, stop := context.WithCancel(t.Context())
 				a := f.run(t, ctx, h)
 				t.Cleanup(func() {
@@ -204,7 +204,7 @@ func TestHandler(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				f.stop(t)
-				h := &revoking{application: f.app}
+				h := newRevoking(t, f.app, nil)
 				ctx, stop := context.WithCancel(t.Context())
 				a := f.run(t, ctx, h)
 				t.Cleanup(func() {
@@ -245,7 +245,7 @@ func TestHandler(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				h := &revoking{application: f.app}
+				h := newRevoking(t, f.app, nil)
 				ctx, stop := context.WithCancel(t.Context())
 				a := f.run(t, ctx, h)
 				t.Cleanup(func() {
@@ -271,7 +271,12 @@ func TestHandler(t *testing.T) {
 				load := shard.Load{cpu: 0.5}
 				ctx, stop := context.WithCancel(t.Context())
 				t.Cleanup(stop)
-				a := f.run(t, ctx, &loaded{application: f.app, load: load})
+				h := &loaded{
+					application: f.app,
+					LoadReporterStub: replicatest.NewLoadReporterStub(t,
+						replicatest.WithLoadReporterShardLoad(func(shard.ID) shard.Load { return load })),
+				}
+				a := f.run(t, ctx, h)
 				t.Cleanup(func() {
 					stop()
 					<-a.Done()

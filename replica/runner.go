@@ -31,6 +31,9 @@ const (
 
 // Opener opens the tenures of the shards of a node. The application implements it, and a
 // Runner calls it.
+//
+//dokimi:stub
+//dokimi:out path=replicatest/
 type Opener interface {
 	// Open starts serving the tenure of req. It reads the data of the shard only from a state
 	// that contains the acquisition of the fence, as Handler.AddShard does. It records the

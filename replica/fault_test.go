@@ -64,7 +64,7 @@ func TestFault(t *testing.T) {
 
 		t.Run("returns ErrNotServing before Start", func(t *testing.T) {
 			t.Parallel()
-			a, err := replica.New(bare(t).config(), newApplication())
+			a, err := replica.New(bare(t).config(), newApplication(t))
 			assert.NoError(t, err, "New must return the agent")
 			req := replica.ReportFaultRequest{Shard: shardA, Fault: shard.FaultPermanent, Cause: errDisk}
 			_, err = a.ReportFault(t.Context(), &req)
@@ -106,7 +106,7 @@ func TestFault(t *testing.T) {
 
 		t.Run("returns ErrNotServing before Start", func(t *testing.T) {
 			t.Parallel()
-			a, err := replica.New(bare(t).config(), newApplication())
+			a, err := replica.New(bare(t).config(), newApplication(t))
 			assert.NoError(t, err, "New must return the agent")
 			_, err = a.Recovered(t.Context(), &replica.RecoveredRequest{Shard: shardA})
 			assert.ErrorIs(t, err, replica.ErrNotServing, "a recovery before Start must not be served")

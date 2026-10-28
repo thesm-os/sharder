@@ -22,12 +22,14 @@ import (
 	"go.thesmos.sh/core/id/ulid"
 
 	"go.thesmos.sh/sharder/budget"
-	"go.thesmos.sh/sharder/membership"
+	"go.thesmos.sh/sharder/config/configtest"
+	"go.thesmos.sh/sharder/membership/membershiptest"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/replica"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
+	"go.thesmos.sh/sharder/store/storetest"
 )
 
 // The weights of the actions of the property of an agent that a case takes more often than
@@ -80,45 +82,53 @@ var allShards = []shard.ID{shardA, shardB}
 // intruder is the metadata of a callback of a caller other than the controller of the cell.
 var intruder = protocol.Metadata{Caller: "intruder", Version: protocol.Current}
 
-// plain is a membership that does not provide a capability. Its method set has the methods
-// of membership.Membership alone.
-type plain struct {
-	membership.Membership
+// providingStore is a store that implements config.Provider. It embeds the double of each
+// interface.
+type providingStore struct {
+	*storetest.StoreStub
+	*configtest.ProviderStub
 }
 
 // gated is a store whose watches return only once waitFor has passed since newGated built
-// it. It embeds a memory.Store, so it provides the capabilities of that store.
+// it. It provides the capabilities of the memory store under it.
 type gated struct {
-	*memory.Store
-	// gate is closed once waitFor has passed.
-	gate chan struct{}
-	// opened is true once gate is closed.
+	*providingStore
+	// opened is true once waitFor has passed.
 	opened atomic.Bool
 }
 
-// newGated returns a store over st whose watches return only once waitFor has passed.
-func newGated(st *memory.Store) *gated {
-	g := &gated{Store: st, gate: make(chan struct{})}
+// newGated returns a double of st whose watches return only once waitFor has passed. Each
+// watch yields the items of the watch of st, and returns after waitFor once that watch has
+// ended. The doubles report to tb.
+func newGated(tb assert.TB, st *memory.Store) *gated {
+	tb.Helper()
+	g := &gated{}
+	gate := make(chan struct{})
 	time.AfterFunc(waitFor, func() {
 		g.opened.Store(true)
-		close(g.gate)
+		close(gate)
 	})
-	return g
-}
-
-// Watch yields the items of the watch of the memory store. Once that watch has ended, Watch
-// returns only after gate is closed.
-func (g *gated) Watch(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, from epoch.Epoch,
-	n shard.NodeID,
-) iter.Seq2[store.Event, error] {
-	return func(yield func(store.Event, error) bool) {
-		for ev, err := range g.Store.Watch(ctx, s, inc, from, n) {
-			if !yield(ev, err) {
-				break
+	watch := func(
+		ctx context.Context,
+		s shard.Scope,
+		inc shard.NamespaceIncarnation,
+		from epoch.Epoch,
+		n shard.NodeID,
+	) iter.Seq2[store.Event, error] {
+		return func(yield func(store.Event, error) bool) {
+			for ev, err := range st.Watch(ctx, s, inc, from, n) {
+				if !yield(ev, err) {
+					break
+				}
 			}
+			<-gate
 		}
-		<-g.gate
 	}
+	g.providingStore = &providingStore{
+		StoreStub:    storetest.NewStoreStub(tb, storetest.StoreStubDelegateTo(st), storetest.WithStoreWatch(watch)),
+		ProviderStub: configtest.NewProviderStub(tb, configtest.ProviderStubDelegateTo(st)),
+	}
+	return g
 }
 
 // tenure is what the model of an agent expects of one shard on the node.
@@ -338,7 +348,7 @@ func TestAgent(t *testing.T) {
 
 		t.Run("returns ErrConfig for a nil Config", func(t *testing.T) {
 			t.Parallel()
-			_, err := replica.New(nil, newApplication())
+			_, err := replica.New(nil, newApplication(t))
 			assert.ErrorIs(t, err, replica.ErrConfig, "New must refuse a nil Config")
 		})
 
@@ -419,7 +429,7 @@ func TestAgent(t *testing.T) {
 
 		t.Run("returns an agent that refuses a callback before Start", func(t *testing.T) {
 			t.Parallel()
-			a, err := replica.New(bare(t).config(), newApplication())
+			a, err := replica.New(bare(t).config(), newApplication(t))
 			assert.NoError(t, err, "New must return the agent")
 			err = a.Do(t.Context(), controllerMetadata, request(protocol.Add, shardA, 1, 1, 1))
 			expect.That(t, err).ErrorIs(replica.ErrNotServing, "a callback before Start must not be served")
@@ -466,7 +476,8 @@ func TestAgent(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					f := newFixture(t)
 					cfg := f.config()
-					cfg.Membership = plain{Membership: cfg.Membership}
+					cfg.Membership = membershiptest.NewMembershipStub(t,
+						membershiptest.MembershipStubDelegateTo(cfg.Membership))
 					a, err := replica.New(cfg, f.app)
 					assert.NoError(t, err, "New must return the agent")
 					err = a.Start(t.Context())
@@ -492,7 +503,7 @@ func TestAgent(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := bare(t)
-				g := newGated(f.st)
+				g := newGated(t, f.st)
 				cfg := f.config()
 				cfg.Store = g
 				ctx, cancel := context.WithTimeoutCause(t.Context(), time.Minute, errStop)
@@ -698,7 +709,7 @@ func TestAgent(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				g := newGated(f.st)
+				g := newGated(t, f.st)
 				a := f.start(t, func(c *replica.Config) { c.Store = g })
 				ctx, cancel := f.closing(t, errStop)
 				defer cancel()

@@ -29,6 +29,9 @@ import (
 //
 // The agent hands out each request from a pool. A handler does not modify a request, and
 // does not keep it after it returns.
+//
+//dokimi:stub
+//dokimi:out path=replicatest/
 type Handler interface {
 	// AddShard starts serving the shard of the callback in its role. The agent acquires the
 	// fence of the callback at its epoch before it calls AddShard. AddShard discards every
@@ -78,6 +81,9 @@ type DropShardResult struct {
 // returned until the end. The agent calls RevokeShard in the turn of the shard, one call at a
 // time for each shard, as it calls AddShard and DropShard. A Handler without RevokeShard
 // learns of the end of the session from Agent.Token alone.
+//
+//dokimi:stub
+//dokimi:out path=replicatest/
 type Revoker interface {
 	// RevokeShard ends the work of the tenure of the token of req, and returns once the work
 	// has ended. The fence admits the writes of the tenure until a newer tenure acquires it.
@@ -101,6 +107,9 @@ type RevokeShardResult struct {
 // LoadReporter reports the load of the replicas of an application. When the Handler that
 // Start receives implements LoadReporter, the agent sends each report with the loads that it
 // returns. Without it, each replica reports only the count metric.
+//
+//dokimi:stub
+//dokimi:out path=replicatest/
 type LoadReporter interface {
 	// ShardLoad returns the load of the replica of the shard id, or nil for a replica without
 	// a load. It does not perform I/O, and the agent calls it for each replica of each

@@ -18,6 +18,7 @@ import (
 	"go.thesmos.sh/sharder/fence"
 	"go.thesmos.sh/sharder/protocol"
 	"go.thesmos.sh/sharder/replica"
+	"go.thesmos.sh/sharder/replica/replicatest"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store/memory"
 )
@@ -56,51 +57,60 @@ type opened struct {
 	token fence.Token
 }
 
-// opener is the Opener of the tests. It keeps a copy of each request of Open, and returns new
-// work for each tenure.
-type opener struct {
+// opening is the behaviour of the opener of a test.
+type opening struct {
 	// fail is the error of every Open, or nil.
 	fail error
 	// err is the error that the work of each tenure returns.
 	err error
-	// gate makes each Open wait until gate is closed, or is nil. The test sets it before the
-	// runner opens a tenure.
+	// gate makes each Open wait until gate is closed, or is nil.
 	gate chan struct{}
-	// opens lists a copy of each request of Open, in order.
-	opens []opened
-	// requests lists each request of Open, as the runner passed it.
-	requests []*replica.OpenRequest
-	// works lists the work of each tenure that Open returned, in order.
-	works []*work
-	// mu guards the fields above.
-	mu sync.Mutex
 	// idle makes Open return a tenure without work.
 	idle bool
 	// early makes the work of each tenure return at once.
 	early bool
 }
 
-var _ replica.Opener = (*opener)(nil)
+// opener is the Opener of the tests. Its double keeps a copy of each request of Open, and
+// returns new work for each tenure. The double records each request of Open as the runner
+// passed it.
+type opener struct {
+	// OpenerStub is the double that the runner calls.
+	*replicatest.OpenerStub
+	opening
+	// opens lists a copy of each request of Open, in order.
+	opens []opened
+	// works lists the work of each tenure that Open returned, in order.
+	works []*work
+	// mu guards opens and works.
+	mu sync.Mutex
+}
 
-// Open waits for gate, keeps a copy of req, and returns the error fail, a tenure without work,
-// or new work.
-func (o *opener) Open(_ context.Context, req *replica.OpenRequest) (replica.OpenResult, error) {
-	if o.gate != nil {
-		<-o.gate
+// newOpener returns an opener with the behaviour b. Its Open waits for gate, keeps a copy of
+// the request, and returns the error fail, a tenure without work, or new work. Its double
+// reports to tb.
+func newOpener(tb assert.TB, b opening) *opener {
+	tb.Helper()
+	o := &opener{opening: b}
+	open := func(_ context.Context, req *replica.OpenRequest) (replica.OpenResult, error) {
+		if o.gate != nil {
+			<-o.gate
+		}
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		o.opens = append(o.opens, opened{request: req.Request.CloneKanon(), token: req.Token})
+		if o.fail != nil {
+			return replica.OpenResult{}, o.fail
+		}
+		if o.idle {
+			return replica.OpenResult{}, nil
+		}
+		w := &work{err: o.err, early: o.early, started: make(chan struct{}), ended: make(chan struct{})}
+		o.works = append(o.works, w)
+		return replica.OpenResult{Run: w.run}, nil
 	}
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.opens = append(o.opens, opened{request: req.Request.CloneKanon(), token: req.Token})
-	o.requests = append(o.requests, req)
-	if o.fail != nil {
-		return replica.OpenResult{}, o.fail
-	}
-	if o.idle {
-		return replica.OpenResult{}, nil
-	}
-	w := &work{err: o.err, early: o.early, started: make(chan struct{}), ended: make(chan struct{})}
-	o.works = append(o.works, w)
-	return replica.OpenResult{Run: w.run}, nil
+	o.OpenerStub = replicatest.NewOpenerStub(tb, replicatest.WithOpenerOpen(open))
+	return o
 }
 
 // calls returns the number of the calls of Open.
@@ -130,7 +140,7 @@ func TestRunner(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				o := &opener{idle: true}
+				o := newOpener(t, opening{idle: true})
 				ctx, stop := context.WithCancel(t.Context())
 				a := f.run(t, ctx, replica.NewRunner(o))
 				t.Cleanup(func() {
@@ -140,7 +150,8 @@ func TestRunner(t *testing.T) {
 				f.serve(t, a, shardA, 1)
 				assert.Length(t, o.opens, 1, "the runner must open the tenure once")
 				expect.Equal(t, o.opens[0].request.Call, protocol.Add, "the runner must open the tenure with its add")
-				expect.Equal(t, o.opens[0].token, f.guard.acquired[0], "the runner must open the tenure with its token")
+				expect.Equal(t, o.opens[0].token, f.guard.OnAcquire.Calls()[0].T,
+					"the runner must open the tenure with its token")
 			})
 		})
 
@@ -148,7 +159,7 @@ func TestRunner(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				o := &opener{}
+				o := newOpener(t, opening{})
 				ctx, stop := context.WithCancel(t.Context())
 				a := f.run(t, ctx, replica.NewRunner(o))
 				t.Cleanup(func() {
@@ -171,7 +182,7 @@ func TestRunner(t *testing.T) {
 		t.Run("keeps the work of the tenure for an add of the tenure that runs", func(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
-				o := &opener{}
+				o := newOpener(t, opening{})
 				run := replica.NewRunner(o)
 				add := request(protocol.Add, shardA, 1, 1, 1)
 				token := fence.Token{Shard: shardA, Epoch: 1}
@@ -194,7 +205,7 @@ func TestRunner(t *testing.T) {
 		t.Run("ends the work of an earlier tenure before it opens a newer tenure", func(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
-				o := &opener{}
+				o := newOpener(t, opening{})
 				run := replica.NewRunner(o)
 				first := request(protocol.Add, shardA, 1, 1, 1)
 				_, err := run.AddShard(t.Context(), &replica.AddShardRequest{
@@ -222,21 +233,21 @@ func TestRunner(t *testing.T) {
 
 		t.Run("clears the request of Open once Open returns", func(t *testing.T) {
 			t.Parallel()
-			o := &opener{idle: true}
+			o := newOpener(t, opening{idle: true})
 			run := replica.NewRunner(o)
 			_, err := run.AddShard(t.Context(), &replica.AddShardRequest{
 				Request: request(protocol.Add, shardA, 1, 1, 1),
 				Token:   fence.Token{Shard: shardA, Epoch: 1},
 			})
 			assert.NoError(t, err, "the add must open the tenure")
-			assert.Length(t, o.requests, 1, "the runner must open the tenure once")
-			expect.Nil(t, o.requests[0].Request, "the runner must clear the add of the request")
-			expect.Equal(t, o.requests[0].Token, fence.Token{}, "the runner must clear the token of the request")
+			requests := o.OnOpen.AssertCalledN(t, 1, "the runner must open the tenure once")
+			expect.Nil(t, requests[0].Req.Request, "the runner must clear the add of the request")
+			expect.Equal(t, requests[0].Req.Token, fence.Token{}, "the runner must clear the token of the request")
 		})
 
 		t.Run("opens a tenure again after its drop", func(t *testing.T) {
 			t.Parallel()
-			o := &opener{idle: true}
+			o := newOpener(t, opening{idle: true})
 			run := replica.NewRunner(o)
 			add := &replica.AddShardRequest{
 				Request: request(protocol.Add, shardA, 1, 1, 1),
@@ -253,7 +264,7 @@ func TestRunner(t *testing.T) {
 
 		t.Run("returns the error of Open", func(t *testing.T) {
 			t.Parallel()
-			run := replica.NewRunner(&opener{fail: errBroken})
+			run := replica.NewRunner(newOpener(t, opening{fail: errBroken}))
 			_, err := run.AddShard(t.Context(), &replica.AddShardRequest{
 				Request: request(protocol.Add, shardA, 1, 1, 1),
 				Token:   fence.Token{Shard: shardA, Epoch: 1},
@@ -263,7 +274,7 @@ func TestRunner(t *testing.T) {
 
 		t.Run("opens a tenure without work once", func(t *testing.T) {
 			t.Parallel()
-			o := &opener{idle: true}
+			o := newOpener(t, opening{idle: true})
 			run := replica.NewRunner(o)
 			add := &replica.AddShardRequest{
 				Request: request(protocol.Add, shardA, 1, 1, 1),
@@ -280,7 +291,7 @@ func TestRunner(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				o := &opener{err: errBroken, early: true}
+				o := newOpener(t, opening{err: errBroken, early: true})
 				ctx, stop := context.WithCancel(t.Context())
 				a := f.run(t, ctx, replica.NewRunner(o))
 				t.Cleanup(func() {
@@ -299,7 +310,7 @@ func TestRunner(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				o := &opener{early: true}
+				o := newOpener(t, opening{early: true})
 				ctx, stop := context.WithCancel(t.Context())
 				a := f.run(t, ctx, replica.NewRunner(o))
 				t.Cleanup(func() {
@@ -321,7 +332,7 @@ func TestRunner(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				o := &opener{err: errBroken}
+				o := newOpener(t, opening{err: errBroken})
 				ctx, stop := context.WithCancel(t.Context())
 				a := f.run(t, ctx, replica.NewRunner(o))
 				t.Cleanup(func() {
@@ -351,7 +362,7 @@ func TestRunner(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
-				o := &opener{err: fmt.Errorf("test: a write: %w", epoch.ErrFenced), early: true}
+				o := newOpener(t, opening{err: fmt.Errorf("test: a write: %w", epoch.ErrFenced), early: true})
 				ctx, stop := context.WithCancel(t.Context())
 				a := f.run(t, ctx, replica.NewRunner(o))
 				t.Cleanup(func() {
@@ -375,7 +386,7 @@ func TestRunner(t *testing.T) {
 
 		t.Run("returns nil for a shard without a tenure", func(t *testing.T) {
 			t.Parallel()
-			run := replica.NewRunner(&opener{})
+			run := replica.NewRunner(newOpener(t, opening{}))
 			_, err := run.DropShard(
 				t.Context(),
 				&replica.DropShardRequest{Request: request(protocol.Drop, shardA, 1, 1, 1)},
@@ -390,7 +401,7 @@ func TestRunner(t *testing.T) {
 		t.Run("ends the work of the tenure of the token", func(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
-				o := &opener{}
+				o := newOpener(t, opening{})
 				run := replica.NewRunner(o)
 				token := fence.Token{Shard: shardA, Epoch: 1}
 				_, err := run.AddShard(t.Context(), &replica.AddShardRequest{
@@ -411,7 +422,7 @@ func TestRunner(t *testing.T) {
 		t.Run("keeps the work of a newer tenure of the shard", func(t *testing.T) {
 			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
-				o := &opener{}
+				o := newOpener(t, opening{})
 				run := replica.NewRunner(o)
 				newer := request(protocol.Add, shardA, 2, 2, 1)
 				_, err := run.AddShard(t.Context(), &replica.AddShardRequest{
@@ -436,7 +447,7 @@ func TestRunner(t *testing.T) {
 
 		t.Run("returns nil for a shard without a tenure", func(t *testing.T) {
 			t.Parallel()
-			run := replica.NewRunner(&opener{})
+			run := replica.NewRunner(newOpener(t, opening{}))
 			_, err := run.RevokeShard(t.Context(), &replica.RevokeShardRequest{
 				Token: fence.Token{Shard: shardA, Epoch: 1},
 			})
@@ -445,7 +456,7 @@ func TestRunner(t *testing.T) {
 
 		t.Run("opens a tenure again after its revocation", func(t *testing.T) {
 			t.Parallel()
-			o := &opener{idle: true}
+			o := newOpener(t, opening{idle: true})
 			run := replica.NewRunner(o)
 			add := &replica.AddShardRequest{
 				Request: request(protocol.Add, shardA, 1, 1, 1),
@@ -465,7 +476,7 @@ func TestRunner(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				f.stop(t)
-				o := &opener{}
+				o := newOpener(t, opening{})
 				ctx, stop := context.WithCancel(t.Context())
 				a := f.run(t, ctx, replica.NewRunner(o))
 				t.Cleanup(func() {
@@ -491,7 +502,7 @@ func TestRunner(t *testing.T) {
 				t.Parallel()
 				synctest.Test(t, func(t *testing.T) {
 					f := newFixture(t)
-					o := &opener{}
+					o := newOpener(t, opening{})
 					ctx, stop := context.WithCancel(t.Context())
 					a := f.run(t, ctx, replica.NewRunner(o))
 					t.Cleanup(func() {
@@ -516,7 +527,7 @@ func TestRunner(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					f := newFixture(t)
 					f.stop(t)
-					o := &opener{}
+					o := newOpener(t, opening{})
 					ctx, stop := context.WithCancel(t.Context())
 					a := f.run(t, ctx, replica.NewRunner(o))
 					t.Cleanup(func() {
@@ -545,7 +556,7 @@ func TestRunner(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					f := newFixture(t)
 					f.stop(t)
-					o := &opener{gate: make(chan struct{})}
+					o := newOpener(t, opening{gate: make(chan struct{})})
 					ctx, stop := context.WithCancel(t.Context())
 					a := f.run(t, ctx, replica.NewRunner(o))
 					t.Cleanup(func() {
@@ -575,7 +586,7 @@ func TestRunner(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					f := newFixture(t)
 					f.stop(t)
-					o := &opener{}
+					o := newOpener(t, opening{})
 					ctx, stop := context.WithCancel(t.Context())
 					a := f.run(t, ctx, replica.NewRunner(o))
 					t.Cleanup(func() {
@@ -599,7 +610,7 @@ func TestRunner(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				f := newFixture(t)
 				f.stop(t)
-				o := &opener{}
+				o := newOpener(t, opening{})
 				ctx, stop := context.WithCancel(t.Context())
 				a := f.run(t, ctx, replica.NewRunner(o))
 				t.Cleanup(func() {
@@ -624,7 +635,7 @@ func TestRunner(t *testing.T) {
 		t.Parallel()
 		synctest.Test(t, func(t *testing.T) {
 			f := newFixture(t)
-			o := &opener{}
+			o := newOpener(t, opening{})
 			ctx, stop := context.WithCancel(t.Context())
 			a := f.run(t, ctx, replica.NewRunner(o))
 			f.serve(t, a, shardA, 1)
@@ -644,7 +655,7 @@ func TestRunner(t *testing.T) {
 		t.Parallel()
 		synctest.Test(t, func(t *testing.T) {
 			f := newFixture(t)
-			o := &opener{idle: true}
+			o := newOpener(t, opening{idle: true})
 			ctx, stop := context.WithCancel(t.Context())
 			run := replica.NewRunner(o)
 			a := f.run(t, ctx, run)

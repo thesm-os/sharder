@@ -29,12 +29,15 @@ import (
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
 	"go.thesmos.sh/sharder/fence"
+	"go.thesmos.sh/sharder/fence/fencetest"
 	"go.thesmos.sh/sharder/membership"
 	"go.thesmos.sh/sharder/ownership"
 	"go.thesmos.sh/sharder/partition/fixedslots"
 	"go.thesmos.sh/sharder/proposal"
 	"go.thesmos.sh/sharder/protocol"
+	"go.thesmos.sh/sharder/protocol/protocoltest"
 	"go.thesmos.sh/sharder/replica"
+	"go.thesmos.sh/sharder/replica/replicatest"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
@@ -136,10 +139,13 @@ type cleaner interface {
 	Cleanup(f func())
 }
 
-// controllerDouble is the controller of the cell of the tests, as the agent calls it. It
-// accepts every report with the term of the controller, and decides each disruption with
-// decide.
+// controllerDouble is the controller of the cell of the tests, as the agent calls it. Its
+// double keeps a copy of every report and accepts it with the term of the controller. It
+// keeps a copy of every disruption and decides it with decide. It refuses every proposal
+// with errSubmit, and keeps the end of every reservation.
 type controllerDouble struct {
+	// ControllerClientStub is the double that the agent calls.
+	*protocoltest.ControllerClientStub
 	// decide returns the decision of the disruption d. With a nil decide, the controller
 	// admits every disruption.
 	decide func(d *budget.Disruption) budget.Decision
@@ -153,38 +159,41 @@ type controllerDouble struct {
 	mu sync.Mutex
 }
 
-var _ protocol.ControllerClient = (*controllerDouble)(nil)
-
-// Report keeps a copy of r and accepts it.
-func (c *controllerDouble) Report(_ context.Context, _ *shard.Cell, r *protocol.Report) (protocol.Ack, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.reports = append(c.reports, r.CloneKanon())
-	return protocol.Ack{Sequence: r.Sequence, ControllerEpoch: cellTerm}, nil
-}
-
-// Submit refuses every proposal.
-func (*controllerDouble) Submit(context.Context, *shard.Cell, *proposal.Proposal) (protocol.Receipt, error) {
-	return protocol.Receipt{}, errSubmit
-}
-
-// Disrupt keeps a copy of d, and returns the decision of decide.
-func (c *controllerDouble) Disrupt(_ context.Context, _ *shard.Cell, d *budget.Disruption) (budget.Decision, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.disruptions = append(c.disruptions, d.CloneKanon())
-	if c.decide == nil {
-		return budget.Decision{Allowed: true}, nil
+// newControllerDouble returns the controller of the cell of the tests, before any call. Its
+// double reports to tb.
+func newControllerDouble(tb assert.TB) *controllerDouble {
+	tb.Helper()
+	c := &controllerDouble{}
+	report := func(_ context.Context, _ *shard.Cell, r *protocol.Report) (protocol.Ack, error) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.reports = append(c.reports, r.CloneKanon())
+		return protocol.Ack{Sequence: r.Sequence, ControllerEpoch: cellTerm}, nil
 	}
-	return c.decide(d), nil
-}
-
-// Done keeps the end of the reservation a.ID.
-func (c *controllerDouble) Done(_ context.Context, _ *shard.Cell, a *protocol.DoneArgs) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.dones = append(c.dones, *a)
-	return nil
+	submit := func(context.Context, *shard.Cell, *proposal.Proposal) (protocol.Receipt, error) {
+		return protocol.Receipt{}, errSubmit
+	}
+	disrupt := func(_ context.Context, _ *shard.Cell, d *budget.Disruption) (budget.Decision, error) {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.disruptions = append(c.disruptions, d.CloneKanon())
+		if c.decide == nil {
+			return budget.Decision{Allowed: true}, nil
+		}
+		return c.decide(d), nil
+	}
+	done := func(_ context.Context, _ *shard.Cell, a *protocol.DoneArgs) error {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.dones = append(c.dones, *a)
+		return nil
+	}
+	c.ControllerClientStub = protocoltest.NewControllerClientStub(tb,
+		protocoltest.WithControllerClientReport(report),
+		protocoltest.WithControllerClientSubmit(submit),
+		protocoltest.WithControllerClientDisrupt(disrupt),
+		protocoltest.WithControllerClientDone(done))
+	return c
 }
 
 // lastReport returns a copy of the last report of the agent.
@@ -196,28 +205,12 @@ func (c *controllerDouble) lastReport(tb assert.TB) *protocol.Report {
 	return c.reports[len(c.reports)-1]
 }
 
-// guard is the fence of the tests. It keeps every token that the agent acquires, and admits
-// every acquisition.
-type guard struct {
-	// acquired lists the token of every acquisition, in order.
-	acquired []fence.Token
-	// mu guards acquired.
-	mu sync.Mutex
-}
-
-var _ fence.Acquirer = (*guard)(nil)
-
-// Acquire keeps t and admits it.
-func (g *guard) Acquire(_ context.Context, t fence.Token) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.acquired = append(g.acquired, t)
-	return nil
-}
-
-// application is the handler of the application of the tests. It counts the calls of each
-// key and keeps a copy of each callback. Each call returns the error of fail.
+// application is the handler of the application of the tests. Its double counts the calls
+// of each key and keeps a copy of each callback. Each call returns the error of fail. The
+// double records each request of AddShard and DropShard as the agent passed it.
 type application struct {
+	// HandlerStub is the double that the agent calls.
+	*replicatest.HandlerStub
 	// fail returns the error of the callback r, and nil for success. With a nil fail, every
 	// callback succeeds.
 	fail func(r *protocol.Request) error
@@ -225,38 +218,30 @@ type application struct {
 	effects map[protocol.Key]int
 	// calls lists a copy of every callback, in order.
 	calls []*protocol.Request
-	// adds lists every request of AddShard, as the agent passed it.
-	adds []*replica.AddShardRequest
 	// tokens lists the token of every request of AddShard at the call, in order.
 	tokens []fence.Token
-	// drops lists every request of DropShard, as the agent passed it.
-	drops []*replica.DropShardRequest
 	// mu guards the fields above.
 	mu sync.Mutex
 }
 
-var _ replica.Handler = (*application)(nil)
-
-// newApplication returns a handler whose callbacks succeed.
-func newApplication() *application {
-	return &application{effects: make(map[protocol.Key]int)}
-}
-
-// AddShard records the callback and the token of req, and returns the error of fail.
-func (a *application) AddShard(_ context.Context, req *replica.AddShardRequest) (replica.AddShardResult, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.adds = append(a.adds, req)
-	a.tokens = append(a.tokens, req.Token)
-	return replica.AddShardResult{}, a.record(req.Request)
-}
-
-// DropShard records the callback of req, and returns the error of fail.
-func (a *application) DropShard(_ context.Context, req *replica.DropShardRequest) (replica.DropShardResult, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.drops = append(a.drops, req)
-	return replica.DropShardResult{}, a.record(req.Request)
+// newApplication returns a handler whose callbacks succeed. Its double reports to tb.
+func newApplication(tb assert.TB) *application {
+	tb.Helper()
+	a := &application{effects: make(map[protocol.Key]int)}
+	add := func(_ context.Context, req *replica.AddShardRequest) (replica.AddShardResult, error) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		a.tokens = append(a.tokens, req.Token)
+		return replica.AddShardResult{}, a.record(req.Request)
+	}
+	drop := func(_ context.Context, req *replica.DropShardRequest) (replica.DropShardResult, error) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return replica.DropShardResult{}, a.record(req.Request)
+	}
+	a.HandlerStub = replicatest.NewHandlerStub(tb, replicatest.WithHandlerAddShard(add),
+		replicatest.WithHandlerDropShard(drop))
+	return a
 }
 
 // record counts the key of r and keeps a copy of r. It returns the error of fail. The caller
@@ -284,44 +269,36 @@ func (a *application) counts() map[protocol.Key]int {
 	return maps.Clone(a.effects)
 }
 
-// loaded is a handler of the tests that also reports the load of each replica.
+// loaded is a handler of the tests that also reports the load of each replica. It embeds
+// the application and the double of replica.LoadReporter.
 type loaded struct {
 	*application
-	// load is the load of every replica.
-	load shard.Load
+	*replicatest.LoadReporterStub
 }
 
-var _ replica.LoadReporter = (*loaded)(nil)
-
-// ShardLoad returns the load of every replica.
-func (l *loaded) ShardLoad(shard.ID) shard.Load {
-	return l.load
-}
-
-// revoking is a handler of the tests that also revokes tenures. It keeps every request of
-// RevokeShard and the token of each. The mutex of the application guards its fields.
+// revoking is a handler of the tests that also revokes tenures. It embeds the application
+// and the double of replica.Revoker, which records each request of RevokeShard as the agent
+// passed it. The mutex of the application guards revoked.
 type revoking struct {
 	*application
-	// err is the error of every RevokeShard, or nil.
-	err error
-	// revocations lists every request of RevokeShard, as the agent passed it.
-	revocations []*replica.RevokeShardRequest
+	*replicatest.RevokerStub
 	// revoked lists the token of every request of RevokeShard at the call, in order.
 	revoked []fence.Token
 }
 
-var _ replica.Revoker = (*revoking)(nil)
-
-// RevokeShard keeps req and its token, and returns err.
-func (r *revoking) RevokeShard(
-	_ context.Context,
-	req *replica.RevokeShardRequest,
-) (replica.RevokeShardResult, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.revocations = append(r.revocations, req)
-	r.revoked = append(r.revoked, req.Token)
-	return replica.RevokeShardResult{}, r.err
+// newRevoking returns a handler over app whose RevokeShard keeps the token of its request
+// and returns err. Its double reports to tb.
+func newRevoking(tb assert.TB, app *application, err error) *revoking {
+	tb.Helper()
+	r := &revoking{application: app}
+	revoke := func(_ context.Context, req *replica.RevokeShardRequest) (replica.RevokeShardResult, error) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.revoked = append(r.revoked, req.Token)
+		return replica.RevokeShardResult{}, err
+	}
+	r.RevokerStub = replicatest.NewRevokerStub(tb, replicatest.WithRevokerRevokeShard(revoke))
+	return r
 }
 
 // fixture is the store, the clock, the registry and the doubles that the agent of a test
@@ -336,8 +313,9 @@ type fixture struct {
 	reg *config.Registry
 	// ctrl is the controller of the cell.
 	ctrl *controllerDouble
-	// guard is the fence of the agent.
-	guard *guard
+	// guard is the fence of the agent. It admits every acquisition, and records the token of
+	// each.
+	guard *fencetest.AcquirerStub
 	// app is the handler of the agent.
 	app *application
 	// logs keeps every record that the agent logs.
@@ -378,9 +356,9 @@ func bare(tb cleaner) *fixture {
 		st:    st,
 		clock: clk,
 		reg:   r,
-		ctrl:  &controllerDouble{},
-		guard: &guard{},
-		app:   newApplication(),
+		ctrl:  newControllerDouble(tb),
+		guard: fencetest.NewAcquirerStub(tb),
+		app:   newApplication(tb),
 		logs:  telemetrytest.NewRecords(slog.LevelDebug),
 	}
 }
