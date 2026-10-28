@@ -566,6 +566,7 @@ func StoreSuite() conform.Suite[store.Store] {
 			),
 			prop.Using(prop.SampledFrom(budget.NetworkLoss, budget.ProcessRestart, budget.FullLoss)),
 			prop.Using(storeIDValues),
+			prop.Using(storeMutationValues),
 			prop.Using(storeDigestValues),
 		},
 	}
@@ -727,6 +728,56 @@ var storeIDValues = prop.Composite(func(*prop.Case) id.ID {
 	return id.ID{}
 })
 
+// storeMutationValues generates the values of Mutation that keep or change
+// each field of its starting value.
+var storeMutationValues = prop.Composite(func(c *prop.Case) store.Mutation {
+	changed := c.Draw(prop.Of[store.Mutation](), "mutation")
+	value := NewMutationBuilder().Build()
+	if c.Draw(prop.Boolean(), "mutation.cell") {
+		value.Cell = changed.Cell
+	}
+	if c.Draw(prop.Boolean(), "mutation.mapping") {
+		value.Mapping = changed.Mapping
+	}
+	if c.Draw(prop.Boolean(), "mutation.spec") {
+		value.Spec = changed.Spec
+	}
+	if c.Draw(prop.Boolean(), "mutation.done") {
+		value.Done = changed.Done
+	}
+	if c.Draw(prop.Boolean(), "mutation.transitions") {
+		value.Transitions = changed.Transitions
+	}
+	if c.Draw(prop.Boolean(), "mutation.put") {
+		value.Put = changed.Put
+	}
+	if c.Draw(prop.Boolean(), "mutation.applied") {
+		value.Applied = changed.Applied
+	}
+	if c.Draw(prop.Boolean(), "mutation.forget") {
+		value.Forget = changed.Forget
+	}
+	if c.Draw(prop.Boolean(), "mutation.reserve") {
+		value.Reserve = changed.Reserve
+	}
+	if c.Draw(prop.Boolean(), "mutation.release") {
+		value.Release = changed.Release
+	}
+	if c.Draw(prop.Boolean(), "mutation.drain") {
+		value.Drain = changed.Drain
+	}
+	if c.Draw(prop.Boolean(), "mutation.undrain") {
+		value.Undrain = changed.Undrain
+	}
+	if c.Draw(prop.Boolean(), "mutation.confirm") {
+		value.Confirm = changed.Confirm
+	}
+	if c.Draw(prop.Boolean(), "mutation.id") {
+		value.ID = changed.ID
+	}
+	return value
+})
+
 // storeDigestValues generates the starting value of crypto.Digest, which
 // has no field to change.
 var storeDigestValues = prop.Composite(func(*prop.Case) crypto.Digest {
@@ -817,4 +868,4 @@ func newStoreOver(_ *StoreHandle, spend func()) store.Store {
 	return storeOver{spend: spend}
 }
 
-// dokimi:provenance sha256:b8805b18929164b2fba29006da56e54475c5951e931cc3e6013f12eb6f426373
+// dokimi:provenance sha256:2a590cf79f0af586e6a180e7209ad5e0dd8293a260eddc8a5a5b7890f887a89e

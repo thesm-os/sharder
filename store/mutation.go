@@ -34,6 +34,9 @@ import (
 //
 // A copy of a Mutation shares its slices, the values of its pointers and the bytes of
 // Spec with the original.
+//
+//dokimi:builder
+//dokimi:out path=storetest/
 type Mutation struct {
 	// Cell replaces the controller record of the scope. Nil leaves it unchanged.
 	Cell *shard.Cell
