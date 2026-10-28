@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/prop"
 
@@ -172,11 +171,11 @@ func TestCell(t *testing.T) {
 	})
 }
 
-// TestCellAllocs checks the allocation contracts of Cell and CellMap. MaxAllocs counts
-// the allocations of the whole process, so the test does not run in parallel.
+// TestCellAllocs checks the allocation contracts of the construction of a Cell and of a
+// CellMap. MaxAllocs counts the allocations of the whole process, so the test does not run
+// in parallel.
 func TestCellAllocs(t *testing.T) {
 	c := recordedCell
-	pos := []byte("s")
 
 	t.Run("constructs a Cell without an allocation", func(t *testing.T) {
 		var got shard.Cell
@@ -200,38 +199,6 @@ func TestCellAllocs(t *testing.T) {
 			)
 			assert.Equal(t, got, threeCells, "the test must measure the construction of the CellMap")
 		})
-
-		t.Run("Locate", func(t *testing.T) {
-			var got shard.Cell
-			expect.MaxAllocs(t, func() { got, _ = threeCells.Locate(pos) }, 0, "Locate must not allocate")
-			assert.Equal(t, got.ID, shard.CellID("c1"), "the test must measure a position that a cell contains")
-		})
-	})
-}
-
-// BenchmarkCell reports the cost of CellMap.Locate for maps of 1 and 1,024 cells, and
-// fails when it allocates.
-func BenchmarkCell(b *testing.B) {
-	b.Run("CellMap", func(b *testing.B) {
-		b.Run("Locate", func(b *testing.B) {
-			for _, n := range []int{1, 1024} {
-				m := evenCover(n)
-				pos := m.Cells[n/2].Range.Start
-
-				b.Run(strconv.Itoa(n), func(b *testing.B) {
-					var ok bool
-
-					c := bench.Start(b).MaxAllocs(0)
-					defer c.End()
-
-					for c.Loop() {
-						_, ok = m.Locate(pos)
-					}
-
-					assert.True(b, ok, "the benchmark must measure a position that a cell contains")
-				})
-			}
-		})
 	})
 }
 
@@ -251,22 +218,4 @@ func drawCover(c *prop.Case) shard.CellMap {
 	}
 
 	return shard.CellMap{Cells: append(cells, shard.Cell{ID: lastCell, Range: shard.Range{Start: start}})}
-}
-
-// evenCover returns a cell map of n cells. Cell i starts at the big-endian encoding
-// of i in two bytes, except the first cell, which starts at the empty position, and
-// ends where cell i+1 starts.
-func evenCover(n int) shard.CellMap {
-	cells := make([]shard.Cell, n)
-	for i := range n {
-		var start, end []byte
-		if i > 0 {
-			start = []byte{byte(i >> 8), byte(i)}
-		}
-		if i+1 < n {
-			end = []byte{byte((i + 1) >> 8), byte(i + 1)}
-		}
-		cells[i] = shard.Cell{ID: shard.CellID(strconv.Itoa(i)), Range: shard.Range{Start: start, End: end}}
-	}
-	return shard.CellMap{Cells: cells}
 }

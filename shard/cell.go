@@ -69,6 +69,10 @@ type Cell struct {
 // # Allocation contract
 //
 // Construction and [CellMap.Locate] do not allocate.
+//
+//dokimi:suite
+//dokimi:out path=shardtest/
+//dokimi:subject CellMap new=newCellMap
 type CellMap struct {
 	// Namespace is the namespace of the cells.
 	Namespace Namespace
@@ -89,6 +93,8 @@ type CellMap struct {
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:budget allocs=0
 func (m *CellMap) Locate(pos []byte) (Cell, bool) {
 	if m == nil {
 		return Cell{}, false
