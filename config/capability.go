@@ -77,6 +77,9 @@ type Capabilities struct {
 // Provider is the interface of the store and membership adapters. The controller
 // passes the capabilities of the store adapter to Resolve under Store, and those of
 // the membership adapter under Membership.
+//
+//dokimi:stub
+//dokimi:out path=configtest/
 type Provider interface {
 	// Provides returns the capabilities that the adapter provides, such as Leases.
 	Provides() []Capability

@@ -16,6 +16,9 @@ import (
 // Parsed is the configuration of a strategy after its factory parsed it. encoding/json
 // encodes a Parsed as its complete configuration with every default. The Parse of that
 // encoding returns an equal value. The resolved spec contains that encoding.
+//
+//dokimi:stub
+//dokimi:out path=configtest/
 type Parsed interface {
 	// Validate returns every invalid field joined with errors.Join, or nil for a
 	// valid configuration.
@@ -28,6 +31,9 @@ type Parsed interface {
 // # Concurrency
 //
 // A Factory is safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:out path=configtest/
 type Factory[T any] interface {
 	// Name returns the name with which a spec selects the strategy. The name is
 	// unique on its axis.

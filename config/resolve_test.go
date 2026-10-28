@@ -16,6 +16,7 @@ import (
 	"go.thesmos.sh/core/errs"
 
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/config/configtest"
 	"go.thesmos.sh/sharder/partition"
 	"go.thesmos.sh/sharder/partition/singleton"
 	"go.thesmos.sh/sharder/replication"
@@ -314,6 +315,7 @@ func TestResolve(t *testing.T) {
 			assert.ErrorIs(t, err, config.ErrUnknown, "Resolve must refuse a name without a factory")
 		})
 
+		invalid := configtest.NewParsedStub(t, configtest.WithParsedValidate(func() error { return errTest }))
 		parsing := []struct {
 			parse    func(json.RawMessage) (config.Parsed, error)
 			name     string
@@ -336,7 +338,7 @@ func TestResolve(t *testing.T) {
 			{
 				name: "returns ErrSpec with the error of Validate",
 				parse: func(json.RawMessage) (config.Parsed, error) {
-					return invalidConfig{}, nil
+					return invalid, nil
 				},
 				wantErrs: []error{config.ErrSpec, errTest},
 			},
@@ -352,7 +354,8 @@ func TestResolve(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				r := newRegistry(t, newSupport())
-				register(t, r, config.Placement, &testFactory[struct{}]{name: zoneName, parse: tt.parse})
+				register(t, r, config.Placement, newFactory(t, zoneName, config.Capabilities{},
+					configtest.WithFactoryParse[struct{}](tt.parse)))
 				spec := workerSpec()
 				spec.Placement = config.Selection{Name: zoneName}
 				_, err := config.Resolve(r, spec, testProvided)
@@ -512,12 +515,10 @@ func TestResolve(t *testing.T) {
 		t.Run("does not check the capabilities while a selection fails", func(t *testing.T) {
 			t.Parallel()
 			r := newRegistry(t, newSupport())
-			register(t, r, config.Placement, &testFactory[struct{}]{
-				name: zoneName,
-				parse: func(json.RawMessage) (config.Parsed, error) {
+			register(t, r, config.Placement, newFactory(t, zoneName, config.Capabilities{},
+				configtest.WithFactoryParse[struct{}](func(json.RawMessage) (config.Parsed, error) {
 					return nil, errTest
-				},
-			})
+				})))
 			spec := workerSpec()
 			spec.Ownership = config.Selection{Name: unfencedName}
 			spec.Placement = config.Selection{Name: zoneName}
@@ -531,68 +532,63 @@ func TestResolve(t *testing.T) {
 		building := []struct {
 			name     string
 			axis     config.Axis
-			factory  func(r *config.Registry) error
+			factory  func(tb assert.TB, r *config.Registry) error
 			wantErrs []error
 		}{
 			{
 				name: "returns ErrRegistration for a partitioner factory of another type",
 				axis: config.Partitioning,
-				factory: func(r *config.Registry) error {
-					return config.Register(r, config.Partitioning, &testFactory[struct{}]{name: zoneName})
+				factory: func(tb assert.TB, r *config.Registry) error {
+					return config.Register(r, config.Partitioning,
+						newFactory[struct{}](tb, zoneName, config.Capabilities{}))
 				},
 				wantErrs: []error{config.ErrRegistration},
 			},
 			{
 				name: "returns ErrSpec with the error of New of the partitioner",
 				axis: config.Partitioning,
-				factory: func(r *config.Registry) error {
-					return config.Register(r, config.Partitioning, &testFactory[partition.Partitioner]{
-						name: zoneName,
-						build: func(config.Parsed) (partition.Partitioner, error) {
+				factory: func(tb assert.TB, r *config.Registry) error {
+					return config.Register(r, config.Partitioning, newFactory(tb, zoneName, config.Capabilities{},
+						configtest.WithFactoryNew(func(config.Parsed) (partition.Partitioner, error) {
 							return nil, errTest
-						},
-					})
+						})))
 				},
 				wantErrs: []error{config.ErrSpec, errTest},
 			},
 			{
 				name: "returns ErrSpec for a factory that builds no partitioner",
 				axis: config.Partitioning,
-				factory: func(r *config.Registry) error {
-					return config.Register(r, config.Partitioning, &testFactory[partition.Partitioner]{name: zoneName})
+				factory: func(tb assert.TB, r *config.Registry) error {
+					return config.Register(r, config.Partitioning,
+						newFactory[partition.Partitioner](tb, zoneName, config.Capabilities{}))
 				},
 				wantErrs: []error{config.ErrSpec},
 			},
 			{
 				name: "returns ErrRegistration for a model factory of another type",
 				axis: config.Replication,
-				factory: func(r *config.Registry) error {
-					return config.Register(r, config.Replication, &testFactory[struct{}]{name: zoneName, caps: writer})
+				factory: func(tb assert.TB, r *config.Registry) error {
+					return config.Register(r, config.Replication, newFactory[struct{}](tb, zoneName, writer))
 				},
 				wantErrs: []error{config.ErrRegistration},
 			},
 			{
 				name: "returns ErrSpec with the error of New of the model",
 				axis: config.Replication,
-				factory: func(r *config.Registry) error {
-					return config.Register(r, config.Replication, &testFactory[*replication.Compiled]{
-						name: zoneName,
-						caps: writer,
-						build: func(config.Parsed) (*replication.Compiled, error) {
+				factory: func(tb assert.TB, r *config.Registry) error {
+					return config.Register(r, config.Replication, newFactory(tb, zoneName, writer,
+						configtest.WithFactoryNew(func(config.Parsed) (*replication.Compiled, error) {
 							return nil, errTest
-						},
-					})
+						})))
 				},
 				wantErrs: []error{config.ErrSpec, errTest},
 			},
 			{
 				name: "returns ErrSpec for a factory that builds no model",
 				axis: config.Replication,
-				factory: func(r *config.Registry) error {
-					return config.Register(r, config.Replication, &testFactory[*replication.Compiled]{
-						name: zoneName,
-						caps: writer,
-					})
+				factory: func(tb assert.TB, r *config.Registry) error {
+					return config.Register(r, config.Replication,
+						newFactory[*replication.Compiled](tb, zoneName, writer))
 				},
 				wantErrs: []error{config.ErrSpec},
 			},
@@ -603,7 +599,7 @@ func TestResolve(t *testing.T) {
 				s := newSupport()
 				s.Strategies[tt.axis] = append(s.Strategies[tt.axis], zoneName)
 				r := newRegistry(t, s)
-				assert.NoError(t, tt.factory(r), "the factory of the case must register")
+				assert.NoError(t, tt.factory(t, r), "the factory of the case must register")
 				spec := workerSpec()
 				if tt.axis == config.Partitioning {
 					spec.Partitioning.Name = zoneName
@@ -685,16 +681,15 @@ func TestResolve(t *testing.T) {
 		t.Run("calls the factories without the lock of the registry", func(t *testing.T) {
 			t.Parallel()
 			r := newRegistry(t, newSupport())
-			register(t, r, config.Placement, &testFactory[struct{}]{
-				name: zoneName,
-				parse: func(raw json.RawMessage) (config.Parsed, error) {
+			late := newFactory[struct{}](t, zoneName, config.Capabilities{})
+			register(t, r, config.Placement, newFactory(t, zoneName, config.Capabilities{},
+				configtest.WithFactoryParse[struct{}](func(json.RawMessage) (config.Parsed, error) {
 					registered := make(chan error)
 					go func() {
-						registered <- config.Register(r, config.Goal, &testFactory[struct{}]{name: zoneName})
+						registered <- config.Register(r, config.Goal, late)
 					}()
 					return rawConfig(emptyConfig), <-registered
-				},
-			})
+				})))
 			spec := workerSpec()
 			spec.Placement = config.Selection{Name: zoneName}
 			var err error
