@@ -40,6 +40,9 @@ type Token struct {
 }
 
 // Acquirer starts the tenure of a writer.
+//
+//dokimi:stub
+//dokimi:out path=fencetest/
 type Acquirer interface {
 	// Acquire advances the watermark of the fence key of t to t.Epoch in one
 	// transaction. A writer calls it once per tenure, before it reads the data of its
