@@ -22,7 +22,8 @@ linters:
             - go.thesmos.sh/kanon
             - github.com/cespare/xxhash/v2
             - go.thesmos.sh/sharder
-        # The tests and the conformance kits of the root module also import assert.
+        # The tests and the conformance kits of the root module also import assert, and
+        # conform for the options of the applications of the generated suites.
         root-module-tests:
           list-mode: strict
           files:
@@ -35,6 +36,7 @@ linters:
             - github.com/cespare/xxhash/v2
             - go.thesmos.sh/sharder
             - go.dokimi.dev/assert
+            - go.dokimi.dev/conform
         # Package shard imports no other package of sharder, so every package can import
         # it.
         shard:
@@ -97,6 +99,13 @@ linters:
       ignore-sig-regexps:
         - errs\.WithClass\(
         - machine\.ClassifyAttempt\(
+  exclusions:
+    rules:
+      # The conformance kits, such as partitiontest, run only inside tests, so the reasons of
+      # the test rules apply to them. A planted defect returns the errors of the
+      # implementation that it wraps unchanged, which a check matches with errors.Is.
+      - path: (^|/)\w+test/
+        linters: [wrapcheck]
 
 formatters:
   settings:
