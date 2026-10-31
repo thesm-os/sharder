@@ -11,7 +11,7 @@ require (
 	go.dokimi.dev/conform v0.8.0
 	go.dokimi.dev/stub v0.2.0
 	go.thesmos.sh/core v0.35.0
-	go.thesmos.sh/kanon v0.3.0
+	go.thesmos.sh/kanon v0.3.1
 )
 
 require go.dokimi.dev/fault v0.2.0 // indirect
