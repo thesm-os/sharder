@@ -16,7 +16,7 @@ require (
 	go.dokimi.dev/conform v0.8.0 // indirect
 	go.dokimi.dev/fault v0.2.0 // indirect
 	go.dokimi.dev/stub v0.2.0 // indirect
-	go.thesmos.sh/kanon v0.3.0 // indirect
+	go.thesmos.sh/kanon v0.3.1 // indirect
 )
 
 replace go.thesmos.sh/sharder => ../
