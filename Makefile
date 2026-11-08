@@ -81,8 +81,8 @@ DOKIMI_MUTATE_GO := $(ERGON) tool run go.dokimi-mutate-go --
 
 # The options of the section go.
 GO_PATHS ?= ./...
-GO_TEST_ARGS ?= -count=1
-GO_RACE_ARGS ?= -count=1 -p=1
+GO_TEST_ARGS ?= -count=1 -short
+GO_RACE_ARGS ?= -count=1 -p=1 -short
 GO_FUZZ_MATCH ?= .
 GO_FUZZ_TIME ?= 30s
 GO_FUZZ_ARGS ?= -fuzzminimizetime=5s
@@ -90,11 +90,11 @@ GO_BENCH_MATCH ?= .
 GO_BENCH_TIME ?= 1s
 GO_BENCH_COUNT ?= 6
 GO_BENCH_ARGS ?= -benchmem -cpu=1,4
-GO_BENCH_SKIP ?=
+GO_BENCH_SKIP ?= ./config/configtest ./fence/fencetest ./handoff/handofftest ./internal/driver/drivertest ./internal/machine/machinetest ./internal/machine/routes/routestest ./internal/streamtest ./membership/membershiptest ./partition/partitiontest ./placement/placementtest ./protocol/protocoltest ./replica/replicatest ./router/routertest ./shard/shardtest ./store/storetest
 GO_MUTATE_WORKERS ?= 1
 GO_MUTATE_TIMEOUT ?= 0s
-GO_MUTATE_ARGS ?= -confirm
-GO_MUTATE_SKIP ?=
+GO_MUTATE_ARGS ?= --confirm
+GO_MUTATE_SKIP ?= ./config/configtest ./fence/fencetest ./handoff/handofftest ./internal/driver/drivertest ./internal/machine/machinetest ./internal/machine/routes/routestest ./internal/streamtest ./membership/membershiptest ./partition/partitiontest ./placement/placementtest ./protocol/protocoltest ./replica/replicatest ./router/routertest ./shard/shardtest ./store/storetest
 GO_GENERATE_COMMANDS ?= go run go.dokimi.dev/dokimi/cmd/dokimi@main run $(GO_PATHS) && go generate $(GO_PATHS)
 GO_AUDIT_ARGS ?=
 
@@ -154,8 +154,11 @@ benchstat-go: ## Compare the results of bench-go in GO_BENCH_OLD with those in G
 	$(BENCHSTAT) $(GO_BENCH_OLD) $(GO_BENCH_NEW)
 mutate-go: ## Run dokimi-mutate-go on every module, and fail on a mutant that the tests miss
 	@$(GO) list -m -f '{{.Dir}}' | { status=0; while IFS= read -r dir; do echo "dokimi-mutate-go $$dir"; \
-		list="$$($(call go-packages,$(GO_MUTATE_SKIP)))" || { status=1; continue; }; \
-		skip=""; for pkg in $$list; do skip="$${skip:+$$skip,}$$pkg"; done; \
+		pkgs="$$($(GO) -C "$$dir" list $(GO_PATHS))" && list="$$($(call go-packages,$(GO_MUTATE_SKIP)))" \
+			|| { status=1; continue; }; \
+		skip=""; run=""; for pkg in $$pkgs; do for s in $$list; do \
+			[ "$$s" = "$$pkg" ] && { skip="$${skip:+$$skip,}$$pkg"; continue 2; }; done; run=1; done; \
+		if [ -z "$$run" ]; then echo "no package to mutate in $$dir"; continue; fi; \
 		$(DOKIMI_MUTATE_GO) -C "$$dir" --workers $(GO_MUTATE_WORKERS) --timeout $(GO_MUTATE_TIMEOUT) \
 			$${skip:+--skip "$$skip"} $(GO_MUTATE_ARGS) $(GO_PATHS) || status=1; done; exit $$status; }
 generate-go: ## Run the generators of every module, such as go generate

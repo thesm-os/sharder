@@ -23,12 +23,14 @@ linters:
             - github.com/cespare/xxhash/v2
             - go.thesmos.sh/sharder
         # The tests and the conformance kits of the root module also import assert, and
-        # conform for the options of the applications of the generated suites.
+        # conform for the options of the applications of the generated suites. The
+        # simulation of a namespace has a list of its own.
         root-module-tests:
           list-mode: strict
           files:
             - $test
             - "**/*test/*.go"
+            - "!**/internal/machine/machinetest/*.go"
           allow:
             - $gostd
             - go.thesmos.sh/core
@@ -37,6 +39,21 @@ linters:
             - go.thesmos.sh/sharder
             - go.dokimi.dev/assert
             - go.dokimi.dev/conform
+        # The simulation of a namespace in internal/machine/machinetest and its tests also
+        # import the runtime of the simulation.
+        simulation:
+          list-mode: strict
+          files:
+            - "**/internal/machine/machinetest/*.go"
+          allow:
+            - $gostd
+            - go.thesmos.sh/core
+            - go.thesmos.sh/kanon
+            - github.com/cespare/xxhash/v2
+            - go.thesmos.sh/sharder
+            - go.dokimi.dev/assert
+            - go.dokimi.dev/conform
+            - go.dokimi.dev/sim
         # Package shard imports no other package of sharder, so every package can import
         # it.
         shard:

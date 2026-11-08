@@ -75,7 +75,7 @@ jobs:
   bench-go:
     name: Bench Go
     runs-on: ubuntu-26.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
