@@ -10,6 +10,8 @@ import (
 // Plan is a planning pass over one cell. The runtime runs placement.Placer.Place over
 // Input and then placement.Validate over the plan with Constraints. Both run on goroutines
 // of the runtime, and the runtime passes the result as a [Planned].
+//
+//dokimi:perform func=performPlan
 type Plan struct {
 	// Placer is the placer of the namespace.
 	Placer placement.Placer

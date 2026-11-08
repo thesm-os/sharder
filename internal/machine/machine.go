@@ -10,6 +10,8 @@ package machine
 // token.
 //
 // The zero Token is no effect.
+//
+//dokimi:token
 type Token uint64
 
 // ReplyToken is the identity of one inbound call of a machine. The runtime numbers the
@@ -17,6 +19,8 @@ type Token uint64
 // call. The machine replies to the call with a [Reply] that has the same token.
 //
 // The zero ReplyToken is no call.
+//
+//dokimi:token reply
 type ReplyToken uint64
 
 // Event is an input of a machine. An event is the result of an effect, an inbound call,
@@ -46,6 +50,11 @@ type Effect interface {
 // a machine while it runs, such as the fencing tokens of an agent or the routes of a
 // router. The machine publishes each such value through an atomic pointer during Step, so
 // a reader does not wait for a step.
+//
+// +dokimi:sim start=Started stop=Stopped cancel=Cancelled strategy=pct:3 mean-steps=1000 max-steps=2000 \
+// tolerate=[crash:1, restart:1, pause:1, partition:1, drop:1, delay:1, duplicate:1, clock-jump:1, \
+// clock-strobe:1, lose-before:1, lose-after:1, outage:1, slow:1] \
+// require=[crash:0.23, partition:0.24, outage:0.24, lose-after:0.17]
 //
 //dokimi:stub
 //dokimi:out path=machinetest/

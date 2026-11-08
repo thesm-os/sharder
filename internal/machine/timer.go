@@ -14,6 +14,8 @@ import (
 // Timer. The wall time of the clock stops while the system clock steps back, so a deadline
 // between two readings of the clock outlasts its duration by the size of the step. A Timer
 // cannot be stopped, so the machine ignores an Elapsed that it no longer waits for.
+//
+//dokimi:perform func=performTimer
 type Timer struct {
 	// Token is the token of the effect.
 	Token Token

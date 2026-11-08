@@ -13,6 +13,8 @@ import (
 
 // Callback is a callback to the agent of a node through protocol.AgentClient.Do. The
 // runtime passes the result as a [Called].
+//
+//dokimi:perform func=performCallback timeout=Timeout
 type Callback struct {
 	// Node is the node of the agent.
 	Node *shard.Node
@@ -47,6 +49,8 @@ func (Called) event() {}
 
 // SendReport is a report of an agent to the controller of its cell through
 // protocol.ControllerClient.Report. The runtime passes the result as a [Reported].
+//
+//dokimi:perform func=performSendReport timeout=Timeout
 type SendReport struct {
 	// Cell is the record of the cell, with the address and the identity of its controller.
 	Cell *shard.Cell
@@ -83,6 +87,8 @@ func (Reported) event() {}
 // SendDisrupt is a request for a planned disruption through
 // protocol.ControllerClient.Disrupt. An agent requests a disruption of its own node when
 // the application closes the agent. The runtime passes the result as a [Decided].
+//
+//dokimi:perform func=performSendDisrupt timeout=Timeout
 type SendDisrupt struct {
 	// Cell is the record of the cell, with the address and the identity of its controller.
 	Cell *shard.Cell
@@ -116,6 +122,8 @@ func (Decided) event() {}
 
 // SendDone is the end of a reservation at the controller of a cell through
 // protocol.ControllerClient.Done. The runtime passes the result as an [Ended].
+//
+//dokimi:perform func=performSendDone timeout=Timeout
 type SendDone struct {
 	// Cell is the record of the cell, with the address and the identity of its controller.
 	Cell *shard.Cell

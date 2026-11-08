@@ -12,6 +12,8 @@ import (
 // Campaign is a campaign for the election of a scope through store.Store.Campaign. The
 // runtime passes the result as a [Campaigned]. It passes a [TermEnded] once a term that
 // the election granted ends.
+//
+//dokimi:perform func=performCampaign dependency=store.Store result=Campaigned end=TermEnded
 type Campaign struct {
 	// Scope is the scope of the election.
 	Scope shard.Scope
@@ -59,6 +61,8 @@ func (TermEnded) event() {}
 // election granted, also when the election granted the term while the campaign stopped.
 // For a campaign that stops without a term, it passes a [Campaigned] with an error.
 // Resign has no result of its own.
+//
+//dokimi:perform ends=[Campaign] func=performResign
 type Resign struct {
 	// Token is the token of the Campaign.
 	Token Token

@@ -199,6 +199,8 @@ type Result interface {
 // the caller, and does not pass a result for a Reply.
 //
 // The zero Reply is the reply to no call.
+//
+//dokimi:reply
 type Reply[T Result] struct {
 	// Value is the value that the call returns.
 	Value T

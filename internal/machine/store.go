@@ -13,6 +13,8 @@ import (
 
 // Head is a read of the header of a scope through store.Reader.Head. The runtime passes
 // the result as a [HeadRead].
+//
+//dokimi:perform func=performHead dependency=store.Store result=HeadRead
 type Head struct {
 	// Scope is the scope of the header.
 	Scope shard.Scope
@@ -43,6 +45,8 @@ func (HeadRead) event() {}
 // Read is a read of one page of a scope through store.Reader.Read. The runtime reads the
 // placements of the page and the token of the next page from the cursor of the read, and
 // then closes the cursor. It passes the result as a [PageRead].
+//
+//dokimi:perform func=performRead dependency=store.Store result=PageRead
 type Read struct {
 	// Scope is the scope of the read.
 	Scope shard.Scope
@@ -88,6 +92,8 @@ func (PageRead) event() {}
 // Watch is a watch of the generations of a scope through store.Reader.Watch. The runtime
 // passes each item of the watch as a [Watched], until an error or an [Unwatch] ends the
 // watch.
+//
+//dokimi:perform func=performWatch dependency=store.Store result=Watched
 type Watch struct {
 	// Scope is the scope of the watch.
 	Scope shard.Scope
@@ -128,6 +134,8 @@ func (Watched) event() {}
 // cancels the context of the watch, and does not pass an item that the watch yields after
 // the cancellation. An item that the runtime passed before can still arrive, and the
 // machine ignores it. Unwatch has no result.
+//
+//dokimi:perform ends=[Watch, WatchViews]
 type Unwatch struct {
 	// Token is the token of the Watch or the WatchViews.
 	Token Token
@@ -141,6 +149,8 @@ func (Unwatch) effect() {}
 // Commit is a commit of a mutation to a scope through store.Writer.Commit. The runtime
 // commits through the writer that store.Store.Writer returns for Scope, Incarnation and
 // Term, and passes the result as a [Committed].
+//
+//dokimi:perform func=performCommit dependency=store.Store result=Committed
 type Commit struct {
 	// Mutation is the mutation of the commit. A retry of the commit has the same mutation.
 	Mutation *store.Mutation
@@ -179,6 +189,8 @@ func (Committed) event() {}
 
 // Outcome is a read of the receipt of a commit through store.Store.Outcome. The runtime
 // passes the result as an [OutcomeRead].
+//
+//dokimi:perform func=performOutcome dependency=store.Store result=OutcomeRead
 type Outcome struct {
 	// Scope is the scope of the commit.
 	Scope shard.Scope

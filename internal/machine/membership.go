@@ -14,6 +14,8 @@ import (
 // Join is the registration of a node in a scope through membership.Membership.Join. The
 // runtime passes the result as a [Joined]. It passes a [SessionEnded] once the session that
 // the join started ends.
+//
+//dokimi:perform func=performJoin dependency=membership.Membership result=Joined end=SessionEnded
 type Join struct {
 	// Node is the node to register.
 	Node *shard.Node
@@ -66,6 +68,8 @@ func (SessionEnded) event() {}
 // of the join, so a session whose Leave failed still ends at its deadline. The runtime passes
 // a [SessionEnded] for the session. For a join that stops without a session, it passes a
 // [Joined] with an error and no Left.
+//
+//dokimi:perform ends=[Join] func=performLeave
 type Leave struct {
 	// Token is the token of the Join.
 	Token Token
@@ -92,6 +96,8 @@ func (Left) event() {}
 // WatchViews is a watch of the views of a scope through membership.Membership.Watch. The
 // runtime passes each item of the watch as a [Viewed], until an error or an [Unwatch] ends
 // the watch.
+//
+//dokimi:perform func=performWatchViews dependency=membership.Membership result=Viewed
 type WatchViews struct {
 	// Scope is the scope of the views.
 	Scope shard.Scope

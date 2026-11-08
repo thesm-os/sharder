@@ -13,6 +13,9 @@ import (
 // Handle is a call of the handler of the application. The runtime calls the AddShard of
 // the handler for a request whose Call is protocol.Add, and its DropShard for
 // protocol.Drop. It passes the result as a [Handled].
+//
+// +dokimi:perform func=performHandle dependency=go.thesmos.sh/sharder/internal/driver.Handler \
+// result=Handled timeout=Timeout
 type Handle struct {
 	// Request is the request of a callback, or the request of a cleanup that the agent
 	// builds itself.
@@ -49,6 +52,8 @@ func (Handled) event() {}
 // Acquire is the acquisition of the fence of a shard through fence.Acquirer.Acquire. An
 // agent acquires the fence of a writer before the AddShard of the writer. The runtime
 // passes the result as an [Acquired].
+//
+//dokimi:perform func=performAcquire dependency=fence.Acquirer result=Acquired timeout=Timeout
 type Acquire struct {
 	// Fence is the fencing token of the tenure that the acquisition starts.
 	Fence fence.Token
@@ -81,6 +86,9 @@ func (Acquired) event() {}
 // RevokeShard of a handler that has one, so the handler ends the work of the tenure. A
 // handler without RevokeShard has no call to make. The runtime passes the result as a
 // [Revoked].
+//
+// +dokimi:perform func=performRevoke dependency=go.thesmos.sh/sharder/internal/driver.Revoker \
+// result=Revoked timeout=Timeout
 type Revoke struct {
 	// Fence is the fencing token of the tenure.
 	Fence fence.Token
