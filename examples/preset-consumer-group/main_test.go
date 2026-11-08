@@ -23,6 +23,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
+	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/hlc"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/id"
@@ -574,7 +575,7 @@ func TestCommand(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ctx, cancel := context.WithTimeoutCause(t.Context(), tick, errStop)
 				defer cancel()
-				assert.ErrorIs(t, await(ctx, hlc.New(1), func() bool { return false }), errStop,
+				assert.ErrorIs(t, await(ctx, hlc.New(1, clock.DefaultMaxOffset), func() bool { return false }), errStop,
 					"await must return the cause of its context")
 			})
 		})
@@ -589,7 +590,7 @@ func newEnvironment(t *testing.T, out io.Writer) *environment {
 	assert.NoError(t, builtin.Register(reg), "the built-ins register")
 	return &environment{
 		out:      out,
-		clock:    hlc.New(1),
+		clock:    hlc.New(1, clock.DefaultMaxOffset),
 		rand:     seeded.New(1),
 		registry: reg,
 		logger:   slog.New(slog.DiscardHandler),
@@ -599,7 +600,7 @@ func newEnvironment(t *testing.T, out io.Writer) *environment {
 // newFixture returns a fixture without processes. Its store closes when t ends.
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	st := memory.New(hlc.New(1))
+	st := memory.New(hlc.New(1, clock.DefaultMaxOffset))
 	t.Cleanup(func() { assert.NoError(t, st.Close(), "the store closes") })
 	reg := config.NewRegistry(builtin.Support())
 	assert.NoError(t, builtin.Register(reg), "the built-ins register")
@@ -620,7 +621,7 @@ func (f *fixture) start(t *testing.T, name string) *proc {
 	node := shard.Node{ID: shard.NodeID(name), Address: name + port, Identity: shard.Identity(name)}
 	c := newConsumer(&consumerConfig{
 		storage:  f.storage,
-		clock:    hlc.New(1),
+		clock:    hlc.New(1, clock.DefaultMaxOffset),
 		node:     node.ID,
 		messages: fixtureMessages,
 		tick:     fixtureTick,
@@ -631,7 +632,7 @@ func (f *fixture) start(t *testing.T, name string) *proc {
 		Store:      f.st,
 		Membership: f.st.Membership(),
 		Transport:  f.net.Local(protocol.Metadata{Caller: node.Identity, Version: protocol.Current}),
-		Clock:      hlc.New(1),
+		Clock:      hlc.New(1, clock.DefaultMaxOffset),
 		Rand:       seeded.New(1),
 		Reporter:   noop.New(),
 		Registry:   f.reg,

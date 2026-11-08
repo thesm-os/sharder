@@ -19,6 +19,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
+	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/hlc"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/id"
@@ -608,7 +609,14 @@ func TestCommand(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				err := settle(t.Context(), hlc.New(1), newReader(t, tt.give), routertest.NewRouterStub(t), nodeA, 0)
+				err := settle(
+					t.Context(),
+					hlc.New(1, clock.DefaultMaxOffset),
+					newReader(t, tt.give),
+					routertest.NewRouterStub(t),
+					nodeA,
+					0,
+				)
 				assert.ErrorIs(t, err, tt.want, "settle must return the error of the read")
 			})
 		}
@@ -618,15 +626,18 @@ func TestCommand(t *testing.T) {
 			st := newReader(t, pages{root: scopePage{placements: []shard.Placement{cell}}})
 			r := routertest.NewRouterStub(t)
 			r.OnRefresh.Returns(router.RefreshResult{}, errRead)
-			err := settle(t.Context(), hlc.New(1), st, r, nodeA, 0)
+			err := settle(t.Context(), hlc.New(1, clock.DefaultMaxOffset), st, r, nodeA, 0)
 			assert.ErrorIs(t, err, errRead, "settle must return the error of the refresh")
 		})
 
 		t.Run("returns nil once the router has applied the generation of the cell", func(t *testing.T) {
 			t.Parallel()
 			st := newReader(t, pages{root: scopePage{placements: []shard.Placement{cell}}})
-			assert.NoError(t, settle(t.Context(), hlc.New(1), st, routertest.NewRouterStub(t), nodeA, 0),
-				"settle must return once the cell has settled")
+			assert.NoError(
+				t,
+				settle(t.Context(), hlc.New(1, clock.DefaultMaxOffset), st, routertest.NewRouterStub(t), nodeA, 0),
+				"settle must return once the cell has settled",
+			)
 		})
 
 		t.Run("returns the cause of its context when the context ends before the cell settles", func(t *testing.T) {
@@ -634,8 +645,12 @@ func TestCommand(t *testing.T) {
 			ctx, cancel := context.WithCancelCause(t.Context())
 			cancel(errStop)
 			st := newReader(t, pages{root: scopePage{placements: []shard.Placement{cell}}})
-			assert.ErrorIs(t, settle(ctx, hlc.New(1), st, routertest.NewRouterStub(t), nodeA, 1), errStop,
-				"settle must return the cause of its context")
+			assert.ErrorIs(
+				t,
+				settle(ctx, hlc.New(1, clock.DefaultMaxOffset), st, routertest.NewRouterStub(t), nodeA, 1),
+				errStop,
+				"settle must return the cause of its context",
+			)
 		})
 	})
 
@@ -688,7 +703,7 @@ func newEnvironment(t *testing.T, out io.Writer) *environment {
 	assert.NoError(t, builtin.Register(reg), "the built-ins register")
 	return &environment{
 		out:      out,
-		clock:    hlc.New(1),
+		clock:    hlc.New(1, clock.DefaultMaxOffset),
 		rand:     seeded.New(1),
 		registry: reg,
 		logger:   slog.New(slog.DiscardHandler),

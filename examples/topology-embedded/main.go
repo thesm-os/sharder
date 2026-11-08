@@ -383,7 +383,7 @@ func main() {
 	if err == nil {
 		err = run(ctx, &environment{
 			out:      os.Stdout,
-			clock:    hlc.New(1),
+			clock:    hlc.New(1, clock.DefaultMaxOffset),
 			rand:     crypto.New(),
 			registry: reg,
 			logger:   slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),

@@ -17,6 +17,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
+	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/hlc"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/page"
@@ -293,8 +294,12 @@ func TestCommand(t *testing.T) {
 
 		t.Run("returns the error of observe", func(t *testing.T) {
 			t.Parallel()
-			_, err := await(t.Context(), hlc.New(1), newReader(t, pages{root: scopePage{err: errRead}}),
-				func(view) bool { return true })
+			_, err := await(
+				t.Context(),
+				hlc.New(1, clock.DefaultMaxOffset),
+				newReader(t, pages{root: scopePage{err: errRead}}),
+				func(view) bool { return true },
+			)
 			assert.ErrorIs(t, err, errRead, "await must return the error of the read")
 		})
 
@@ -306,7 +311,7 @@ func TestCommand(t *testing.T) {
 				st := newReader(t, pages{
 					root: scopePage{state: store.State{Spec: []byte(validSpec)}, placements: []shard.Placement{cell}},
 				})
-				_, err := await(ctx, hlc.New(1), st, func(view) bool { return false })
+				_, err := await(ctx, hlc.New(1, clock.DefaultMaxOffset), st, func(view) bool { return false })
 				assert.ErrorIs(t, err, errStop, "await must return the cause of its context")
 			})
 		})
@@ -409,7 +414,7 @@ func newEnvironment(t *testing.T, out io.Writer) *environment {
 	assert.NoError(t, builtin.Register(reg), "the built-ins register")
 	return &environment{
 		out:      out,
-		clock:    hlc.New(1),
+		clock:    hlc.New(1, clock.DefaultMaxOffset),
 		rand:     seeded.New(1),
 		registry: reg,
 		logger:   slog.New(slog.DiscardHandler),

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
+	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/hlc"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/page"
@@ -240,7 +241,7 @@ type system struct {
 // the store and the membership record no call.
 func newSystem(t *testing.T) *system {
 	t.Helper()
-	st := memory.New(hlc.New(1))
+	st := memory.New(hlc.New(1, clock.DefaultMaxOffset))
 	t.Cleanup(func() { assert.NoError(t, st.Close(), "the store closes") })
 	reg := config.NewRegistry(builtin.Support())
 	assert.NoError(t, builtin.Register(reg), "the built-ins register")
@@ -307,7 +308,7 @@ func (s *system) config(tb assert.TB, n shard.Node) (cfg *embedded.Config, apps 
 		Store:      s.store,
 		Membership: s.members,
 		Transport:  s.net.Local(protocol.Metadata{Caller: n.Identity, Version: protocol.Current}),
-		Clock:      hlc.New(1),
+		Clock:      hlc.New(1, clock.DefaultMaxOffset),
 		Rand:       seeded.New(1),
 		Reporter:   noop.New(),
 		Registry:   s.reg,
