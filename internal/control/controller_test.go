@@ -413,7 +413,9 @@ type model struct {
 	replies map[machine.ReplyToken]int
 	// sequences maps each node to the Sequence of the last report of its live incarnation.
 	sequences map[shard.NodeID]uint64
-	// drained contains each node that a step drained by a proposal.
+	// drained reports for each node whether its manual drain is in effect. A proposal of a
+	// step changes it only while the view lists the node, because the controller refuses the
+	// proposal of a node that the view does not list.
 	drained map[shard.NodeID]bool
 	// nodes lists the nodes of the property at their live incarnations.
 	nodes []shard.Node
@@ -637,11 +639,15 @@ func (m *model) submit(c *prop.Case, k proposal.OperationKind, b epoch.Epoch, ar
 	m.h.run(c)
 }
 
-// drain drains or undrains a node that c chooses by a proposal.
+// drain drains or undrains a node that c chooses by a proposal. The proposal changes the
+// drain of the node only while the view lists the node.
 func (m *model) drain(c *prop.Case) {
-	n := m.nodes[c.Draw(prop.Integer(0, len(m.nodes)-1), "node")]
+	i := c.Draw(prop.Integer(0, len(m.nodes)-1), "node")
+	n := m.nodes[i]
 	k := c.Draw(prop.SampledFrom(proposal.Drain, proposal.Undrain), "kind")
-	m.drained[n.ID] = k == proposal.Drain
+	if m.present[i] {
+		m.drained[n.ID] = k == proposal.Drain
+	}
 	m.submit(c, k, n.Incarnation, proposal.NodeArgs{Node: n.ID})
 }
 
