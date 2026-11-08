@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/sharder/placement"
 	"go.thesmos.sh/sharder/shard"
 )
@@ -44,6 +46,18 @@ type constraintName struct {
 // the registered name of the constraint.
 func (c constraintName) ConstraintHasAName() conform.ID[placement.Constraint] {
 	return c.Check("constraint-has-a-name")
+}
+
+// Smoke returns the identity of the check that Name returns without a
+// panic for derived inputs.
+func (c constraintName) Smoke() conform.ID[placement.Constraint] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Name returns the
+// same value for the same inputs.
+func (c constraintName) Deterministic() conform.ID[placement.Constraint] {
+	return c.Check("deterministic")
 }
 
 // constraintCheck is the name of Constraint.Check, with the identities of
@@ -81,7 +95,38 @@ func (c constraintCheck) AllocationBudget() conform.ID[placement.Constraint] {
 func ConstraintSuite() conform.Suite[placement.Constraint] {
 	return conform.Suite[placement.Constraint]{
 		Declaration: "Constraint",
+		Package:     "go.thesmos.sh/sharder/placement",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[placement.Constraint]{
+			{
+				ID:          ConstraintChecks.Name.Smoke(),
+				Statement:   "Name returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *ConstraintHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Name()
+						return nil
+					})
+				},
+				Defect: constraintNamePanics,
+			},
+			{
+				ID:          ConstraintChecks.Name.Deterministic(),
+				Statement:   "Name returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[placement.Constraint]{ConstraintChecks.Name.Smoke()},
+				Apply: func(h *ConstraintHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (shard.StrategyName, error) {
+						r0 := h.Subject().Name()
+						return r0, nil
+					})
+				},
+				Defect: constraintNameDrifts,
+			},
 			{
 				ID:        ConstraintChecks.Name.ConstraintHasAName(),
 				Statement: "Name returns the registered name of the constraint",
@@ -105,6 +150,14 @@ func ConstraintSuite() conform.Suite[placement.Constraint] {
 				Statement: "concurrent calls of Check return the errors of sequential calls",
 				Property:  ConcurrentChecksMatchSequentialChecks,
 				Defect:    driftsChecks,
+			},
+		},
+		Unclaimed: []conform.Unclaimed{
+			{
+				Classification: "shape:composite-writer",
+				Callable:       "Constraint.Check",
+				Stance:         spec.Silent,
+				Note:           "A write is an input of the other checks, and its result is an error alone.",
 			},
 		},
 		Calls: []conform.Call[placement.Constraint]{
@@ -258,6 +311,45 @@ func newConstraintOver(_ *ConstraintHandle, spend func()) placement.Constraint {
 	return constraintOver{spend: spend}
 }
 
+// constraintNamePanicsDefect is the planted defect of a Constraint whose
+// Name panics.
+type constraintNamePanicsDefect struct {
+	constraintOverEmbedded
+}
+
+// Name is the override of the planted defect.
+func (*constraintNamePanicsDefect) Name() (r0 shard.StrategyName) {
+	panic("the planted defect of a Constraint whose Name panics")
+}
+
+// constraintNamePanics returns the planted defect of a Constraint whose
+// Name panics over a fresh subject.
+func constraintNamePanics(h *ConstraintHandle) placement.Constraint {
+	return &constraintNamePanicsDefect{constraintOverEmbedded: h.Fresh()}
+}
+
+// constraintNameDriftsDefect is the planted defect of a Constraint whose
+// Name returns another value on the repeat.
+type constraintNameDriftsDefect struct {
+	constraintOverEmbedded
+	calls int
+}
+
+// Name is the override of the planted defect.
+func (d *constraintNameDriftsDefect) Name() (r0 shard.StrategyName) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = shard.StrategyName("sample-b")
+	}
+	return r0
+}
+
+// constraintNameDrifts returns the planted defect of a Constraint whose
+// Name returns another value on the repeat over a fresh subject.
+func constraintNameDrifts(h *ConstraintHandle) placement.Constraint {
+	return &constraintNameDriftsDefect{constraintOverEmbedded: h.Fresh()}
+}
+
 // The suite refers to the compatibility witness of its runtime.
 var _ = conform.CompatV1
 
@@ -289,6 +381,18 @@ type goalName struct {
 // registered name of the goal.
 func (c goalName) GoalHasAName() conform.ID[placement.Goal] {
 	return c.Check("goal-has-a-name")
+}
+
+// Smoke returns the identity of the check that Name returns without a
+// panic for derived inputs.
+func (c goalName) Smoke() conform.ID[placement.Goal] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Name returns the
+// same value for the same inputs.
+func (c goalName) Deterministic() conform.ID[placement.Goal] {
+	return c.Check("deterministic")
 }
 
 // goalCost is the name of Goal.Cost, with the identities of its checks.
@@ -355,7 +459,38 @@ func (c goalDelta) AllocationBudget() conform.ID[placement.Goal] {
 func GoalSuite() conform.Suite[placement.Goal] {
 	return conform.Suite[placement.Goal]{
 		Declaration: "Goal",
+		Package:     "go.thesmos.sh/sharder/placement",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[placement.Goal]{
+			{
+				ID:          GoalChecks.Name.Smoke(),
+				Statement:   "Name returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *GoalHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Name()
+						return nil
+					})
+				},
+				Defect: goalNamePanics,
+			},
+			{
+				ID:          GoalChecks.Name.Deterministic(),
+				Statement:   "Name returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[placement.Goal]{GoalChecks.Name.Smoke()},
+				Apply: func(h *GoalHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (shard.StrategyName, error) {
+						r0 := h.Subject().Name()
+						return r0, nil
+					})
+				},
+				Defect: goalNameDrifts,
+			},
 			{
 				ID:        GoalChecks.Name.GoalHasAName(),
 				Statement: "Name returns the registered name of the goal",
@@ -403,6 +538,22 @@ func GoalSuite() conform.Suite[placement.Goal] {
 				Statement: "Delta returns 0 for a move whose From equals its To",
 				Property:  DeltaOfAKeepIsZero,
 				Defect:    chargesKeeps,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Goal.Cost",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter st of Cost",
+				Remedy:   "author a sample of the parameter st with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Goal.Delta",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter st of Delta",
+				Remedy:   "author a sample of the parameter st with the directive sample",
 			},
 		},
 		Calls: []conform.Call[placement.Goal]{
@@ -568,4 +719,42 @@ func newGoalOver(_ *GoalHandle, spend func()) placement.Goal {
 	return goalOver{spend: spend}
 }
 
-// dokimi:provenance sha256:adbac737a43e180039035c3506a7e8719df53b3794021d93f04355bc075a83a0
+// goalNamePanicsDefect is the planted defect of a Goal whose Name panics.
+type goalNamePanicsDefect struct {
+	goalOverEmbedded
+}
+
+// Name is the override of the planted defect.
+func (*goalNamePanicsDefect) Name() (r0 shard.StrategyName) {
+	panic("the planted defect of a Goal whose Name panics")
+}
+
+// goalNamePanics returns the planted defect of a Goal whose Name panics
+// over a fresh subject.
+func goalNamePanics(h *GoalHandle) placement.Goal {
+	return &goalNamePanicsDefect{goalOverEmbedded: h.Fresh()}
+}
+
+// goalNameDriftsDefect is the planted defect of a Goal whose Name returns
+// another value on the repeat.
+type goalNameDriftsDefect struct {
+	goalOverEmbedded
+	calls int
+}
+
+// Name is the override of the planted defect.
+func (d *goalNameDriftsDefect) Name() (r0 shard.StrategyName) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = shard.StrategyName("sample-b")
+	}
+	return r0
+}
+
+// goalNameDrifts returns the planted defect of a Goal whose Name returns
+// another value on the repeat over a fresh subject.
+func goalNameDrifts(h *GoalHandle) placement.Goal {
+	return &goalNameDriftsDefect{goalOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:cf21160733ec252dd7bc7d11c5c6214459588df616ec1a99ad27ca195f6fa592

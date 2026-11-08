@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/sharder/shard"
 )
 
@@ -43,6 +45,18 @@ type cellMapLocate struct {
 	conform.Callable[CellMapMethods]
 }
 
+// Smoke returns the identity of the check that Locate returns without a
+// panic for derived inputs.
+func (c cellMapLocate) Smoke() conform.ID[CellMapMethods] {
+	return c.Check("smoke")
+}
+
+// ZeroOnMiss returns the identity of the check that Locate returns the
+// zero value beside a false presence flag.
+func (c cellMapLocate) ZeroOnMiss() conform.ID[CellMapMethods] {
+	return c.Check("zero-on-miss")
+}
+
 // AllocationBudget returns the identity of the check
 // CellMap.Locate/allocation-budget.
 func (c cellMapLocate) AllocationBudget() conform.ID[CellMapMethods] {
@@ -54,6 +68,63 @@ func (c cellMapLocate) AllocationBudget() conform.ID[CellMapMethods] {
 func CellMapSuite() conform.Suite[CellMapMethods] {
 	return conform.Suite[CellMapMethods]{
 		Declaration: "CellMap",
+		Package:     "go.thesmos.sh/sharder/shard",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
+		Checks: []conform.Check[CellMapMethods]{
+			{
+				ID:          CellMapChecks.Locate.Smoke(),
+				Statement:   "Locate returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *CellMapHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Locate([]byte{1})
+						return nil
+					})
+				},
+				Defect: cellMapLocatePanics,
+			},
+			{
+				ID:          CellMapChecks.Locate.Smoke().Generated(),
+				Statement:   "Locate returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *CellMapHandle, c *prop.Case) {
+					drawnPos := c.Draw(prop.Of[[]byte](), "pos")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Locate(drawnPos)
+						return nil
+					})
+				},
+				Defect: cellMapLocatePanics,
+			},
+			{
+				ID:          CellMapChecks.Locate.ZeroOnMiss(),
+				Statement:   "Locate returns the zero value beside a false presence flag",
+				Claim:       spec.ZeroOnMiss,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *CellMapHandle) {
+					probe.ZeroBesideFalse(h, func(ctx context.Context) (shard.Cell, bool) {
+						return h.Subject().Locate([]byte{1})
+					}, shard.Cell{})
+				},
+				Defect: cellMapLocateValueBesideAFalseFlag,
+			},
+			{
+				ID:          CellMapChecks.Locate.ZeroOnMiss().Generated(),
+				Statement:   "Locate returns the zero value beside a false presence flag",
+				Claim:       spec.ZeroOnMiss,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *CellMapHandle, c *prop.Case) {
+					drawnPos := c.Draw(prop.Of[[]byte](), "pos")
+					probe.ZeroBesideFalse(h, func(ctx context.Context) (shard.Cell, bool) {
+						return h.Subject().Locate(drawnPos)
+					}, shard.Cell{})
+				},
+				Defect: cellMapLocateValueBesideAFalseFlag,
+			},
+		},
 		Calls: []conform.Call[CellMapMethods]{
 			{
 				Calls:    cellMapLocateCalls,
@@ -158,4 +229,43 @@ func newCellMapOver(_ *CellMapHandle, spend func()) CellMapMethods {
 	return cellMapOver{spend: spend}
 }
 
-// dokimi:provenance sha256:d9effb684a64c87bd2813945307e45eeb8962857eb9c5ab77c84873893da6ade
+// cellMapLocatePanicsDefect is the planted defect of a CellMap whose
+// Locate panics.
+type cellMapLocatePanicsDefect struct {
+	cellMapOverEmbedded
+}
+
+// Locate is the override of the planted defect.
+func (*cellMapLocatePanicsDefect) Locate(p0 []byte) (r0 shard.Cell, r1 bool) {
+	panic("the planted defect of a CellMap whose Locate panics")
+}
+
+// cellMapLocatePanics returns the planted defect of a CellMap whose Locate
+// panics over a fresh subject.
+func cellMapLocatePanics(h *CellMapHandle) CellMapMethods {
+	return &cellMapLocatePanicsDefect{cellMapOverEmbedded: h.Fresh()}
+}
+
+// cellMapLocateValueBesideAFalseFlagDefect is the planted defect of a
+// CellMap whose Locate returns a value beside a false presence flag.
+type cellMapLocateValueBesideAFalseFlagDefect struct {
+	cellMapOverEmbedded
+}
+
+// Locate is the override of the planted defect.
+func (d *cellMapLocateValueBesideAFalseFlagDefect) Locate(p0 []byte) (r0 shard.Cell, r1 bool) {
+	r0, r1 = d.cellMapOverEmbedded.Locate(p0)
+	if !r1 {
+		r0 = shard.Cell{ID: shard.CellID("ID-b")}
+	}
+	return r0, r1
+}
+
+// cellMapLocateValueBesideAFalseFlag returns the planted defect of a
+// CellMap whose Locate returns a value beside a false presence flag over a
+// fresh subject.
+func cellMapLocateValueBesideAFalseFlag(h *CellMapHandle) CellMapMethods {
+	return &cellMapLocateValueBesideAFalseFlagDefect{cellMapOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:d4deb7d8b55a8a199ebc16e7f628adfeb0084553a5d92e2b265a0d3487927193

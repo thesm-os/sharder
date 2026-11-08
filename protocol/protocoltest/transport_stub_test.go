@@ -39,26 +39,34 @@ func connectorStubConnect(
 	return s.Connect(a0, a1)
 }
 
-// connectorStubConnectSubject returns the subject of [stub.Behaviour] for
-// Connect. The subject calls a new double that reports to tb.
+// connectorStubConnectSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Connect. The subject calls a new double that
+// reports to tb.
 func connectorStubConnectSubject(
 	tb assert.TB,
 ) stub.Subject[protocoltest.ConnectorConnectCall, protocoltest.ConnectorConnectReturn] {
 	tb.Helper()
 	s := protocoltest.NewConnectorStub(tb)
 	return stub.Subject[protocoltest.ConnectorConnectCall, protocoltest.ConnectorConnectReturn]{
-		Stub: s.OnConnect.MethodStub,
+		Stub:  s.OnConnect.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = connectorStubConnect(tb, s)
+		},
+		Arguments: func(tb assert.TB, c protocoltest.ConnectorConnectCall) {
+			tb.Helper()
+			a0, a1 := connectorStubConnectArgs(tb)
+			expect.Equal(tb, c.Md, a0, "the call records Md")
+			expect.Equal(tb, c.E, a1, "the call records E")
 		},
 		Result: func() protocoltest.ConnectorConnectReturn {
 			got0, got1 := connectorStubConnect(tb, s)
 			return protocoltest.ConnectorConnectReturn{Result0: got0, Result1: got1}
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(protocoltest.ConnectorConnectCall)) {
 			s.OnConnect.Func(
-				func(_ protocol.Metadata, _ *protocoltest.Endpoints) (protocol.AgentClient, protocol.ControllerClient) {
-					mark()
+				func(p0 protocol.Metadata, p1 *protocoltest.Endpoints) (protocol.AgentClient, protocol.ControllerClient) {
+					seen(protocoltest.ConnectorConnectCall{Md: p0, E: p1})
 					var z0 protocol.AgentClient
 					var z1 protocol.ControllerClient
 					return z0, z1
@@ -81,7 +89,6 @@ func connectorStubInstanceOf(tb assert.TB, s *protocoltest.ConnectorStub) connec
 		Call: func() {
 			_, _ = connectorStubConnect(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -93,47 +100,14 @@ func TestConnectorStub(t *testing.T) {
 	t.Run("Connect", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Connect", connectorStubConnectSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewConnectorStub(t)
-			_, _ = connectorStubConnect(t, s)
-			got := s.OnConnect.AssertCalledOnce(t, "Connect records the call")
-			a0, a1 := connectorStubConnectArgs(t)
-			expect.Equal(t, got.Md, a0, "the call records Md")
-			expect.Equal(t, got.E, a1, "the call records E")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewConnectorStub(t)
-			var seen []protocoltest.ConnectorConnectCall
-			s.OnConnect.OnRecord(func(c protocoltest.ConnectorConnectCall) { seen = append(seen, c) })
-			_, _ = connectorStubConnect(t, s)
-			_, _ = connectorStubConnect(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Connect")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) connectorStubInstance {
-			return connectorStubInstanceOf(tb, protocoltest.NewConnectorStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Connect", func(t *testing.T) {
+		t.Run("Connect", func(t *testing.T) {
 			t.Parallel()
-			s := protocoltest.NewConnectorStub(t)
-			_, _ = connectorStubConnect(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnConnect.CallCount(), 0, "ResetCalls clears the calls of Connect")
-		})
-	})
-
-	t.Run("NewConnectorStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) connectorStubInstance {
-			return connectorStubInstanceOf(tb, protocoltest.NewConnectorStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "Connect", connectorStubConnectSubject)
 		})
 	})
 
@@ -220,49 +194,4 @@ func TestConnectorStub(t *testing.T) {
 	})
 }
 
-// TestConnectorConnectStub checks the methods of ConnectorConnectStub,
-// which configures Connect.
-func TestConnectorConnectStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Connect for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := protocoltest.NewConnectorStub(r)
-			s.OnConnect.Strict()
-			var want0 protocol.AgentClient
-			var want1 protocol.ControllerClient
-			s.OnConnect.Returns(want0, want1)
-			_, _ = connectorStubConnect(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Connect")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Connect to the function", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewConnectorStub(t)
-			var got0 protocol.Metadata
-			var got1 *protocoltest.Endpoints
-			s.OnConnect.Func(
-				func(p0 protocol.Metadata, p1 *protocoltest.Endpoints) (protocol.AgentClient, protocol.ControllerClient) {
-					got0, got1 = p0, p1
-					var z0 protocol.AgentClient
-					var z1 protocol.ControllerClient
-					return z0, z1
-				},
-			)
-			_, _ = connectorStubConnect(t, s)
-			a0, a1 := connectorStubConnectArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Md")
-			expect.Equal(t, got1, a1, "the function receives E")
-		})
-	})
-}
-
-// dokimi:provenance sha256:477a827fbdc90e4a3fa5c80edfd34800a23bda43d8339dbd2a7b6051dc85ccc6
+// dokimi:provenance sha256:1fb86f6f74cb6c3b8d4374bdae4cf88fb5a6ae70db30b0bc1b5a574b59996cc5

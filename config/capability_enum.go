@@ -105,4 +105,9 @@ func (v *Capability) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// dokimi:provenance sha256:a689fe762c4679e974f5fa5dcd2e9dab97eae27f4aee3ce95d48a1b3ee6d5365
+// StrictKanon marks Capability as a kanon.Strict type. UnmarshalText
+// accepts only the texts that MarshalText writes. A canonical decode of
+// kanon therefore does not encode a decoded Capability again.
+func (Capability) StrictKanon() {}
+
+// dokimi:provenance sha256:e1b140e1cbff87aff96236b611757efe602fa077882c32fa98aceeab87145772

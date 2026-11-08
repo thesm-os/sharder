@@ -49,22 +49,7 @@ func TestConstraintSuite(t *testing.T) {
 				},
 				Defect: func(*placementtest.ConstraintHandle) placement.Constraint { return &constraintSubject{} },
 			}),
-			conform.Excuse(
-				placementtest.ConstraintChecks.Name.ConstraintHasAName(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.ConstraintChecks.Check.CheckIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.ConstraintChecks.Check.CheckIsPure(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.ConstraintChecks.Check.ConcurrentChecksMatchSequentialChecks(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[placement.Constraint]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -86,22 +71,7 @@ func TestConstraintSuite(t *testing.T) {
 				},
 				Defect: func(*placementtest.ConstraintHandle) placement.Constraint { return &constraintSubject{} },
 			}),
-			conform.Excuse(
-				placementtest.ConstraintChecks.Name.ConstraintHasAName(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.ConstraintChecks.Check.CheckIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.ConstraintChecks.Check.CheckIsPure(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.ConstraintChecks.Check.ConcurrentChecksMatchSequentialChecks(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[placement.Constraint]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -148,10 +118,15 @@ func TestConstraintSuiteAllocs(t *testing.T) {
 	})
 }
 
+// constraintSuite is the suite of Constraint that the tests of the planted
+// defect of a ceiling apply.
+var constraintSuite = placementtest.ConstraintSuite()
+
 // constraintIdle returns the planted defect of a ceiling of Constraint
-// with a spend of nothing, a subject that answers each call at once.
+// with a spend of nothing. Each call of the defect returns its zero
+// results at once.
 func constraintIdle(h *placementtest.ConstraintHandle) placement.Constraint {
-	return placementtest.ConstraintSuite().Calls[0].Over(h, func() {})
+	return constraintSuite.Calls[0].Over(h, func() {})
 }
 
 // TestConstraintSuiteBudgets applies the allocation ceilings of the suite
@@ -163,21 +138,8 @@ func TestConstraintSuiteBudgets(t *testing.T) {
 		t,
 		constraintIdle,
 		conform.Ceilings(placementtest.ConstraintChecks.Name.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			placementtest.ConstraintChecks.Name.ConstraintHasAName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.ConstraintChecks.Check.CheckIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.ConstraintChecks.Check.CheckIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.ConstraintChecks.Check.ConcurrentChecksMatchSequentialChecks(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placement.Constraint](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -189,21 +151,8 @@ func FuzzConstraintSuiteName(f *testing.F) {
 		f,
 		placementtest.ConstraintChecks.Name.Callable,
 		constraintIdle,
-		conform.Excuse(
-			placementtest.ConstraintChecks.Name.ConstraintHasAName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.ConstraintChecks.Check.CheckIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.ConstraintChecks.Check.CheckIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.ConstraintChecks.Check.ConcurrentChecksMatchSequentialChecks(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placement.Constraint](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -215,21 +164,8 @@ func FuzzConstraintSuiteCheck(f *testing.F) {
 		f,
 		placementtest.ConstraintChecks.Check.Callable,
 		constraintIdle,
-		conform.Excuse(
-			placementtest.ConstraintChecks.Name.ConstraintHasAName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.ConstraintChecks.Check.CheckIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.ConstraintChecks.Check.CheckIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.ConstraintChecks.Check.ConcurrentChecksMatchSequentialChecks(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placement.Constraint](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -280,38 +216,7 @@ func TestGoalSuite(t *testing.T) {
 				},
 				Defect: func(*placementtest.GoalHandle) placement.Goal { return &goalSubject{} },
 			}),
-			conform.Excuse(
-				placementtest.GoalChecks.Name.GoalHasAName(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Cost.CostIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Cost.CostIsFinite(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Cost.CostIsPure(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Delta.ConcurrentDeltasMatchSequentialDeltas(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Delta.DeltaIsPure(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Delta.DeltaMatchesCost(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Delta.DeltaOfAKeepIsZero(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[placement.Goal]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -333,38 +238,7 @@ func TestGoalSuite(t *testing.T) {
 				},
 				Defect: func(*placementtest.GoalHandle) placement.Goal { return &goalSubject{} },
 			}),
-			conform.Excuse(
-				placementtest.GoalChecks.Name.GoalHasAName(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Cost.CostIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Cost.CostIsFinite(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Cost.CostIsPure(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Delta.ConcurrentDeltasMatchSequentialDeltas(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Delta.DeltaIsPure(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Delta.DeltaMatchesCost(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.GoalChecks.Delta.DeltaOfAKeepIsZero(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[placement.Goal]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -435,10 +309,14 @@ func TestGoalSuiteAllocs(t *testing.T) {
 	})
 }
 
+// goalSuite is the suite of Goal that the tests of the planted defect of a
+// ceiling apply.
+var goalSuite = placementtest.GoalSuite()
+
 // goalIdle returns the planted defect of a ceiling of Goal with a spend of
-// nothing, a subject that answers each call at once.
+// nothing. Each call of the defect returns its zero results at once.
 func goalIdle(h *placementtest.GoalHandle) placement.Goal {
-	return placementtest.GoalSuite().Calls[0].Over(h, func() {})
+	return goalSuite.Calls[0].Over(h, func() {})
 }
 
 // TestGoalSuiteBudgets applies the allocation ceilings of the suite of
@@ -451,38 +329,7 @@ func TestGoalSuiteBudgets(t *testing.T) {
 		goalIdle,
 		conform.Ceilings(placementtest.GoalChecks.Name.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(placementtest.GoalChecks.Cost.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			placementtest.GoalChecks.Name.GoalHasAName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Cost.CostIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Cost.CostIsFinite(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Cost.CostIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.ConcurrentDeltasMatchSequentialDeltas(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.DeltaIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.DeltaMatchesCost(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.DeltaOfAKeepIsZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[placement.Goal]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -493,38 +340,7 @@ func FuzzGoalSuiteName(f *testing.F) {
 		f,
 		placementtest.GoalChecks.Name.Callable,
 		goalIdle,
-		conform.Excuse(
-			placementtest.GoalChecks.Name.GoalHasAName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Cost.CostIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Cost.CostIsFinite(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Cost.CostIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.ConcurrentDeltasMatchSequentialDeltas(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.DeltaIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.DeltaMatchesCost(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.DeltaOfAKeepIsZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[placement.Goal]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -535,38 +351,7 @@ func FuzzGoalSuiteCost(f *testing.F) {
 		f,
 		placementtest.GoalChecks.Cost.Callable,
 		goalIdle,
-		conform.Excuse(
-			placementtest.GoalChecks.Name.GoalHasAName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Cost.CostIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Cost.CostIsFinite(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Cost.CostIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.ConcurrentDeltasMatchSequentialDeltas(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.DeltaIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.DeltaMatchesCost(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.DeltaOfAKeepIsZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[placement.Goal]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -577,38 +362,7 @@ func FuzzGoalSuiteDelta(f *testing.F) {
 		f,
 		placementtest.GoalChecks.Delta.Callable,
 		goalIdle,
-		conform.Excuse(
-			placementtest.GoalChecks.Name.GoalHasAName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Cost.CostIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Cost.CostIsFinite(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Cost.CostIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.ConcurrentDeltasMatchSequentialDeltas(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.DeltaIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.DeltaMatchesCost(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.GoalChecks.Delta.DeltaOfAKeepIsZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[placement.Goal]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -626,4 +380,4 @@ func BenchmarkGoalSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:8b0aaf52fdde1c64e6b9ffa21eed76a483f7c73195e6d4d2954f7be3f91e5882
+// dokimi:provenance sha256:e5451d529472d916e4b13c39c48b68e9872c113ee884e4c883155badf7bd4b7a

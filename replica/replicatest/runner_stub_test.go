@@ -44,23 +44,36 @@ func openerStubOpenPins() (replica.OpenResult, error) {
 	return want0, want1
 }
 
-// openerStubOpenSubject returns the subject of [stub.Behaviour] for Open.
-// The subject calls a new double that reports to tb.
+// openerStubOpenSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Open. The subject calls a new double that
+// reports to tb.
 func openerStubOpenSubject(tb assert.TB) stub.Subject[replicatest.OpenerOpenCall, replicatest.OpenerOpenReturn] {
 	tb.Helper()
 	s := replicatest.NewOpenerStub(tb)
 	return stub.Subject[replicatest.OpenerOpenCall, replicatest.OpenerOpenReturn]{
-		Stub: s.OnOpen.MethodStub,
+		Stub:  s.OnOpen.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = openerStubOpen(tb, s)
+		},
+		Arguments: func(tb assert.TB, c replicatest.OpenerOpenCall) {
+			tb.Helper()
+			a0, a1 := openerStubOpenArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Req, a1, "the call records Req")
 		},
 		Result: func() replicatest.OpenerOpenReturn {
 			got0, got1 := openerStubOpen(tb, s)
 			return replicatest.OpenerOpenReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnOpen.Func(func(_ context.Context, _ *replica.OpenRequest) (replica.OpenResult, error) {
-				mark()
+		Returns: func() replicatest.OpenerOpenReturn {
+			want0, want1 := openerStubOpenPins()
+			s.OnOpen.Returns(want0, want1)
+			return replicatest.OpenerOpenReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(replicatest.OpenerOpenCall)) {
+			s.OnOpen.Func(func(p0 context.Context, p1 *replica.OpenRequest) (replica.OpenResult, error) {
+				seen(replicatest.OpenerOpenCall{Ctx: p0, Req: p1})
 				var z0 replica.OpenResult
 				var z1 error
 				return z0, z1
@@ -86,7 +99,6 @@ func openerStubInstanceOf(tb assert.TB, s *replicatest.OpenerStub) openerStubIns
 		Call: func() {
 			_, _ = openerStubOpen(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -98,69 +110,14 @@ func TestOpenerStub(t *testing.T) {
 	t.Run("Open", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Open", openerStubOpenSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewOpenerStub(t)
-			_, _ = openerStubOpen(t, s)
-			got := s.OnOpen.AssertCalledOnce(t, "Open records the call")
-			a0, a1 := openerStubOpenArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Req, a1, "the call records Req")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewOpenerStub(t)
-			var seen []replicatest.OpenerOpenCall
-			s.OnOpen.OnRecord(func(c replicatest.OpenerOpenCall) { seen = append(seen, c) })
-			_, _ = openerStubOpen(t, s)
-			_, _ = openerStubOpen(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Open")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) openerStubInstance {
-			return openerStubInstanceOf(tb, replicatest.NewOpenerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Open", func(t *testing.T) {
+		t.Run("Open", func(t *testing.T) {
 			t.Parallel()
-			s := replicatest.NewOpenerStub(t)
-			_, _ = openerStubOpen(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnOpen.CallCount(), 0, "ResetCalls clears the calls of Open")
-		})
-
-		t.Run("keeps the results of Returns of Open", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewOpenerStub(t)
-			want0, want1 := openerStubOpenPins()
-			s.OnOpen.Returns(want0, want1)
-			s.ResetCalls()
-			_, got1 := openerStubOpen(t, s)
-			assert.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Open")
-		})
-	})
-
-	t.Run("NewOpenerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) openerStubInstance {
-			return openerStubInstanceOf(tb, replicatest.NewOpenerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewOpenerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Open with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Open-failing")
-			s := replicatest.NewOpenerStubFailing(t, want)
-			_, r1 := openerStubOpen(t, s)
-			assert.ErrorIs(t, r1, want, "Open fails with the error of NewOpenerStubFailing")
+			stub.ResetBehaviour(t, "Open", openerStubOpenSubject)
 		})
 	})
 
@@ -261,56 +218,4 @@ func TestOpenerStub(t *testing.T) {
 	})
 }
 
-// TestOpenerOpenStub checks the methods of OpenerOpenStub, which
-// configures Open.
-func TestOpenerOpenStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Open", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewOpenerStub(t)
-			want0, want1 := openerStubOpenPins()
-			s.OnOpen.Returns(want0, want1)
-			_, got1 := openerStubOpen(t, s)
-			assert.ErrorIs(t, got1, want1, "Open returns the error that Returns sets")
-		})
-
-		t.Run("configures Open for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := replicatest.NewOpenerStub(r)
-			s.OnOpen.Strict()
-			var want0 replica.OpenResult
-			var want1 error
-			s.OnOpen.Returns(want0, want1)
-			_, _ = openerStubOpen(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Open")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Open to the function", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewOpenerStub(t)
-			var got0 context.Context
-			var got1 *replica.OpenRequest
-			s.OnOpen.Func(func(p0 context.Context, p1 *replica.OpenRequest) (replica.OpenResult, error) {
-				got0, got1 = p0, p1
-				var z0 replica.OpenResult
-				var z1 error
-				return z0, z1
-			})
-			_, _ = openerStubOpen(t, s)
-			a0, a1 := openerStubOpenArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Req")
-		})
-	})
-}
-
-// dokimi:provenance sha256:da56ed6705b2ea94b0dcda83abb5c7b951c831dbc2bee746cb80a10ac1bbacbf
+// dokimi:provenance sha256:726656cd9f670bbbd8ec1f1855159c5a11cc16b6fd073763bbbcaca58c47bfc7

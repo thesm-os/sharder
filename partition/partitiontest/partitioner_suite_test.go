@@ -49,46 +49,7 @@ func TestPartitionerSuite(t *testing.T) {
 				},
 				Defect: func(*partitiontest.PartitionerHandle) partition.Partitioner { return &partitionerSubject{} },
 			}),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Position.PositionAppendsIntoTheRoomOfDst(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Position.PositionAppendsToDst(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Position.PositionIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Mapping.ConfigIsJSON(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Mapping.MappingContainsTheName(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Mapping.MappingIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Mapping.MappingVersionsItsHash(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Initial.InitialIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Initial.InitialPartitionsRangesBetweenBounds(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Initial.InitialPartitionsThePositionSpace(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[partition.Partitioner]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -110,46 +71,7 @@ func TestPartitionerSuite(t *testing.T) {
 				},
 				Defect: func(*partitiontest.PartitionerHandle) partition.Partitioner { return &partitionerSubject{} },
 			}),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Position.PositionAppendsIntoTheRoomOfDst(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Position.PositionAppendsToDst(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Position.PositionIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Mapping.ConfigIsJSON(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Mapping.MappingContainsTheName(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Mapping.MappingIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Mapping.MappingVersionsItsHash(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Initial.InitialIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Initial.InitialPartitionsRangesBetweenBounds(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.PartitionerChecks.Initial.InitialPartitionsThePositionSpace(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[partition.Partitioner]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -218,10 +140,15 @@ func TestPartitionerSuite(t *testing.T) {
 	})
 }
 
+// partitionerSuite is the suite of Partitioner that the tests of the
+// planted defect of a ceiling apply.
+var partitionerSuite = partitiontest.PartitionerSuite()
+
 // partitionerIdle returns the planted defect of a ceiling of Partitioner
-// with a spend of nothing, a subject that answers each call at once.
+// with a spend of nothing. Each call of the defect returns its zero
+// results at once.
 func partitionerIdle(h *partitiontest.PartitionerHandle) partition.Partitioner {
-	return partitiontest.PartitionerSuite().Calls[0].Over(h, func() {})
+	return partitionerSuite.Calls[0].Over(h, func() {})
 }
 
 // TestPartitionerSuiteBudgets applies the allocation ceilings of the suite
@@ -235,45 +162,8 @@ func TestPartitionerSuiteBudgets(t *testing.T) {
 		conform.Ceilings(partitiontest.PartitionerChecks.Position.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(partitiontest.PartitionerChecks.Mapping.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(partitiontest.PartitionerChecks.Initial.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Position.PositionAppendsIntoTheRoomOfDst(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Position.PositionAppendsToDst(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Position.PositionIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.ConfigIsJSON(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.MappingContainsTheName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.MappingIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.MappingVersionsItsHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Initial.InitialIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Initial.InitialPartitionsRangesBetweenBounds(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Initial.InitialPartitionsThePositionSpace(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[partition.Partitioner](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -286,45 +176,8 @@ func FuzzPartitionerSuitePosition(f *testing.F) {
 		f,
 		partitiontest.PartitionerChecks.Position.Callable,
 		partitionerIdle,
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Position.PositionAppendsIntoTheRoomOfDst(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Position.PositionAppendsToDst(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Position.PositionIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.ConfigIsJSON(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.MappingContainsTheName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.MappingIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.MappingVersionsItsHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Initial.InitialIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Initial.InitialPartitionsRangesBetweenBounds(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Initial.InitialPartitionsThePositionSpace(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[partition.Partitioner](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -337,45 +190,8 @@ func FuzzPartitionerSuiteMapping(f *testing.F) {
 		f,
 		partitiontest.PartitionerChecks.Mapping.Callable,
 		partitionerIdle,
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Position.PositionAppendsIntoTheRoomOfDst(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Position.PositionAppendsToDst(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Position.PositionIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.ConfigIsJSON(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.MappingContainsTheName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.MappingIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.MappingVersionsItsHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Initial.InitialIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Initial.InitialPartitionsRangesBetweenBounds(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Initial.InitialPartitionsThePositionSpace(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[partition.Partitioner](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -388,45 +204,8 @@ func FuzzPartitionerSuiteInitial(f *testing.F) {
 		f,
 		partitiontest.PartitionerChecks.Initial.Callable,
 		partitionerIdle,
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Position.PositionAppendsIntoTheRoomOfDst(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Position.PositionAppendsToDst(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Position.PositionIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.ConfigIsJSON(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.MappingContainsTheName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.MappingIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Mapping.MappingVersionsItsHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Initial.InitialIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Initial.InitialPartitionsRangesBetweenBounds(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.PartitionerChecks.Initial.InitialPartitionsThePositionSpace(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[partition.Partitioner](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -480,14 +259,7 @@ func TestHashSuite(t *testing.T) {
 				},
 				Defect: func(*partitiontest.HashHandle) partition.Hash { return &hashSubject{} },
 			}),
-			conform.Excuse(
-				partitiontest.HashChecks.Sum64.Sum64IsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.HashChecks.Version.VersionIsPositive(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[partition.Hash]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -509,14 +281,7 @@ func TestHashSuite(t *testing.T) {
 				},
 				Defect: func(*partitiontest.HashHandle) partition.Hash { return &hashSubject{} },
 			}),
-			conform.Excuse(
-				partitiontest.HashChecks.Sum64.Sum64IsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				partitiontest.HashChecks.Version.VersionIsPositive(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[partition.Hash]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -551,10 +316,14 @@ func TestHashSuiteAllocs(t *testing.T) {
 	})
 }
 
+// hashSuite is the suite of Hash that the tests of the planted defect of a
+// ceiling apply.
+var hashSuite = partitiontest.HashSuite()
+
 // hashIdle returns the planted defect of a ceiling of Hash with a spend of
-// nothing, a subject that answers each call at once.
+// nothing. Each call of the defect returns its zero results at once.
 func hashIdle(h *partitiontest.HashHandle) partition.Hash {
-	return partitiontest.HashSuite().Calls[0].Over(h, func() {})
+	return hashSuite.Calls[0].Over(h, func() {})
 }
 
 // TestHashSuiteBudgets applies the allocation ceilings of the suite of
@@ -566,14 +335,7 @@ func TestHashSuiteBudgets(t *testing.T) {
 		t,
 		hashIdle,
 		conform.Ceilings(partitiontest.HashChecks.Version.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			partitiontest.HashChecks.Sum64.Sum64IsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.HashChecks.Version.VersionIsPositive(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[partition.Hash]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -584,14 +346,7 @@ func FuzzHashSuiteSum64(f *testing.F) {
 		f,
 		partitiontest.HashChecks.Sum64.Callable,
 		hashIdle,
-		conform.Excuse(
-			partitiontest.HashChecks.Sum64.Sum64IsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.HashChecks.Version.VersionIsPositive(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[partition.Hash]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -602,14 +357,7 @@ func FuzzHashSuiteVersion(f *testing.F) {
 		f,
 		partitiontest.HashChecks.Version.Callable,
 		hashIdle,
-		conform.Excuse(
-			partitiontest.HashChecks.Sum64.Sum64IsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			partitiontest.HashChecks.Version.VersionIsPositive(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[partition.Hash]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -624,4 +372,4 @@ func BenchmarkHashSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:9e171085830776a5ed4f714f01fa0131027d1a277fd4d5d622e0fd59beaf84c8
+// dokimi:provenance sha256:6574e420d4eb75225842da5282620ea213771779eaaf149489a174935bddaa23

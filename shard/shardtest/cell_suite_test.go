@@ -48,6 +48,7 @@ func TestCellMapSuite(t *testing.T) {
 				},
 				Defect: func(*shardtest.CellMapHandle) shardtest.CellMapMethods { return &cellMapSubject{} },
 			}),
+			conform.ExcuseSuite[shardtest.CellMapMethods]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -69,6 +70,7 @@ func TestCellMapSuite(t *testing.T) {
 				},
 				Defect: func(*shardtest.CellMapHandle) shardtest.CellMapMethods { return &cellMapSubject{} },
 			}),
+			conform.ExcuseSuite[shardtest.CellMapMethods]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -91,10 +93,15 @@ func TestCellMapSuiteAllocs(t *testing.T) {
 	})
 }
 
+// cellMapSuite is the suite of CellMap that the tests of the planted
+// defect of a ceiling apply.
+var cellMapSuite = shardtest.CellMapSuite()
+
 // cellMapIdle returns the planted defect of a ceiling of CellMap with a
-// spend of nothing, a subject that answers each call at once.
+// spend of nothing. Each call of the defect returns its zero results at
+// once.
 func cellMapIdle(h *shardtest.CellMapHandle) shardtest.CellMapMethods {
-	return shardtest.CellMapSuite().Calls[0].Over(h, func() {})
+	return cellMapSuite.Calls[0].Over(h, func() {})
 }
 
 // TestCellMapSuiteBudgets applies the allocation ceilings of the suite of
@@ -105,6 +112,9 @@ func TestCellMapSuiteBudgets(t *testing.T) {
 	shardtest.RunCellMapBudgets(
 		t,
 		cellMapIdle,
+		conform.ExcuseSuite[shardtest.CellMapMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
+		),
 	)
 }
 
@@ -115,6 +125,9 @@ func FuzzCellMapSuiteLocate(f *testing.F) {
 		f,
 		shardtest.CellMapChecks.Locate.Callable,
 		cellMapIdle,
+		conform.ExcuseSuite[shardtest.CellMapMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
+		),
 	)
 }
 
@@ -131,24 +144,44 @@ func BenchmarkCellMapSuite(b *testing.B) {
 func TestCellMapConformsToCellMap(t *testing.T) {
 	t.Parallel()
 
-	shardtest.RunCellMapSuite(t, newCellMap)
+	shardtest.RunCellMapSuite(
+		t,
+		newCellMap,
+		conform.Excuse(
+			shardtest.CellMapChecks.Locate.ZeroOnMiss(),
+			"the cell map of the subject covers every position, so Locate does not miss",
+		),
+	)
 }
 
 // TestCellMapConformsToCellMapAllocs applies the allocation ceilings and
 // the checks that count allocations of the suite of CellMap to CellMap.
 func TestCellMapConformsToCellMapAllocs(t *testing.T) {
-	shardtest.RunCellMapBudgets(t, func(*shardtest.CellMapHandle) *shard.CellMap { return newCellMap() })
+	shardtest.RunCellMapBudgets(
+		t,
+		func(*shardtest.CellMapHandle) *shard.CellMap { return newCellMap() },
+		conform.Excuse(
+			shardtest.CellMapChecks.Locate.ZeroOnMiss(),
+			"the cell map of the subject covers every position, so Locate does not miss",
+		),
+	)
 }
 
 // BenchmarkCellMapConformsToCellMap measures each callable of the suite of
 // CellMap on CellMap.
 func BenchmarkCellMapConformsToCellMap(b *testing.B) {
+	opts := []shardtest.CellMapOption{
+		conform.Excuse(
+			shardtest.CellMapChecks.Locate.ZeroOnMiss(),
+			"the cell map of the subject covers every position, so Locate does not miss",
+		),
+	}
 	b.Run("Locate", func(b *testing.B) {
 		shardtest.BenchCellMapSuite(
 			b,
 			shardtest.CellMapChecks.Locate.Callable,
 			func(*shardtest.CellMapHandle) *shard.CellMap { return newCellMap() },
-		)
+			opts...)
 	})
 }
 
@@ -159,7 +192,11 @@ func FuzzCellMapConformsToCellMapLocate(f *testing.F) {
 		f,
 		shardtest.CellMapChecks.Locate.Callable,
 		func(*shardtest.CellMapHandle) *shard.CellMap { return newCellMap() },
+		conform.Excuse(
+			shardtest.CellMapChecks.Locate.ZeroOnMiss(),
+			"the cell map of the subject covers every position, so Locate does not miss",
+		),
 	)
 }
 
-// dokimi:provenance sha256:f405da05c38fc8b7c2e6f945d5f92c86e262d8d27c83e3f17acb6cbadf920db2
+// dokimi:provenance sha256:a258fc7f4637891178a987e4edc75b40b8d7b87a2ca4a2d2a571abaa71375007

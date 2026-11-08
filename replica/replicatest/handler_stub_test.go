@@ -77,25 +77,38 @@ func handlerStubDropShardPins() (replica.DropShardResult, error) {
 	return want0, want1
 }
 
-// handlerStubAddShardSubject returns the subject of [stub.Behaviour] for
-// AddShard. The subject calls a new double that reports to tb.
+// handlerStubAddShardSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for AddShard. The subject calls a new double that
+// reports to tb.
 func handlerStubAddShardSubject(
 	tb assert.TB,
 ) stub.Subject[replicatest.HandlerAddShardCall, replicatest.HandlerAddShardReturn] {
 	tb.Helper()
 	s := replicatest.NewHandlerStub(tb)
 	return stub.Subject[replicatest.HandlerAddShardCall, replicatest.HandlerAddShardReturn]{
-		Stub: s.OnAddShard.MethodStub,
+		Stub:  s.OnAddShard.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = handlerStubAddShard(tb, s)
+		},
+		Arguments: func(tb assert.TB, c replicatest.HandlerAddShardCall) {
+			tb.Helper()
+			a0, a1 := handlerStubAddShardArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Req, a1, "the call records Req")
 		},
 		Result: func() replicatest.HandlerAddShardReturn {
 			got0, got1 := handlerStubAddShard(tb, s)
 			return replicatest.HandlerAddShardReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnAddShard.Func(func(_ context.Context, _ *replica.AddShardRequest) (replica.AddShardResult, error) {
-				mark()
+		Returns: func() replicatest.HandlerAddShardReturn {
+			want0, want1 := handlerStubAddShardPins()
+			s.OnAddShard.Returns(want0, want1)
+			return replicatest.HandlerAddShardReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(replicatest.HandlerAddShardCall)) {
+			s.OnAddShard.Func(func(p0 context.Context, p1 *replica.AddShardRequest) (replica.AddShardResult, error) {
+				seen(replicatest.HandlerAddShardCall{Ctx: p0, Req: p1})
 				var z0 replica.AddShardResult
 				var z1 error
 				return z0, z1
@@ -108,25 +121,38 @@ func handlerStubAddShardSubject(
 	}
 }
 
-// handlerStubDropShardSubject returns the subject of [stub.Behaviour] for
-// DropShard. The subject calls a new double that reports to tb.
+// handlerStubDropShardSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for DropShard. The subject calls a new double that
+// reports to tb.
 func handlerStubDropShardSubject(
 	tb assert.TB,
 ) stub.Subject[replicatest.HandlerDropShardCall, replicatest.HandlerDropShardReturn] {
 	tb.Helper()
 	s := replicatest.NewHandlerStub(tb)
 	return stub.Subject[replicatest.HandlerDropShardCall, replicatest.HandlerDropShardReturn]{
-		Stub: s.OnDropShard.MethodStub,
+		Stub:  s.OnDropShard.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = handlerStubDropShard(tb, s)
+		},
+		Arguments: func(tb assert.TB, c replicatest.HandlerDropShardCall) {
+			tb.Helper()
+			a0, a1 := handlerStubDropShardArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Req, a1, "the call records Req")
 		},
 		Result: func() replicatest.HandlerDropShardReturn {
 			got0, got1 := handlerStubDropShard(tb, s)
 			return replicatest.HandlerDropShardReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnDropShard.Func(func(_ context.Context, _ *replica.DropShardRequest) (replica.DropShardResult, error) {
-				mark()
+		Returns: func() replicatest.HandlerDropShardReturn {
+			want0, want1 := handlerStubDropShardPins()
+			s.OnDropShard.Returns(want0, want1)
+			return replicatest.HandlerDropShardReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(replicatest.HandlerDropShardCall)) {
+			s.OnDropShard.Func(func(p0 context.Context, p1 *replica.DropShardRequest) (replica.DropShardResult, error) {
+				seen(replicatest.HandlerDropShardCall{Ctx: p0, Req: p1})
 				var z0 replica.DropShardResult
 				var z1 error
 				return z0, z1
@@ -152,7 +178,6 @@ func handlerStubInstanceOf(tb assert.TB, s *replicatest.HandlerStub) handlerStub
 		Call: func() {
 			_, _ = handlerStubAddShard(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -164,120 +189,24 @@ func TestHandlerStub(t *testing.T) {
 	t.Run("AddShard", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "AddShard", handlerStubAddShardSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewHandlerStub(t)
-			_, _ = handlerStubAddShard(t, s)
-			got := s.OnAddShard.AssertCalledOnce(t, "AddShard records the call")
-			a0, a1 := handlerStubAddShardArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Req, a1, "the call records Req")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewHandlerStub(t)
-			var seen []replicatest.HandlerAddShardCall
-			s.OnAddShard.OnRecord(func(c replicatest.HandlerAddShardCall) { seen = append(seen, c) })
-			_, _ = handlerStubAddShard(t, s)
-			_, _ = handlerStubAddShard(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of AddShard")
-		})
 	})
 
 	t.Run("DropShard", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "DropShard", handlerStubDropShardSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewHandlerStub(t)
-			_, _ = handlerStubDropShard(t, s)
-			got := s.OnDropShard.AssertCalledOnce(t, "DropShard records the call")
-			a0, a1 := handlerStubDropShardArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Req, a1, "the call records Req")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewHandlerStub(t)
-			var seen []replicatest.HandlerDropShardCall
-			s.OnDropShard.OnRecord(func(c replicatest.HandlerDropShardCall) { seen = append(seen, c) })
-			_, _ = handlerStubDropShard(t, s)
-			_, _ = handlerStubDropShard(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of DropShard")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) handlerStubInstance {
-			return handlerStubInstanceOf(tb, replicatest.NewHandlerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of AddShard", func(t *testing.T) {
+		t.Run("AddShard", func(t *testing.T) {
 			t.Parallel()
-			s := replicatest.NewHandlerStub(t)
-			_, _ = handlerStubAddShard(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnAddShard.CallCount(), 0, "ResetCalls clears the calls of AddShard")
+			stub.ResetBehaviour(t, "AddShard", handlerStubAddShardSubject)
 		})
 
-		t.Run("keeps the results of Returns of AddShard", func(t *testing.T) {
+		t.Run("DropShard", func(t *testing.T) {
 			t.Parallel()
-			s := replicatest.NewHandlerStub(t)
-			want0, want1 := handlerStubAddShardPins()
-			s.OnAddShard.Returns(want0, want1)
-			s.ResetCalls()
-			_, got1 := handlerStubAddShard(t, s)
-			assert.ErrorIs(t, got1, want1, "ResetCalls keeps the error of AddShard")
-		})
-
-		t.Run("clears the recorded calls of DropShard", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewHandlerStub(t)
-			_, _ = handlerStubDropShard(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnDropShard.CallCount(), 0, "ResetCalls clears the calls of DropShard")
-		})
-
-		t.Run("keeps the results of Returns of DropShard", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewHandlerStub(t)
-			want0, want1 := handlerStubDropShardPins()
-			s.OnDropShard.Returns(want0, want1)
-			s.ResetCalls()
-			_, got1 := handlerStubDropShard(t, s)
-			assert.ErrorIs(t, got1, want1, "ResetCalls keeps the error of DropShard")
-		})
-	})
-
-	t.Run("NewHandlerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) handlerStubInstance {
-			return handlerStubInstanceOf(tb, replicatest.NewHandlerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewHandlerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails AddShard with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("AddShard-failing")
-			s := replicatest.NewHandlerStubFailing(t, want)
-			_, r1 := handlerStubAddShard(t, s)
-			assert.ErrorIs(t, r1, want, "AddShard fails with the error of NewHandlerStubFailing")
-		})
-
-		t.Run("fails DropShard with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("DropShard-failing")
-			s := replicatest.NewHandlerStubFailing(t, want)
-			_, r1 := handlerStubDropShard(t, s)
-			assert.ErrorIs(t, r1, want, "DropShard fails with the error of NewHandlerStubFailing")
+			stub.ResetBehaviour(t, "DropShard", handlerStubDropShardSubject)
 		})
 	})
 
@@ -428,110 +357,6 @@ func TestHandlerStub(t *testing.T) {
 	})
 }
 
-// TestHandlerAddShardStub checks the methods of HandlerAddShardStub, which
-// configures AddShard.
-func TestHandlerAddShardStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of AddShard", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewHandlerStub(t)
-			want0, want1 := handlerStubAddShardPins()
-			s.OnAddShard.Returns(want0, want1)
-			_, got1 := handlerStubAddShard(t, s)
-			assert.ErrorIs(t, got1, want1, "AddShard returns the error that Returns sets")
-		})
-
-		t.Run("configures AddShard for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := replicatest.NewHandlerStub(r)
-			s.OnAddShard.Strict()
-			var want0 replica.AddShardResult
-			var want1 error
-			s.OnAddShard.Returns(want0, want1)
-			_, _ = handlerStubAddShard(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of AddShard")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of AddShard to the function", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewHandlerStub(t)
-			var got0 context.Context
-			var got1 *replica.AddShardRequest
-			s.OnAddShard.Func(func(p0 context.Context, p1 *replica.AddShardRequest) (replica.AddShardResult, error) {
-				got0, got1 = p0, p1
-				var z0 replica.AddShardResult
-				var z1 error
-				return z0, z1
-			})
-			_, _ = handlerStubAddShard(t, s)
-			a0, a1 := handlerStubAddShardArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Req")
-		})
-	})
-}
-
-// TestHandlerDropShardStub checks the methods of HandlerDropShardStub,
-// which configures DropShard.
-func TestHandlerDropShardStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of DropShard", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewHandlerStub(t)
-			want0, want1 := handlerStubDropShardPins()
-			s.OnDropShard.Returns(want0, want1)
-			_, got1 := handlerStubDropShard(t, s)
-			assert.ErrorIs(t, got1, want1, "DropShard returns the error that Returns sets")
-		})
-
-		t.Run("configures DropShard for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := replicatest.NewHandlerStub(r)
-			s.OnDropShard.Strict()
-			var want0 replica.DropShardResult
-			var want1 error
-			s.OnDropShard.Returns(want0, want1)
-			_, _ = handlerStubDropShard(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of DropShard")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of DropShard to the function", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewHandlerStub(t)
-			var got0 context.Context
-			var got1 *replica.DropShardRequest
-			s.OnDropShard.Func(func(p0 context.Context, p1 *replica.DropShardRequest) (replica.DropShardResult, error) {
-				got0, got1 = p0, p1
-				var z0 replica.DropShardResult
-				var z1 error
-				return z0, z1
-			})
-			_, _ = handlerStubDropShard(t, s)
-			a0, a1 := handlerStubDropShardArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Req")
-		})
-	})
-}
-
 // revokerStubRevokeShardArgs returns the samples of the arguments of
 // RevokeShard.
 func revokerStubRevokeShardArgs(tb assert.TB) (context.Context, *replica.RevokeShardRequest) {
@@ -559,25 +384,38 @@ func revokerStubRevokeShardPins() (replica.RevokeShardResult, error) {
 }
 
 // revokerStubRevokeShardSubject returns the subject of [stub.Behaviour]
-// for RevokeShard. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for RevokeShard. The subject calls a new
+// double that reports to tb.
 func revokerStubRevokeShardSubject(
 	tb assert.TB,
 ) stub.Subject[replicatest.RevokerRevokeShardCall, replicatest.RevokerRevokeShardReturn] {
 	tb.Helper()
 	s := replicatest.NewRevokerStub(tb)
 	return stub.Subject[replicatest.RevokerRevokeShardCall, replicatest.RevokerRevokeShardReturn]{
-		Stub: s.OnRevokeShard.MethodStub,
+		Stub:  s.OnRevokeShard.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = revokerStubRevokeShard(tb, s)
+		},
+		Arguments: func(tb assert.TB, c replicatest.RevokerRevokeShardCall) {
+			tb.Helper()
+			a0, a1 := revokerStubRevokeShardArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Req, a1, "the call records Req")
 		},
 		Result: func() replicatest.RevokerRevokeShardReturn {
 			got0, got1 := revokerStubRevokeShard(tb, s)
 			return replicatest.RevokerRevokeShardReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
+		Returns: func() replicatest.RevokerRevokeShardReturn {
+			want0, want1 := revokerStubRevokeShardPins()
+			s.OnRevokeShard.Returns(want0, want1)
+			return replicatest.RevokerRevokeShardReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(replicatest.RevokerRevokeShardCall)) {
 			s.OnRevokeShard.Func(
-				func(_ context.Context, _ *replica.RevokeShardRequest) (replica.RevokeShardResult, error) {
-					mark()
+				func(p0 context.Context, p1 *replica.RevokeShardRequest) (replica.RevokeShardResult, error) {
+					seen(replicatest.RevokerRevokeShardCall{Ctx: p0, Req: p1})
 					var z0 replica.RevokeShardResult
 					var z1 error
 					return z0, z1
@@ -604,7 +442,6 @@ func revokerStubInstanceOf(tb assert.TB, s *replicatest.RevokerStub) revokerStub
 		Call: func() {
 			_, _ = revokerStubRevokeShard(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -616,69 +453,14 @@ func TestRevokerStub(t *testing.T) {
 	t.Run("RevokeShard", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "RevokeShard", revokerStubRevokeShardSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewRevokerStub(t)
-			_, _ = revokerStubRevokeShard(t, s)
-			got := s.OnRevokeShard.AssertCalledOnce(t, "RevokeShard records the call")
-			a0, a1 := revokerStubRevokeShardArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Req, a1, "the call records Req")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewRevokerStub(t)
-			var seen []replicatest.RevokerRevokeShardCall
-			s.OnRevokeShard.OnRecord(func(c replicatest.RevokerRevokeShardCall) { seen = append(seen, c) })
-			_, _ = revokerStubRevokeShard(t, s)
-			_, _ = revokerStubRevokeShard(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of RevokeShard")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) revokerStubInstance {
-			return revokerStubInstanceOf(tb, replicatest.NewRevokerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of RevokeShard", func(t *testing.T) {
+		t.Run("RevokeShard", func(t *testing.T) {
 			t.Parallel()
-			s := replicatest.NewRevokerStub(t)
-			_, _ = revokerStubRevokeShard(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnRevokeShard.CallCount(), 0, "ResetCalls clears the calls of RevokeShard")
-		})
-
-		t.Run("keeps the results of Returns of RevokeShard", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewRevokerStub(t)
-			want0, want1 := revokerStubRevokeShardPins()
-			s.OnRevokeShard.Returns(want0, want1)
-			s.ResetCalls()
-			_, got1 := revokerStubRevokeShard(t, s)
-			assert.ErrorIs(t, got1, want1, "ResetCalls keeps the error of RevokeShard")
-		})
-	})
-
-	t.Run("NewRevokerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) revokerStubInstance {
-			return revokerStubInstanceOf(tb, replicatest.NewRevokerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewRevokerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails RevokeShard with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("RevokeShard-failing")
-			s := replicatest.NewRevokerStubFailing(t, want)
-			_, r1 := revokerStubRevokeShard(t, s)
-			assert.ErrorIs(t, r1, want, "RevokeShard fails with the error of NewRevokerStubFailing")
+			stub.ResetBehaviour(t, "RevokeShard", revokerStubRevokeShardSubject)
 		})
 	})
 
@@ -781,60 +563,6 @@ func TestRevokerStub(t *testing.T) {
 	})
 }
 
-// TestRevokerRevokeShardStub checks the methods of RevokerRevokeShardStub,
-// which configures RevokeShard.
-func TestRevokerRevokeShardStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of RevokeShard", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewRevokerStub(t)
-			want0, want1 := revokerStubRevokeShardPins()
-			s.OnRevokeShard.Returns(want0, want1)
-			_, got1 := revokerStubRevokeShard(t, s)
-			assert.ErrorIs(t, got1, want1, "RevokeShard returns the error that Returns sets")
-		})
-
-		t.Run("configures RevokeShard for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := replicatest.NewRevokerStub(r)
-			s.OnRevokeShard.Strict()
-			var want0 replica.RevokeShardResult
-			var want1 error
-			s.OnRevokeShard.Returns(want0, want1)
-			_, _ = revokerStubRevokeShard(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of RevokeShard")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of RevokeShard to the function", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewRevokerStub(t)
-			var got0 context.Context
-			var got1 *replica.RevokeShardRequest
-			s.OnRevokeShard.Func(
-				func(p0 context.Context, p1 *replica.RevokeShardRequest) (replica.RevokeShardResult, error) {
-					got0, got1 = p0, p1
-					var z0 replica.RevokeShardResult
-					var z1 error
-					return z0, z1
-				},
-			)
-			_, _ = revokerStubRevokeShard(t, s)
-			a0, a1 := revokerStubRevokeShardArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Req")
-		})
-	})
-}
-
 // loadReporterStubShardLoadArgs returns the samples of the arguments of
 // ShardLoad.
 func loadReporterStubShardLoadArgs(tb assert.TB) shard.ID {
@@ -860,24 +588,36 @@ func loadReporterStubShardLoadPins() shard.Load {
 }
 
 // loadReporterStubShardLoadSubject returns the subject of [stub.Behaviour]
-// for ShardLoad. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for ShardLoad. The subject calls a new double
+// that reports to tb.
 func loadReporterStubShardLoadSubject(
 	tb assert.TB,
 ) stub.Subject[replicatest.LoadReporterShardLoadCall, replicatest.LoadReporterShardLoadReturn] {
 	tb.Helper()
 	s := replicatest.NewLoadReporterStub(tb)
 	return stub.Subject[replicatest.LoadReporterShardLoadCall, replicatest.LoadReporterShardLoadReturn]{
-		Stub: s.OnShardLoad.MethodStub,
+		Stub:  s.OnShardLoad.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = loadReporterStubShardLoad(tb, s)
+		},
+		Arguments: func(tb assert.TB, c replicatest.LoadReporterShardLoadCall) {
+			tb.Helper()
+			a0 := loadReporterStubShardLoadArgs(tb)
+			assert.Equal(tb, c.ID, a0, "the call records ID")
 		},
 		Result: func() replicatest.LoadReporterShardLoadReturn {
 			got0 := loadReporterStubShardLoad(tb, s)
 			return replicatest.LoadReporterShardLoadReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnShardLoad.Func(func(_ shard.ID) shard.Load {
-				mark()
+		Returns: func() replicatest.LoadReporterShardLoadReturn {
+			want0 := loadReporterStubShardLoadPins()
+			s.OnShardLoad.Returns(want0)
+			return replicatest.LoadReporterShardLoadReturn{Result: want0}
+		},
+		Override: func(seen func(replicatest.LoadReporterShardLoadCall)) {
+			s.OnShardLoad.Func(func(p0 shard.ID) shard.Load {
+				seen(replicatest.LoadReporterShardLoadCall{ID: p0})
 				var z0 shard.Load
 				return z0
 			})
@@ -899,7 +639,6 @@ func loadReporterStubInstanceOf(tb assert.TB, s *replicatest.LoadReporterStub) l
 		Call: func() {
 			_ = loadReporterStubShardLoad(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -911,56 +650,14 @@ func TestLoadReporterStub(t *testing.T) {
 	t.Run("ShardLoad", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "ShardLoad", loadReporterStubShardLoadSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewLoadReporterStub(t)
-			_ = loadReporterStubShardLoad(t, s)
-			got := s.OnShardLoad.AssertCalledOnce(t, "ShardLoad records the call")
-			a0 := loadReporterStubShardLoadArgs(t)
-			assert.Equal(t, got.ID, a0, "the call records ID")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewLoadReporterStub(t)
-			var seen []replicatest.LoadReporterShardLoadCall
-			s.OnShardLoad.OnRecord(func(c replicatest.LoadReporterShardLoadCall) { seen = append(seen, c) })
-			_ = loadReporterStubShardLoad(t, s)
-			_ = loadReporterStubShardLoad(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of ShardLoad")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) loadReporterStubInstance {
-			return loadReporterStubInstanceOf(tb, replicatest.NewLoadReporterStub(tb))
-		})
 
-		t.Run("clears the recorded calls of ShardLoad", func(t *testing.T) {
+		t.Run("ShardLoad", func(t *testing.T) {
 			t.Parallel()
-			s := replicatest.NewLoadReporterStub(t)
-			_ = loadReporterStubShardLoad(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnShardLoad.CallCount(), 0, "ResetCalls clears the calls of ShardLoad")
-		})
-
-		t.Run("keeps the results of Returns of ShardLoad", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewLoadReporterStub(t)
-			want0 := loadReporterStubShardLoadPins()
-			s.OnShardLoad.Returns(want0)
-			s.ResetCalls()
-			got0 := loadReporterStubShardLoad(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of ShardLoad")
-		})
-	})
-
-	t.Run("NewLoadReporterStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) loadReporterStubInstance {
-			return loadReporterStubInstanceOf(tb, replicatest.NewLoadReporterStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "ShardLoad", loadReporterStubShardLoadSubject)
 		})
 	})
 
@@ -1047,52 +744,4 @@ func TestLoadReporterStub(t *testing.T) {
 	})
 }
 
-// TestLoadReporterShardLoadStub checks the methods of
-// LoadReporterShardLoadStub, which configures ShardLoad.
-func TestLoadReporterShardLoadStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of ShardLoad", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewLoadReporterStub(t)
-			want0 := loadReporterStubShardLoadPins()
-			s.OnShardLoad.Returns(want0)
-			got0 := loadReporterStubShardLoad(t, s)
-			assert.Equal(t, got0, want0, "ShardLoad returns the Result that Returns sets")
-		})
-
-		t.Run("configures ShardLoad for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := replicatest.NewLoadReporterStub(r)
-			s.OnShardLoad.Strict()
-			var want0 shard.Load
-			s.OnShardLoad.Returns(want0)
-			_ = loadReporterStubShardLoad(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of ShardLoad")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of ShardLoad to the function", func(t *testing.T) {
-			t.Parallel()
-			s := replicatest.NewLoadReporterStub(t)
-			var got0 shard.ID
-			s.OnShardLoad.Func(func(p0 shard.ID) shard.Load {
-				got0 = p0
-				var z0 shard.Load
-				return z0
-			})
-			_ = loadReporterStubShardLoad(t, s)
-			a0 := loadReporterStubShardLoadArgs(t)
-			assert.Equal(t, got0, a0, "the function receives ID")
-		})
-	})
-}
-
-// dokimi:provenance sha256:b334c9d09adbcf706872797068e1769c4e827cbf83c169fc3fba1743105ff7e4
+// dokimi:provenance sha256:2043f6c66f6fe02d65f57a9124ca2f34b5db60ea85846e7fe0f270144ca3c64b

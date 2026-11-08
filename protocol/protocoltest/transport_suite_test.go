@@ -48,22 +48,7 @@ func TestConnectorSuite(t *testing.T) {
 				},
 				Defect: func(*protocoltest.ConnectorHandle) protocoltest.Connector { return &connectorSubject{} },
 			}),
-			conform.Excuse(
-				protocoltest.ConnectorChecks.Connect.ClientsKeepErrorClasses(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				protocoltest.ConnectorChecks.Connect.ClientsPassMessages(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				protocoltest.ConnectorChecks.Connect.ClientsRefuseFeatures(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				protocoltest.ConnectorChecks.Connect.ClientsRefuseOtherVersions(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[protocoltest.Connector]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -85,22 +70,7 @@ func TestConnectorSuite(t *testing.T) {
 				},
 				Defect: func(*protocoltest.ConnectorHandle) protocoltest.Connector { return &connectorSubject{} },
 			}),
-			conform.Excuse(
-				protocoltest.ConnectorChecks.Connect.ClientsKeepErrorClasses(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				protocoltest.ConnectorChecks.Connect.ClientsPassMessages(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				protocoltest.ConnectorChecks.Connect.ClientsRefuseFeatures(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				protocoltest.ConnectorChecks.Connect.ClientsRefuseOtherVersions(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[protocoltest.Connector]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -133,10 +103,15 @@ func TestConnectorSuite(t *testing.T) {
 	})
 }
 
+// connectorSuite is the suite of Connector that the tests of the planted
+// defect of a ceiling apply.
+var connectorSuite = protocoltest.ConnectorSuite()
+
 // connectorIdle returns the planted defect of a ceiling of Connector with
-// a spend of nothing, a subject that answers each call at once.
+// a spend of nothing. Each call of the defect returns its zero results at
+// once.
 func connectorIdle(h *protocoltest.ConnectorHandle) protocoltest.Connector {
-	return protocoltest.ConnectorSuite().Calls[0].Over(h, func() {})
+	return connectorSuite.Calls[0].Over(h, func() {})
 }
 
 // TestConnectorSuiteBudgets applies the allocation ceilings of the suite
@@ -148,21 +123,8 @@ func TestConnectorSuiteBudgets(t *testing.T) {
 		t,
 		connectorIdle,
 		conform.Ceilings(protocoltest.ConnectorChecks.Connect.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			protocoltest.ConnectorChecks.Connect.ClientsKeepErrorClasses(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			protocoltest.ConnectorChecks.Connect.ClientsPassMessages(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			protocoltest.ConnectorChecks.Connect.ClientsRefuseFeatures(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			protocoltest.ConnectorChecks.Connect.ClientsRefuseOtherVersions(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[protocoltest.Connector](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -174,21 +136,8 @@ func FuzzConnectorSuiteConnect(f *testing.F) {
 		f,
 		protocoltest.ConnectorChecks.Connect.Callable,
 		connectorIdle,
-		conform.Excuse(
-			protocoltest.ConnectorChecks.Connect.ClientsKeepErrorClasses(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			protocoltest.ConnectorChecks.Connect.ClientsPassMessages(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			protocoltest.ConnectorChecks.Connect.ClientsRefuseFeatures(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			protocoltest.ConnectorChecks.Connect.ClientsRefuseOtherVersions(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[protocoltest.Connector](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -201,4 +150,4 @@ func BenchmarkConnectorSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:5d3ed4d71b0d5a77473906935557b15c41f1800e155015ef28dbeecd7ef3b406
+// dokimi:provenance sha256:82b20dec39b6385a026a3e6c82c82cdca0fc4f9db6e31d87169678f360551b80

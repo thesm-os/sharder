@@ -69,23 +69,36 @@ func routerStubRefreshPins() (router.RefreshResult, error) {
 	return want0, want1
 }
 
-// routerStubRouteSubject returns the subject of [stub.Behaviour] for
-// Route. The subject calls a new double that reports to tb.
+// routerStubRouteSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Route. The subject calls a new double that
+// reports to tb.
 func routerStubRouteSubject(tb assert.TB) stub.Subject[routertest.RouterRouteCall, routertest.RouterRouteReturn] {
 	tb.Helper()
 	s := routertest.NewRouterStub(tb)
 	return stub.Subject[routertest.RouterRouteCall, routertest.RouterRouteReturn]{
-		Stub: s.OnRoute.MethodStub,
+		Stub:  s.OnRoute.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = routerStubRoute(tb, s)
+		},
+		Arguments: func(tb assert.TB, c routertest.RouterRouteCall) {
+			tb.Helper()
+			a0, a1 := routerStubRouteArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Req, a1, "the call records Req")
 		},
 		Result: func() routertest.RouterRouteReturn {
 			got0, got1 := routerStubRoute(tb, s)
 			return routertest.RouterRouteReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnRoute.Func(func(_ context.Context, _ *router.RouteRequest) (router.RouteResult, error) {
-				mark()
+		Returns: func() routertest.RouterRouteReturn {
+			want0, want1 := routerStubRoutePins()
+			s.OnRoute.Returns(want0, want1)
+			return routertest.RouterRouteReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(routertest.RouterRouteCall)) {
+			s.OnRoute.Func(func(p0 context.Context, p1 *router.RouteRequest) (router.RouteResult, error) {
+				seen(routertest.RouterRouteCall{Ctx: p0, Req: p1})
 				var z0 router.RouteResult
 				var z1 error
 				return z0, z1
@@ -98,23 +111,36 @@ func routerStubRouteSubject(tb assert.TB) stub.Subject[routertest.RouterRouteCal
 	}
 }
 
-// routerStubRefreshSubject returns the subject of [stub.Behaviour] for
-// Refresh. The subject calls a new double that reports to tb.
+// routerStubRefreshSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Refresh. The subject calls a new double that
+// reports to tb.
 func routerStubRefreshSubject(tb assert.TB) stub.Subject[routertest.RouterRefreshCall, routertest.RouterRefreshReturn] {
 	tb.Helper()
 	s := routertest.NewRouterStub(tb)
 	return stub.Subject[routertest.RouterRefreshCall, routertest.RouterRefreshReturn]{
-		Stub: s.OnRefresh.MethodStub,
+		Stub:  s.OnRefresh.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = routerStubRefresh(tb, s)
+		},
+		Arguments: func(tb assert.TB, c routertest.RouterRefreshCall) {
+			tb.Helper()
+			a0, a1 := routerStubRefreshArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Req, a1, "the call records Req")
 		},
 		Result: func() routertest.RouterRefreshReturn {
 			got0, got1 := routerStubRefresh(tb, s)
 			return routertest.RouterRefreshReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnRefresh.Func(func(_ context.Context, _ *router.RefreshRequest) (router.RefreshResult, error) {
-				mark()
+		Returns: func() routertest.RouterRefreshReturn {
+			want0, want1 := routerStubRefreshPins()
+			s.OnRefresh.Returns(want0, want1)
+			return routertest.RouterRefreshReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(routertest.RouterRefreshCall)) {
+			s.OnRefresh.Func(func(p0 context.Context, p1 *router.RefreshRequest) (router.RefreshResult, error) {
+				seen(routertest.RouterRefreshCall{Ctx: p0, Req: p1})
 				var z0 router.RefreshResult
 				var z1 error
 				return z0, z1
@@ -140,7 +166,6 @@ func routerStubInstanceOf(tb assert.TB, s *routertest.RouterStub) routerStubInst
 		Call: func() {
 			_, _ = routerStubRoute(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -152,121 +177,24 @@ func TestRouterStub(t *testing.T) {
 	t.Run("Route", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Route", routerStubRouteSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := routertest.NewRouterStub(t)
-			_, _ = routerStubRoute(t, s)
-			got := s.OnRoute.AssertCalledOnce(t, "Route records the call")
-			a0, a1 := routerStubRouteArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Req, a1, "the call records Req")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := routertest.NewRouterStub(t)
-			var seen []routertest.RouterRouteCall
-			s.OnRoute.OnRecord(func(c routertest.RouterRouteCall) { seen = append(seen, c) })
-			_, _ = routerStubRoute(t, s)
-			_, _ = routerStubRoute(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Route")
-		})
 	})
 
 	t.Run("Refresh", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Refresh", routerStubRefreshSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := routertest.NewRouterStub(t)
-			_, _ = routerStubRefresh(t, s)
-			got := s.OnRefresh.AssertCalledOnce(t, "Refresh records the call")
-			a0, a1 := routerStubRefreshArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Req, a1, "the call records Req")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := routertest.NewRouterStub(t)
-			var seen []routertest.RouterRefreshCall
-			s.OnRefresh.OnRecord(func(c routertest.RouterRefreshCall) { seen = append(seen, c) })
-			_, _ = routerStubRefresh(t, s)
-			_, _ = routerStubRefresh(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Refresh")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) routerStubInstance {
-			return routerStubInstanceOf(tb, routertest.NewRouterStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Route", func(t *testing.T) {
+		t.Run("Route", func(t *testing.T) {
 			t.Parallel()
-			s := routertest.NewRouterStub(t)
-			_, _ = routerStubRoute(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnRoute.CallCount(), 0, "ResetCalls clears the calls of Route")
+			stub.ResetBehaviour(t, "Route", routerStubRouteSubject)
 		})
 
-		t.Run("keeps the results of Returns of Route", func(t *testing.T) {
+		t.Run("Refresh", func(t *testing.T) {
 			t.Parallel()
-			s := routertest.NewRouterStub(t)
-			want0, want1 := routerStubRoutePins()
-			s.OnRoute.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := routerStubRoute(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Route")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Route")
-		})
-
-		t.Run("clears the recorded calls of Refresh", func(t *testing.T) {
-			t.Parallel()
-			s := routertest.NewRouterStub(t)
-			_, _ = routerStubRefresh(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnRefresh.CallCount(), 0, "ResetCalls clears the calls of Refresh")
-		})
-
-		t.Run("keeps the results of Returns of Refresh", func(t *testing.T) {
-			t.Parallel()
-			s := routertest.NewRouterStub(t)
-			want0, want1 := routerStubRefreshPins()
-			s.OnRefresh.Returns(want0, want1)
-			s.ResetCalls()
-			_, got1 := routerStubRefresh(t, s)
-			assert.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Refresh")
-		})
-	})
-
-	t.Run("NewRouterStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) routerStubInstance {
-			return routerStubInstanceOf(tb, routertest.NewRouterStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewRouterStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Route with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Route-failing")
-			s := routertest.NewRouterStubFailing(t, want)
-			_, r1 := routerStubRoute(t, s)
-			assert.ErrorIs(t, r1, want, "Route fails with the error of NewRouterStubFailing")
-		})
-
-		t.Run("fails Refresh with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Refresh-failing")
-			s := routertest.NewRouterStubFailing(t, want)
-			_, r1 := routerStubRefresh(t, s)
-			assert.ErrorIs(t, r1, want, "Refresh fails with the error of NewRouterStubFailing")
+			stub.ResetBehaviour(t, "Refresh", routerStubRefreshSubject)
 		})
 	})
 
@@ -411,109 +339,4 @@ func TestRouterStub(t *testing.T) {
 	})
 }
 
-// TestRouterRouteStub checks the methods of RouterRouteStub, which
-// configures Route.
-func TestRouterRouteStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Route", func(t *testing.T) {
-			t.Parallel()
-			s := routertest.NewRouterStub(t)
-			want0, want1 := routerStubRoutePins()
-			s.OnRoute.Returns(want0, want1)
-			got0, got1 := routerStubRoute(t, s)
-			expect.Equal(t, got0, want0, "Route returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Route returns the error that Returns sets")
-		})
-
-		t.Run("configures Route for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := routertest.NewRouterStub(r)
-			s.OnRoute.Strict()
-			var want0 router.RouteResult
-			var want1 error
-			s.OnRoute.Returns(want0, want1)
-			_, _ = routerStubRoute(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Route")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Route to the function", func(t *testing.T) {
-			t.Parallel()
-			s := routertest.NewRouterStub(t)
-			var got0 context.Context
-			var got1 *router.RouteRequest
-			s.OnRoute.Func(func(p0 context.Context, p1 *router.RouteRequest) (router.RouteResult, error) {
-				got0, got1 = p0, p1
-				var z0 router.RouteResult
-				var z1 error
-				return z0, z1
-			})
-			_, _ = routerStubRoute(t, s)
-			a0, a1 := routerStubRouteArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Req")
-		})
-	})
-}
-
-// TestRouterRefreshStub checks the methods of RouterRefreshStub, which
-// configures Refresh.
-func TestRouterRefreshStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Refresh", func(t *testing.T) {
-			t.Parallel()
-			s := routertest.NewRouterStub(t)
-			want0, want1 := routerStubRefreshPins()
-			s.OnRefresh.Returns(want0, want1)
-			_, got1 := routerStubRefresh(t, s)
-			assert.ErrorIs(t, got1, want1, "Refresh returns the error that Returns sets")
-		})
-
-		t.Run("configures Refresh for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := routertest.NewRouterStub(r)
-			s.OnRefresh.Strict()
-			var want0 router.RefreshResult
-			var want1 error
-			s.OnRefresh.Returns(want0, want1)
-			_, _ = routerStubRefresh(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Refresh")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Refresh to the function", func(t *testing.T) {
-			t.Parallel()
-			s := routertest.NewRouterStub(t)
-			var got0 context.Context
-			var got1 *router.RefreshRequest
-			s.OnRefresh.Func(func(p0 context.Context, p1 *router.RefreshRequest) (router.RefreshResult, error) {
-				got0, got1 = p0, p1
-				var z0 router.RefreshResult
-				var z1 error
-				return z0, z1
-			})
-			_, _ = routerStubRefresh(t, s)
-			a0, a1 := routerStubRefreshArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Req")
-		})
-	})
-}
-
-// dokimi:provenance sha256:801498f790af258f95ac1e89d5f5e6f485c02514a9db0e7475fc0840e6f4e4bd
+// dokimi:provenance sha256:2f4f720bd4736225c3a14b68b240cb4a63c55157836ac21e9f520b6d9054c133

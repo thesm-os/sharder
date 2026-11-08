@@ -329,28 +329,6 @@ func NewControllerClientStub(tb assert.TB, opts ...ControllerClientStubOption) *
 	return s
 }
 
-// NewControllerClientStubDelayed returns a double whose methods sleep d on
-// clk before they return. It applies opts after the clock and the latency.
-func NewControllerClientStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...ControllerClientStubOption,
-) *ControllerClientStub {
-	return NewControllerClientStub(tb, append([]ControllerClientStubOption{
-		ControllerClientStubWithClock(clk),
-		ControllerClientStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewControllerClientStubFailing returns a double on which each call of a
-// method that can fail fails with err. It applies opts after the failure.
-func NewControllerClientStubFailing(tb assert.TB, err error, opts ...ControllerClientStubOption) *ControllerClientStub {
-	return NewControllerClientStub(
-		tb,
-		append([]ControllerClientStubOption{ControllerClientStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *ControllerClientStub) ResetCalls() {
@@ -500,4 +478,4 @@ func (s *ControllerClientStub) Done(ctx context.Context, cell *shard.Cell, a *pr
 	return r.Err
 }
 
-// dokimi:provenance sha256:fe13bab922cc0fecc734b05066ee90047a52ff86034ba990e837440aa45d70e3
+// dokimi:provenance sha256:f5910f05aa4325fc5edc7cbc64139c1798d9eee785b99da2c56d9e20b788b538

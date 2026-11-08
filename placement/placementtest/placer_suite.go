@@ -12,6 +12,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/rand"
@@ -95,10 +97,40 @@ func (c placerPlace) PlaceTargetsOnlyChanges() conform.ID[placement.Placer] {
 	return c.Check("place-targets-only-changes")
 }
 
+// Smoke returns the identity of the check that Place returns without a
+// panic for derived inputs.
+func (c placerPlace) Smoke() conform.ID[placement.Placer] {
+	return c.Check("smoke")
+}
+
+// Cancel returns the identity of the check that Place returns an error for
+// a cancelled context.
+func (c placerPlace) Cancel() conform.ID[placement.Placer] {
+	return c.Check("cancel")
+}
+
+// ZeroOnError returns the identity of the check that Place returns the
+// zero value beside an error.
+func (c placerPlace) ZeroOnError() conform.ID[placement.Placer] {
+	return c.Check("zero-on-error")
+}
+
 // placerSchedule is the name of Placer.Schedule, with the identities of
 // its checks.
 type placerSchedule struct {
 	conform.Callable[placement.Placer]
+}
+
+// Smoke returns the identity of the check that Schedule returns without a
+// panic for derived inputs.
+func (c placerSchedule) Smoke() conform.ID[placement.Placer] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Schedule returns
+// the same value for the same inputs.
+func (c placerSchedule) Deterministic() conform.ID[placement.Placer] {
+	return c.Check("deterministic")
 }
 
 // PlacerSuite returns the checks of Placer, and the calls and the budgets
@@ -106,7 +138,80 @@ type placerSchedule struct {
 func PlacerSuite() conform.Suite[placement.Placer] {
 	return conform.Suite[placement.Placer]{
 		Declaration: "Placer",
+		Package:     "go.thesmos.sh/sharder/placement",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[placement.Placer]{
+			{
+				ID:          PlacerChecks.Place.Smoke(),
+				Statement:   "Place returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *PlacerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().
+							Place(ctx, &placement.Input{Draining: map[shard.NodeID]bool{shard.NodeID("Draining-a"): true}})
+						return err
+					})
+				},
+				Defect: placerPlacePanics,
+			},
+			{
+				ID:          PlacerChecks.Place.Cancel(),
+				Statement:   "Place returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *PlacerHandle) {
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().
+							Place(ctx, &placement.Input{Draining: map[shard.NodeID]bool{shard.NodeID("Draining-a"): true}})
+						return err
+					})
+				},
+				Defect: placerPlaceIgnoresCancel,
+			},
+			{
+				ID:          PlacerChecks.Place.ZeroOnError(),
+				Statement:   "Place returns the zero value beside an error",
+				Claim:       spec.ZeroOnError,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *PlacerHandle) {
+					probe.ZeroBesideError(h, func(ctx context.Context) (placement.Plan, error) {
+						return h.Subject().
+							Place(ctx, &placement.Input{Draining: map[shard.NodeID]bool{shard.NodeID("Draining-a"): true}})
+					}, placement.Plan{})
+				},
+				Defect: placerPlaceValueBeside,
+			},
+			{
+				ID:          PlacerChecks.Schedule.Smoke(),
+				Statement:   "Schedule returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *PlacerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Schedule()
+						return nil
+					})
+				},
+				Defect: placerSchedulePanics,
+			},
+			{
+				ID:          PlacerChecks.Schedule.Deterministic(),
+				Statement:   "Schedule returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[placement.Placer]{PlacerChecks.Schedule.Smoke()},
+				Apply: func(h *PlacerHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (placement.Schedule, error) {
+						r0 := h.Subject().Schedule()
+						return r0, nil
+					})
+				},
+				Defect: placerScheduleDrifts,
+			},
 			{
 				ID:        PlacerChecks.Place.ConcurrentPlacesMatchSequentialPlaces(),
 				Statement: "concurrent calls of Place return the plans of sequential calls",
@@ -187,9 +292,19 @@ func PlacerSuite() conform.Suite[placement.Placer] {
 				var clockNowAt atomic.Int64
 				clockTimeResults := c.Draw(prop.List(prop.Of[time.Time]()), "clock-time")
 				var clockTimeAt atomic.Int64
+				clockElapsedResults := c.Draw(prop.List(prop.Of[time.Duration]()), "clock-elapsed")
+				var clockElapsedAt atomic.Int64
 				clockNewTimerResults := c.Draw(prop.List(prop.Of[clock.Timer]()), "clock-new-timer")
 				var clockNewTimerAt atomic.Int64
-				clockUpdateResults := c.Draw(prop.List(prop.Of[clock.Instant]()), "clock-update")
+				clockUpdateResults0 := c.Draw(prop.List(prop.Of[clock.Instant]()), "clock-update-0")
+				clockUpdateResults1 := c.Draw(
+					prop.List(
+						prop.SampledFrom[error](nil, conform.ErrGenerated),
+						prop.MinSize(len(clockUpdateResults0)),
+						prop.MaxSize(len(clockUpdateResults0)),
+					),
+					"clock-update-1",
+				)
 				var clockUpdateAt atomic.Int64
 				return &placerClockInput{
 					onNow: func() (r0 clock.Instant) {
@@ -206,6 +321,13 @@ func PlacerSuite() conform.Suite[placement.Placer] {
 						}
 						return clockTimeResults[i]
 					},
+					onElapsed: func() (r0 time.Duration) {
+						i := int(clockElapsedAt.Add(1) - 1)
+						if i >= len(clockElapsedResults) {
+							return r0
+						}
+						return clockElapsedResults[i]
+					},
 					onNewTimer: func(time.Duration) (r0 clock.Timer) {
 						i := int(clockNewTimerAt.Add(1) - 1)
 						if i >= len(clockNewTimerResults) {
@@ -213,12 +335,14 @@ func PlacerSuite() conform.Suite[placement.Placer] {
 						}
 						return clockNewTimerResults[i]
 					},
-					onUpdate: func(clock.Instant) (r0 clock.Instant) {
+					onUpdate: func(clock.Instant) (r0 clock.Instant, r1 error) {
 						i := int(clockUpdateAt.Add(1) - 1)
-						if i >= len(clockUpdateResults) {
-							return r0
+						if i >= len(clockUpdateResults0) {
+							r1 = conform.ErrGenerated
+							return r0, r1
 						}
-						return clockUpdateResults[i]
+						return clockUpdateResults0[i],
+							clockUpdateResults1[i]
 					},
 				}
 			})),
@@ -378,8 +502,9 @@ type placerClockInput struct {
 	placerClockInputEmbedded
 	onNow      func() clock.Instant
 	onTime     func() time.Time
+	onElapsed  func() time.Duration
 	onNewTimer func(a0 time.Duration) clock.Timer
-	onUpdate   func(a0 clock.Instant) clock.Instant
+	onUpdate   func(a0 clock.Instant) (clock.Instant, error)
 }
 
 // Now calls the function of Now.
@@ -392,13 +517,18 @@ func (in placerClockInput) Time() time.Time {
 	return in.onTime()
 }
 
+// Elapsed calls the function of Elapsed.
+func (in placerClockInput) Elapsed() time.Duration {
+	return in.onElapsed()
+}
+
 // NewTimer calls the function of NewTimer.
 func (in placerClockInput) NewTimer(a0 time.Duration) clock.Timer {
 	return in.onNewTimer(a0)
 }
 
 // Update calls the function of Update.
-func (in placerClockInput) Update(a0 clock.Instant) clock.Instant {
+func (in placerClockInput) Update(a0 clock.Instant) (clock.Instant, error) {
 	return in.onUpdate(a0)
 }
 
@@ -482,4 +612,101 @@ func newPlacerOver(_ *PlacerHandle, spend func()) placement.Placer {
 	return placerOver{spend: spend}
 }
 
-// dokimi:provenance sha256:c71cee53da1c84a1aaa37fb4a4a3e47bf604a8a6e658237f6e788d776f7a9633
+// placerPlacePanicsDefect is the planted defect of a Placer whose Place
+// panics.
+type placerPlacePanicsDefect struct {
+	placerOverEmbedded
+}
+
+// Place is the override of the planted defect.
+func (*placerPlacePanicsDefect) Place(p0 context.Context, p1 *placement.Input) (r0 placement.Plan, r1 error) {
+	panic("the planted defect of a Placer whose Place panics")
+}
+
+// placerPlacePanics returns the planted defect of a Placer whose Place
+// panics over a fresh subject.
+func placerPlacePanics(h *PlacerHandle) placement.Placer {
+	return &placerPlacePanicsDefect{placerOverEmbedded: h.Fresh()}
+}
+
+// placerPlaceIgnoresCancelDefect is the planted defect of a Placer whose
+// Place ignores the context.
+type placerPlaceIgnoresCancelDefect struct {
+	placerOverEmbedded
+}
+
+// Place is the override of the planted defect.
+func (d *placerPlaceIgnoresCancelDefect) Place(p0 context.Context, p1 *placement.Input) (r0 placement.Plan, r1 error) {
+	if p0.Err() != nil {
+		return r0, r1
+	}
+	return d.placerOverEmbedded.Place(p0, p1)
+}
+
+// placerPlaceIgnoresCancel returns the planted defect of a Placer whose
+// Place ignores the context over a fresh subject.
+func placerPlaceIgnoresCancel(h *PlacerHandle) placement.Placer {
+	return &placerPlaceIgnoresCancelDefect{placerOverEmbedded: h.Fresh()}
+}
+
+// placerPlaceValueBesideDefect is the planted defect of a Placer whose
+// Place returns a value beside an error.
+type placerPlaceValueBesideDefect struct {
+	placerOverEmbedded
+}
+
+// Place is the override of the planted defect.
+func (d *placerPlaceValueBesideDefect) Place(p0 context.Context, p1 *placement.Input) (r0 placement.Plan, r1 error) {
+	r0, r1 = d.placerOverEmbedded.Place(p0, p1)
+	if r1 != nil {
+		r0 = placement.Plan{Costs: []float64{2.5}}
+	}
+	return r0, r1
+}
+
+// placerPlaceValueBeside returns the planted defect of a Placer whose
+// Place returns a value beside an error over a fresh subject.
+func placerPlaceValueBeside(h *PlacerHandle) placement.Placer {
+	return &placerPlaceValueBesideDefect{placerOverEmbedded: h.Fresh()}
+}
+
+// placerSchedulePanicsDefect is the planted defect of a Placer whose
+// Schedule panics.
+type placerSchedulePanicsDefect struct {
+	placerOverEmbedded
+}
+
+// Schedule is the override of the planted defect.
+func (*placerSchedulePanicsDefect) Schedule() (r0 placement.Schedule) {
+	panic("the planted defect of a Placer whose Schedule panics")
+}
+
+// placerSchedulePanics returns the planted defect of a Placer whose
+// Schedule panics over a fresh subject.
+func placerSchedulePanics(h *PlacerHandle) placement.Placer {
+	return &placerSchedulePanicsDefect{placerOverEmbedded: h.Fresh()}
+}
+
+// placerScheduleDriftsDefect is the planted defect of a Placer whose
+// Schedule returns another value on the repeat.
+type placerScheduleDriftsDefect struct {
+	placerOverEmbedded
+	calls int
+}
+
+// Schedule is the override of the planted defect.
+func (d *placerScheduleDriftsDefect) Schedule() (r0 placement.Schedule) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = placement.Schedule{Interval: time.Duration(2)}
+	}
+	return r0
+}
+
+// placerScheduleDrifts returns the planted defect of a Placer whose
+// Schedule returns another value on the repeat over a fresh subject.
+func placerScheduleDrifts(h *PlacerHandle) placement.Placer {
+	return &placerScheduleDriftsDefect{placerOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:ca29839a6733630043c3f6f3111077869399713489919927f2a815f8e43aa972

@@ -49,50 +49,7 @@ func TestMembershipSuite(t *testing.T) {
 				},
 				Defect: func(*membershiptest.MembershipHandle) membership.Membership { return &membershipSubject{} },
 			}),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.JoinsLeaveTheNodeUnchanged(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.JoinsRefuseInvalidLeases(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.JoinsRefuseNodesWithoutAnID(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.JoinsRefuseOtherIncarnations(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.LostRenewalsEndTheSession(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.LostRepliesEndTheSession(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.ViewsCopyTheJoinedNode(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.ViewsListTheLiveSessions(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Watch.WatchesEndWithTheirContext(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Watch.WatchesRefuseCreationsByOtherIncarnations(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Watch.WatchesRefuseOtherIncarnations(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[membership.Membership]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -114,50 +71,7 @@ func TestMembershipSuite(t *testing.T) {
 				},
 				Defect: func(*membershiptest.MembershipHandle) membership.Membership { return &membershipSubject{} },
 			}),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.JoinsLeaveTheNodeUnchanged(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.JoinsRefuseInvalidLeases(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.JoinsRefuseNodesWithoutAnID(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.JoinsRefuseOtherIncarnations(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.LostRenewalsEndTheSession(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.LostRepliesEndTheSession(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.ViewsCopyTheJoinedNode(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Join.ViewsListTheLiveSessions(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Watch.WatchesEndWithTheirContext(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Watch.WatchesRefuseCreationsByOtherIncarnations(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				membershiptest.MembershipChecks.Watch.WatchesRefuseOtherIncarnations(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[membership.Membership]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -232,10 +146,15 @@ func TestMembershipSuite(t *testing.T) {
 	})
 }
 
+// membershipSuite is the suite of Membership that the tests of the planted
+// defect of a ceiling apply.
+var membershipSuite = membershiptest.MembershipSuite()
+
 // membershipIdle returns the planted defect of a ceiling of Membership
-// with a spend of nothing, a subject that answers each call at once.
+// with a spend of nothing. Each call of the defect returns its zero
+// results at once.
 func membershipIdle(h *membershiptest.MembershipHandle) membership.Membership {
-	return membershiptest.MembershipSuite().Calls[0].Over(h, func() {})
+	return membershipSuite.Calls[0].Over(h, func() {})
 }
 
 // TestMembershipSuiteBudgets applies the allocation ceilings of the suite
@@ -248,49 +167,8 @@ func TestMembershipSuiteBudgets(t *testing.T) {
 		membershipIdle,
 		conform.Ceilings(membershiptest.MembershipChecks.Join.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(membershiptest.MembershipChecks.Watch.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.JoinsLeaveTheNodeUnchanged(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.JoinsRefuseInvalidLeases(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.JoinsRefuseNodesWithoutAnID(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.JoinsRefuseOtherIncarnations(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.LostRenewalsEndTheSession(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.LostRepliesEndTheSession(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.ViewsCopyTheJoinedNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.ViewsListTheLiveSessions(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Watch.WatchesEndWithTheirContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Watch.WatchesRefuseCreationsByOtherIncarnations(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Watch.WatchesRefuseOtherIncarnations(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[membership.Membership](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -302,49 +180,8 @@ func FuzzMembershipSuiteJoin(f *testing.F) {
 		f,
 		membershiptest.MembershipChecks.Join.Callable,
 		membershipIdle,
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.JoinsLeaveTheNodeUnchanged(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.JoinsRefuseInvalidLeases(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.JoinsRefuseNodesWithoutAnID(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.JoinsRefuseOtherIncarnations(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.LostRenewalsEndTheSession(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.LostRepliesEndTheSession(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.ViewsCopyTheJoinedNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.ViewsListTheLiveSessions(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Watch.WatchesEndWithTheirContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Watch.WatchesRefuseCreationsByOtherIncarnations(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Watch.WatchesRefuseOtherIncarnations(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[membership.Membership](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -356,49 +193,8 @@ func FuzzMembershipSuiteWatch(f *testing.F) {
 		f,
 		membershiptest.MembershipChecks.Watch.Callable,
 		membershipIdle,
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.JoinsLeaveTheNodeUnchanged(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.JoinsRefuseInvalidLeases(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.JoinsRefuseNodesWithoutAnID(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.JoinsRefuseOtherIncarnations(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.LostRenewalsEndTheSession(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.LostRepliesEndTheSession(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.ViewsCopyTheJoinedNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Join.ViewsListTheLiveSessions(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Watch.WatchesEndWithTheirContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Watch.WatchesRefuseCreationsByOtherIncarnations(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			membershiptest.MembershipChecks.Watch.WatchesRefuseOtherIncarnations(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[membership.Membership](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -414,4 +210,4 @@ func BenchmarkMembershipSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:449d0cc08f5021091eba7b85ddf77c58a68282bb3e4bcd1ffad198f79225f0f4
+// dokimi:provenance sha256:179013f4cc25a2585fe9bf1f87d049b512f63ec46bcfa45f6d0d145fdddf6a32

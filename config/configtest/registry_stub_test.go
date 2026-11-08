@@ -32,15 +32,17 @@ func parsedStubValidatePins() error {
 	return want0
 }
 
-// parsedStubValidateSubject returns the subject of [stub.Behaviour] for
-// Validate. The subject calls a new double that reports to tb.
+// parsedStubValidateSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Validate. The subject calls a new double that
+// reports to tb.
 func parsedStubValidateSubject(
 	tb assert.TB,
 ) stub.Subject[configtest.ParsedValidateCall, configtest.ParsedValidateReturn] {
 	tb.Helper()
 	s := configtest.NewParsedStub(tb)
 	return stub.Subject[configtest.ParsedValidateCall, configtest.ParsedValidateReturn]{
-		Stub: s.OnValidate.MethodStub,
+		Stub:  s.OnValidate.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = parsedStubValidate(tb, s)
 		},
@@ -48,9 +50,14 @@ func parsedStubValidateSubject(
 			got0 := parsedStubValidate(tb, s)
 			return configtest.ParsedValidateReturn{Err: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() configtest.ParsedValidateReturn {
+			want0 := parsedStubValidatePins()
+			s.OnValidate.Returns(want0)
+			return configtest.ParsedValidateReturn{Err: want0}
+		},
+		Override: func(seen func(configtest.ParsedValidateCall)) {
 			s.OnValidate.Func(func() error {
-				mark()
+				seen(configtest.ParsedValidateCall{})
 				var z0 error
 				return z0
 			})
@@ -75,7 +82,6 @@ func parsedStubInstanceOf(tb assert.TB, s *configtest.ParsedStub) parsedStubInst
 		Call: func() {
 			_ = parsedStubValidate(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -87,59 +93,14 @@ func TestParsedStub(t *testing.T) {
 	t.Run("Validate", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Validate", parsedStubValidateSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewParsedStub(t)
-			var seen []configtest.ParsedValidateCall
-			s.OnValidate.OnRecord(func(c configtest.ParsedValidateCall) { seen = append(seen, c) })
-			_ = parsedStubValidate(t, s)
-			_ = parsedStubValidate(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Validate")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) parsedStubInstance {
-			return parsedStubInstanceOf(tb, configtest.NewParsedStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Validate", func(t *testing.T) {
+		t.Run("Validate", func(t *testing.T) {
 			t.Parallel()
-			s := configtest.NewParsedStub(t)
-			_ = parsedStubValidate(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnValidate.CallCount(), 0, "ResetCalls clears the calls of Validate")
-		})
-
-		t.Run("keeps the results of Returns of Validate", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewParsedStub(t)
-			want0 := parsedStubValidatePins()
-			s.OnValidate.Returns(want0)
-			s.ResetCalls()
-			got0 := parsedStubValidate(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of Validate")
-		})
-	})
-
-	t.Run("NewParsedStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) parsedStubInstance {
-			return parsedStubInstanceOf(tb, configtest.NewParsedStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewParsedStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Validate with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Validate-failing")
-			s := configtest.NewParsedStubFailing(t, want)
-			r0 := parsedStubValidate(t, s)
-			assert.ErrorIs(t, r0, want, "Validate fails with the error of NewParsedStubFailing")
+			stub.ResetBehaviour(t, "Validate", parsedStubValidateSubject)
 		})
 	})
 
@@ -232,36 +193,6 @@ func TestParsedStub(t *testing.T) {
 	})
 }
 
-// TestParsedValidateStub checks the methods of ParsedValidateStub, which
-// configures Validate.
-func TestParsedValidateStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Validate", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewParsedStub(t)
-			want0 := parsedStubValidatePins()
-			s.OnValidate.Returns(want0)
-			got0 := parsedStubValidate(t, s)
-			assert.ErrorIs(t, got0, want0, "Validate returns the error that Returns sets")
-		})
-
-		t.Run("configures Validate for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := configtest.NewParsedStub(r)
-			s.OnValidate.Strict()
-			var want0 error
-			s.OnValidate.Returns(want0)
-			_ = parsedStubValidate(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Validate")
-		})
-	})
-}
-
 // factoryStubName calls Name of s with the samples of its arguments.
 func factoryStubName[T any](tb assert.TB, s *configtest.FactoryStub[T]) shard.StrategyName {
 	tb.Helper()
@@ -344,15 +275,17 @@ func factoryStubNewPins[T any]() (T, error) {
 	return want0, want1
 }
 
-// factoryStubNameSubject returns the subject of [stub.Behaviour] for Name.
-// The subject calls a new double that reports to tb.
+// factoryStubNameSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Name. The subject calls a new double that
+// reports to tb.
 func factoryStubNameSubject[T any](
 	tb assert.TB,
 ) stub.Subject[configtest.FactoryNameCall[T], configtest.FactoryNameReturn[T]] {
 	tb.Helper()
 	s := configtest.NewFactoryStub[T](tb)
 	return stub.Subject[configtest.FactoryNameCall[T], configtest.FactoryNameReturn[T]]{
-		Stub: s.OnName.MethodStub,
+		Stub:  s.OnName.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = factoryStubName[T](tb, s)
 		},
@@ -360,9 +293,14 @@ func factoryStubNameSubject[T any](
 			got0 := factoryStubName[T](tb, s)
 			return configtest.FactoryNameReturn[T]{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() configtest.FactoryNameReturn[T] {
+			want0 := factoryStubNamePins[T]()
+			s.OnName.Returns(want0)
+			return configtest.FactoryNameReturn[T]{Result: want0}
+		},
+		Override: func(seen func(configtest.FactoryNameCall[T])) {
 			s.OnName.Func(func() shard.StrategyName {
-				mark()
+				seen(configtest.FactoryNameCall[T]{})
 				var z0 shard.StrategyName
 				return z0
 			})
@@ -370,25 +308,37 @@ func factoryStubNameSubject[T any](
 	}
 }
 
-// factoryStubParseSubject returns the subject of [stub.Behaviour] for
-// Parse. The subject calls a new double that reports to tb.
+// factoryStubParseSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Parse. The subject calls a new double that
+// reports to tb.
 func factoryStubParseSubject[T any](
 	tb assert.TB,
 ) stub.Subject[configtest.FactoryParseCall[T], configtest.FactoryParseReturn[T]] {
 	tb.Helper()
 	s := configtest.NewFactoryStub[T](tb)
 	return stub.Subject[configtest.FactoryParseCall[T], configtest.FactoryParseReturn[T]]{
-		Stub: s.OnParse.MethodStub,
+		Stub:  s.OnParse.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = factoryStubParse[T](tb, s)
+		},
+		Arguments: func(tb assert.TB, c configtest.FactoryParseCall[T]) {
+			tb.Helper()
+			a0 := factoryStubParseArgs[T](tb)
+			assert.Equal(tb, c.Raw, a0, "the call records Raw")
 		},
 		Result: func() configtest.FactoryParseReturn[T] {
 			got0, got1 := factoryStubParse[T](tb, s)
 			return configtest.FactoryParseReturn[T]{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnParse.Func(func(_ json.RawMessage) (config.Parsed, error) {
-				mark()
+		Returns: func() configtest.FactoryParseReturn[T] {
+			want0, want1 := factoryStubParsePins[T]()
+			s.OnParse.Returns(want0, want1)
+			return configtest.FactoryParseReturn[T]{Result: want0, Err: want1}
+		},
+		Override: func(seen func(configtest.FactoryParseCall[T])) {
+			s.OnParse.Func(func(p0 json.RawMessage) (config.Parsed, error) {
+				seen(configtest.FactoryParseCall[T]{Raw: p0})
 				var z0 config.Parsed
 				var z1 error
 				return z0, z1
@@ -402,24 +352,36 @@ func factoryStubParseSubject[T any](
 }
 
 // factoryStubCapabilitiesSubject returns the subject of [stub.Behaviour]
-// for Capabilities. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for Capabilities. The subject calls a new
+// double that reports to tb.
 func factoryStubCapabilitiesSubject[T any](
 	tb assert.TB,
 ) stub.Subject[configtest.FactoryCapabilitiesCall[T], configtest.FactoryCapabilitiesReturn[T]] {
 	tb.Helper()
 	s := configtest.NewFactoryStub[T](tb)
 	return stub.Subject[configtest.FactoryCapabilitiesCall[T], configtest.FactoryCapabilitiesReturn[T]]{
-		Stub: s.OnCapabilities.MethodStub,
+		Stub:  s.OnCapabilities.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = factoryStubCapabilities[T](tb, s)
+		},
+		Arguments: func(tb assert.TB, c configtest.FactoryCapabilitiesCall[T]) {
+			tb.Helper()
+			a0 := factoryStubCapabilitiesArgs[T](tb)
+			assert.Equal(tb, c.Cfg, a0, "the call records Cfg")
 		},
 		Result: func() configtest.FactoryCapabilitiesReturn[T] {
 			got0 := factoryStubCapabilities[T](tb, s)
 			return configtest.FactoryCapabilitiesReturn[T]{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnCapabilities.Func(func(_ config.Parsed) config.Capabilities {
-				mark()
+		Returns: func() configtest.FactoryCapabilitiesReturn[T] {
+			want0 := factoryStubCapabilitiesPins[T]()
+			s.OnCapabilities.Returns(want0)
+			return configtest.FactoryCapabilitiesReturn[T]{Result: want0}
+		},
+		Override: func(seen func(configtest.FactoryCapabilitiesCall[T])) {
+			s.OnCapabilities.Func(func(p0 config.Parsed) config.Capabilities {
+				seen(configtest.FactoryCapabilitiesCall[T]{Cfg: p0})
 				var z0 config.Capabilities
 				return z0
 			})
@@ -427,25 +389,37 @@ func factoryStubCapabilitiesSubject[T any](
 	}
 }
 
-// factoryStubNewSubject returns the subject of [stub.Behaviour] for New.
-// The subject calls a new double that reports to tb.
+// factoryStubNewSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for New. The subject calls a new double that
+// reports to tb.
 func factoryStubNewSubject[T any](
 	tb assert.TB,
 ) stub.Subject[configtest.FactoryNewCall[T], configtest.FactoryNewReturn[T]] {
 	tb.Helper()
 	s := configtest.NewFactoryStub[T](tb)
 	return stub.Subject[configtest.FactoryNewCall[T], configtest.FactoryNewReturn[T]]{
-		Stub: s.OnNew.MethodStub,
+		Stub:  s.OnNew.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = factoryStubNew[T](tb, s)
+		},
+		Arguments: func(tb assert.TB, c configtest.FactoryNewCall[T]) {
+			tb.Helper()
+			a0 := factoryStubNewArgs[T](tb)
+			assert.Equal(tb, c.Cfg, a0, "the call records Cfg")
 		},
 		Result: func() configtest.FactoryNewReturn[T] {
 			got0, got1 := factoryStubNew[T](tb, s)
 			return configtest.FactoryNewReturn[T]{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnNew.Func(func(_ config.Parsed) (T, error) {
-				mark()
+		Returns: func() configtest.FactoryNewReturn[T] {
+			want0, want1 := factoryStubNewPins[T]()
+			s.OnNew.Returns(want0, want1)
+			return configtest.FactoryNewReturn[T]{Result: want0, Err: want1}
+		},
+		Override: func(seen func(configtest.FactoryNewCall[T])) {
+			s.OnNew.Func(func(p0 config.Parsed) (T, error) {
+				seen(configtest.FactoryNewCall[T]{Cfg: p0})
 				var z0 T
 				var z1 error
 				return z0, z1
@@ -471,7 +445,6 @@ func factoryStubInstanceOf[T any](tb assert.TB, s *configtest.FactoryStub[T]) fa
 		Call: func() {
 			_ = factoryStubName[T](tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -483,193 +456,44 @@ func checkFactoryStub[T any](t *testing.T) {
 	t.Run("Name", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Name", factoryStubNameSubject[T])
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			var seen []configtest.FactoryNameCall[T]
-			s.OnName.OnRecord(func(c configtest.FactoryNameCall[T]) { seen = append(seen, c) })
-			_ = factoryStubName[T](t, s)
-			_ = factoryStubName[T](t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Name")
-		})
 	})
 
 	t.Run("Parse", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Parse", factoryStubParseSubject[T])
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			_, _ = factoryStubParse[T](t, s)
-			got := s.OnParse.AssertCalledOnce(t, "Parse records the call")
-			a0 := factoryStubParseArgs[T](t)
-			assert.Equal(t, got.Raw, a0, "the call records Raw")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			var seen []configtest.FactoryParseCall[T]
-			s.OnParse.OnRecord(func(c configtest.FactoryParseCall[T]) { seen = append(seen, c) })
-			_, _ = factoryStubParse[T](t, s)
-			_, _ = factoryStubParse[T](t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Parse")
-		})
 	})
 
 	t.Run("Capabilities", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Capabilities", factoryStubCapabilitiesSubject[T])
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			_ = factoryStubCapabilities[T](t, s)
-			got := s.OnCapabilities.AssertCalledOnce(t, "Capabilities records the call")
-			a0 := factoryStubCapabilitiesArgs[T](t)
-			assert.Equal(t, got.Cfg, a0, "the call records Cfg")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			var seen []configtest.FactoryCapabilitiesCall[T]
-			s.OnCapabilities.OnRecord(func(c configtest.FactoryCapabilitiesCall[T]) { seen = append(seen, c) })
-			_ = factoryStubCapabilities[T](t, s)
-			_ = factoryStubCapabilities[T](t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Capabilities")
-		})
 	})
 
 	t.Run("New", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "New", factoryStubNewSubject[T])
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			_, _ = factoryStubNew[T](t, s)
-			got := s.OnNew.AssertCalledOnce(t, "New records the call")
-			a0 := factoryStubNewArgs[T](t)
-			assert.Equal(t, got.Cfg, a0, "the call records Cfg")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			var seen []configtest.FactoryNewCall[T]
-			s.OnNew.OnRecord(func(c configtest.FactoryNewCall[T]) { seen = append(seen, c) })
-			_, _ = factoryStubNew[T](t, s)
-			_, _ = factoryStubNew[T](t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of New")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) factoryStubInstance[T] {
-			return factoryStubInstanceOf[T](tb, configtest.NewFactoryStub[T](tb))
-		})
 
-		t.Run("clears the recorded calls of Name", func(t *testing.T) {
+		t.Run("Name", func(t *testing.T) {
 			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			_ = factoryStubName[T](t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnName.CallCount(), 0, "ResetCalls clears the calls of Name")
+			stub.ResetBehaviour(t, "Name", factoryStubNameSubject[T])
 		})
 
-		t.Run("keeps the results of Returns of Name", func(t *testing.T) {
+		t.Run("Parse", func(t *testing.T) {
 			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			want0 := factoryStubNamePins[T]()
-			s.OnName.Returns(want0)
-			s.ResetCalls()
-			got0 := factoryStubName[T](t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Name")
+			stub.ResetBehaviour(t, "Parse", factoryStubParseSubject[T])
 		})
 
-		t.Run("clears the recorded calls of Parse", func(t *testing.T) {
+		t.Run("Capabilities", func(t *testing.T) {
 			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			_, _ = factoryStubParse[T](t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnParse.CallCount(), 0, "ResetCalls clears the calls of Parse")
+			stub.ResetBehaviour(t, "Capabilities", factoryStubCapabilitiesSubject[T])
 		})
 
-		t.Run("keeps the results of Returns of Parse", func(t *testing.T) {
+		t.Run("New", func(t *testing.T) {
 			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			want0, want1 := factoryStubParsePins[T]()
-			s.OnParse.Returns(want0, want1)
-			s.ResetCalls()
-			_, got1 := factoryStubParse[T](t, s)
-			assert.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Parse")
-		})
-
-		t.Run("clears the recorded calls of Capabilities", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			_ = factoryStubCapabilities[T](t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnCapabilities.CallCount(), 0, "ResetCalls clears the calls of Capabilities")
-		})
-
-		t.Run("keeps the results of Returns of Capabilities", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			want0 := factoryStubCapabilitiesPins[T]()
-			s.OnCapabilities.Returns(want0)
-			s.ResetCalls()
-			got0 := factoryStubCapabilities[T](t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Capabilities")
-		})
-
-		t.Run("clears the recorded calls of New", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			_, _ = factoryStubNew[T](t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnNew.CallCount(), 0, "ResetCalls clears the calls of New")
-		})
-
-		t.Run("keeps the results of Returns of New", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			want0, want1 := factoryStubNewPins[T]()
-			s.OnNew.Returns(want0, want1)
-			s.ResetCalls()
-			_, got1 := factoryStubNew[T](t, s)
-			assert.ErrorIs(t, got1, want1, "ResetCalls keeps the error of New")
-		})
-	})
-
-	t.Run("NewFactoryStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) factoryStubInstance[T] {
-			return factoryStubInstanceOf[T](tb, configtest.NewFactoryStubDelayed[T](tb, d, clk))
-		})
-	})
-
-	t.Run("NewFactoryStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Parse with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Parse-failing")
-			s := configtest.NewFactoryStubFailing[T](t, want)
-			_, r1 := factoryStubParse[T](t, s)
-			assert.ErrorIs(t, r1, want, "Parse fails with the error of NewFactoryStubFailing")
-		})
-
-		t.Run("fails New with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("New-failing")
-			s := configtest.NewFactoryStubFailing[T](t, want)
-			_, r1 := factoryStubNew[T](t, s)
-			assert.ErrorIs(t, r1, want, "New fails with the error of NewFactoryStubFailing")
+			stub.ResetBehaviour(t, "New", factoryStubNewSubject[T])
 		})
 	})
 
@@ -870,185 +694,6 @@ func checkFactoryStub[T any](t *testing.T) {
 	})
 }
 
-// checkFactoryNameStub checks the methods of FactoryNameStub, which
-// configures Name, at the type parameters of the double.
-func checkFactoryNameStub[T any](t *testing.T) {
-	t.Helper()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Name", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			want0 := factoryStubNamePins[T]()
-			s.OnName.Returns(want0)
-			got0 := factoryStubName[T](t, s)
-			assert.Equal(t, got0, want0, "Name returns the Result that Returns sets")
-		})
-
-		t.Run("configures Name for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := configtest.NewFactoryStub[T](r)
-			s.OnName.Strict()
-			var want0 shard.StrategyName
-			s.OnName.Returns(want0)
-			_ = factoryStubName[T](t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Name")
-		})
-	})
-}
-
-// checkFactoryParseStub checks the methods of FactoryParseStub, which
-// configures Parse, at the type parameters of the double.
-func checkFactoryParseStub[T any](t *testing.T) {
-	t.Helper()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Parse", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			want0, want1 := factoryStubParsePins[T]()
-			s.OnParse.Returns(want0, want1)
-			_, got1 := factoryStubParse[T](t, s)
-			assert.ErrorIs(t, got1, want1, "Parse returns the error that Returns sets")
-		})
-
-		t.Run("configures Parse for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := configtest.NewFactoryStub[T](r)
-			s.OnParse.Strict()
-			var want0 config.Parsed
-			var want1 error
-			s.OnParse.Returns(want0, want1)
-			_, _ = factoryStubParse[T](t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Parse")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Parse to the function", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			var got0 json.RawMessage
-			s.OnParse.Func(func(p0 json.RawMessage) (config.Parsed, error) {
-				got0 = p0
-				var z0 config.Parsed
-				var z1 error
-				return z0, z1
-			})
-			_, _ = factoryStubParse[T](t, s)
-			a0 := factoryStubParseArgs[T](t)
-			assert.Equal(t, got0, a0, "the function receives Raw")
-		})
-	})
-}
-
-// checkFactoryCapabilitiesStub checks the methods of
-// FactoryCapabilitiesStub, which configures Capabilities, at the type
-// parameters of the double.
-func checkFactoryCapabilitiesStub[T any](t *testing.T) {
-	t.Helper()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Capabilities", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			want0 := factoryStubCapabilitiesPins[T]()
-			s.OnCapabilities.Returns(want0)
-			got0 := factoryStubCapabilities[T](t, s)
-			assert.Equal(t, got0, want0, "Capabilities returns the Result that Returns sets")
-		})
-
-		t.Run("configures Capabilities for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := configtest.NewFactoryStub[T](r)
-			s.OnCapabilities.Strict()
-			var want0 config.Capabilities
-			s.OnCapabilities.Returns(want0)
-			_ = factoryStubCapabilities[T](t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Capabilities")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Capabilities to the function", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			var got0 config.Parsed
-			s.OnCapabilities.Func(func(p0 config.Parsed) config.Capabilities {
-				got0 = p0
-				var z0 config.Capabilities
-				return z0
-			})
-			_ = factoryStubCapabilities[T](t, s)
-			a0 := factoryStubCapabilitiesArgs[T](t)
-			assert.Equal(t, got0, a0, "the function receives Cfg")
-		})
-	})
-}
-
-// checkFactoryNewStub checks the methods of FactoryNewStub, which
-// configures New, at the type parameters of the double.
-func checkFactoryNewStub[T any](t *testing.T) {
-	t.Helper()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of New", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			want0, want1 := factoryStubNewPins[T]()
-			s.OnNew.Returns(want0, want1)
-			_, got1 := factoryStubNew[T](t, s)
-			assert.ErrorIs(t, got1, want1, "New returns the error that Returns sets")
-		})
-
-		t.Run("configures New for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := configtest.NewFactoryStub[T](r)
-			s.OnNew.Strict()
-			var want0 T
-			var want1 error
-			s.OnNew.Returns(want0, want1)
-			_, _ = factoryStubNew[T](t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of New")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of New to the function", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewFactoryStub[T](t)
-			var got0 config.Parsed
-			s.OnNew.Func(func(p0 config.Parsed) (T, error) {
-				got0 = p0
-				var z0 T
-				var z1 error
-				return z0, z1
-			})
-			_, _ = factoryStubNew[T](t, s)
-			a0 := factoryStubNewArgs[T](t)
-			assert.Equal(t, got0, a0, "the function receives Cfg")
-		})
-	})
-}
-
 // TestFactoryStub runs the checks of FactoryStub at the witnesses of its
 // type parameters.
 func TestFactoryStub(t *testing.T) {
@@ -1057,36 +702,4 @@ func TestFactoryStub(t *testing.T) {
 	checkFactoryStub[int](t)
 }
 
-// TestFactoryNameStub runs the checks of FactoryNameStub at the same
-// witnesses.
-func TestFactoryNameStub(t *testing.T) {
-	t.Parallel()
-
-	checkFactoryNameStub[int](t)
-}
-
-// TestFactoryParseStub runs the checks of FactoryParseStub at the same
-// witnesses.
-func TestFactoryParseStub(t *testing.T) {
-	t.Parallel()
-
-	checkFactoryParseStub[int](t)
-}
-
-// TestFactoryCapabilitiesStub runs the checks of FactoryCapabilitiesStub
-// at the same witnesses.
-func TestFactoryCapabilitiesStub(t *testing.T) {
-	t.Parallel()
-
-	checkFactoryCapabilitiesStub[int](t)
-}
-
-// TestFactoryNewStub runs the checks of FactoryNewStub at the same
-// witnesses.
-func TestFactoryNewStub(t *testing.T) {
-	t.Parallel()
-
-	checkFactoryNewStub[int](t)
-}
-
-// dokimi:provenance sha256:600d89068fd47beb23d1a3c856fc069d5fbe8eafe9aea4be2c2b994c7a1ec555
+// dokimi:provenance sha256:befcd444a08298ee6ca611e3a8c273684a0cf3981131db55499f3222ccab818d

@@ -49,6 +49,7 @@ func TestMetadataSuite(t *testing.T) {
 				},
 				Defect: func(*protocoltest.MetadataHandle) protocoltest.MetadataMethods { return &metadataSubject{} },
 			}),
+			conform.ExcuseSuite[protocoltest.MetadataMethods]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -70,6 +71,7 @@ func TestMetadataSuite(t *testing.T) {
 				},
 				Defect: func(*protocoltest.MetadataHandle) protocoltest.MetadataMethods { return &metadataSubject{} },
 			}),
+			conform.ExcuseSuite[protocoltest.MetadataMethods]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -92,10 +94,15 @@ func TestMetadataSuiteAllocs(t *testing.T) {
 	})
 }
 
+// metadataSuite is the suite of Metadata that the tests of the planted
+// defect of a ceiling apply.
+var metadataSuite = protocoltest.MetadataSuite()
+
 // metadataIdle returns the planted defect of a ceiling of Metadata with a
-// spend of nothing, a subject that answers each call at once.
+// spend of nothing. Each call of the defect returns its zero results at
+// once.
 func metadataIdle(h *protocoltest.MetadataHandle) protocoltest.MetadataMethods {
-	return protocoltest.MetadataSuite().Calls[0].Over(h, func() {})
+	return metadataSuite.Calls[0].Over(h, func() {})
 }
 
 // TestMetadataSuiteBudgets applies the allocation ceilings of the suite of
@@ -106,6 +113,9 @@ func TestMetadataSuiteBudgets(t *testing.T) {
 	protocoltest.RunMetadataBudgets(
 		t,
 		metadataIdle,
+		conform.ExcuseSuite[protocoltest.MetadataMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
+		),
 	)
 }
 
@@ -116,6 +126,9 @@ func FuzzMetadataSuiteCheck(f *testing.F) {
 		f,
 		protocoltest.MetadataChecks.Check.Callable,
 		metadataIdle,
+		conform.ExcuseSuite[protocoltest.MetadataMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
+		),
 	)
 }
 
@@ -163,4 +176,4 @@ func FuzzMetadataConformsToMetadataCheck(f *testing.F) {
 	)
 }
 
-// dokimi:provenance sha256:1cd8217c23b48c3aadd7978c008a47beaeb2bb4a2f6de5773ac67be0c32a41c1
+// dokimi:provenance sha256:bb51ce0ed0d748543303a122977610dc1c1cb75c46faf73f0207f0666dede382

@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 )
 
 // The suite refers to the compatibility witness of its runtime.
@@ -42,6 +44,18 @@ type metadataCheck struct {
 	conform.Callable[MetadataMethods]
 }
 
+// Smoke returns the identity of the check that Check returns without a
+// panic for derived inputs.
+func (c metadataCheck) Smoke() conform.ID[MetadataMethods] {
+	return c.Check("smoke")
+}
+
+// FreshReportsNoPoison returns the identity of the check that Check
+// reports no error for a fresh receiver.
+func (c metadataCheck) FreshReportsNoPoison() conform.ID[MetadataMethods] {
+	return c.Check("fresh-reports-no-poison")
+}
+
 // AllocationBudget returns the identity of the check
 // Metadata.Check/allocation-budget.
 func (c metadataCheck) AllocationBudget() conform.ID[MetadataMethods] {
@@ -53,6 +67,35 @@ func (c metadataCheck) AllocationBudget() conform.ID[MetadataMethods] {
 func MetadataSuite() conform.Suite[MetadataMethods] {
 	return conform.Suite[MetadataMethods]{
 		Declaration: "Metadata",
+		Package:     "go.thesmos.sh/sharder/protocol",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
+		Checks: []conform.Check[MetadataMethods]{
+			{
+				ID:          MetadataChecks.Check.Smoke(),
+				Statement:   "Check returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *MetadataHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						return h.Subject().Check()
+					})
+				},
+				Defect: metadataCheckPanics,
+			},
+			{
+				ID:          MetadataChecks.Check.FreshReportsNoPoison(),
+				Statement:   "Check reports no error for a fresh receiver",
+				Claim:       spec.FreshReportsNoPoison,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *MetadataHandle) {
+					probe.ReportsNoError(h, func(ctx context.Context) error {
+						return h.Subject().Check()
+					})
+				},
+				Defect: metadataCheckReportsPoison,
+			},
+		},
 		Calls: []conform.Call[MetadataMethods]{
 			{
 				Calls:    metadataCheckCalls,
@@ -155,4 +198,39 @@ func newMetadataOver(_ *MetadataHandle, spend func()) MetadataMethods {
 	return metadataOver{spend: spend}
 }
 
-// dokimi:provenance sha256:13e8488d7737260c2252e74b8cba1e69983de78cb5082b10a1327ea162a0da45
+// metadataCheckPanicsDefect is the planted defect of a Metadata whose
+// Check panics.
+type metadataCheckPanicsDefect struct {
+	metadataOverEmbedded
+}
+
+// Check is the override of the planted defect.
+func (*metadataCheckPanicsDefect) Check() (r0 error) {
+	panic("the planted defect of a Metadata whose Check panics")
+}
+
+// metadataCheckPanics returns the planted defect of a Metadata whose Check
+// panics over a fresh subject.
+func metadataCheckPanics(h *MetadataHandle) MetadataMethods {
+	return &metadataCheckPanicsDefect{metadataOverEmbedded: h.Fresh()}
+}
+
+// metadataCheckReportsPoisonDefect is the planted defect of a Metadata
+// whose Check reports an error for a fresh receiver.
+type metadataCheckReportsPoisonDefect struct {
+	metadataOverEmbedded
+}
+
+// Check is the override of the planted defect.
+func (*metadataCheckReportsPoisonDefect) Check() (r0 error) {
+	r0 = conform.ErrGenerated
+	return r0
+}
+
+// metadataCheckReportsPoison returns the planted defect of a Metadata
+// whose Check reports an error for a fresh receiver over a fresh subject.
+func metadataCheckReportsPoison(h *MetadataHandle) MetadataMethods {
+	return &metadataCheckReportsPoisonDefect{metadataOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:174aac6971521ea3f636328e85bac940ce9a5bc00f7ee6f59d979d4cbfa215f2

@@ -10,9 +10,12 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/sharder/router"
+	"go.thesmos.sh/sharder/shard"
 )
 
 // The suite refers to the compatibility witness of its runtime.
@@ -57,6 +60,12 @@ type watcherRoute struct {
 	conform.Callable[WatcherMethods]
 }
 
+// Smoke returns the identity of the check that Route returns without a
+// panic for derived inputs.
+func (c watcherRoute) Smoke() conform.ID[WatcherMethods] {
+	return c.Check("smoke")
+}
+
 // AllocationBudget returns the identity of the check
 // Watcher.Route/allocation-budget.
 func (c watcherRoute) AllocationBudget() conform.ID[WatcherMethods] {
@@ -69,10 +78,22 @@ type watcherRefresh struct {
 	conform.Callable[WatcherMethods]
 }
 
+// Cancel returns the identity of the check that Refresh returns an error
+// for a cancelled context.
+func (c watcherRefresh) Cancel() conform.ID[WatcherMethods] {
+	return c.Check("cancel")
+}
+
 // watcherClose is the name of Watcher.Close, with the identities of its
 // checks.
 type watcherClose struct {
 	conform.Callable[WatcherMethods]
+}
+
+// Smoke returns the identity of the check that Close returns without a
+// panic for derived inputs.
+func (c watcherClose) Smoke() conform.ID[WatcherMethods] {
+	return c.Check("smoke")
 }
 
 // watcherDone is the name of Watcher.Done, with the identities of its
@@ -81,10 +102,28 @@ type watcherDone struct {
 	conform.Callable[WatcherMethods]
 }
 
+// Smoke returns the identity of the check that Done returns without a
+// panic for derived inputs.
+func (c watcherDone) Smoke() conform.ID[WatcherMethods] {
+	return c.Check("smoke")
+}
+
 // watcherErr is the name of Watcher.Err, with the identities of its
 // checks.
 type watcherErr struct {
 	conform.Callable[WatcherMethods]
+}
+
+// Smoke returns the identity of the check that Err returns without a panic
+// for derived inputs.
+func (c watcherErr) Smoke() conform.ID[WatcherMethods] {
+	return c.Check("smoke")
+}
+
+// FreshReportsNoPoison returns the identity of the check that Err reports
+// no error for a fresh receiver.
+func (c watcherErr) FreshReportsNoPoison() conform.ID[WatcherMethods] {
+	return c.Check("fresh-reports-no-poison")
 }
 
 // WatcherSuite returns the checks of Watcher, and the calls and the
@@ -92,6 +131,167 @@ type watcherErr struct {
 func WatcherSuite() conform.Suite[WatcherMethods] {
 	return conform.Suite[WatcherMethods]{
 		Declaration: "Watcher",
+		Package:     "go.thesmos.sh/sharder/router",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
+		Checks: []conform.Check[WatcherMethods]{
+			{
+				ID:          WatcherChecks.Route.Smoke(),
+				Statement:   "Route returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *WatcherHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Route(ctx, &router.RouteRequest{Key: []byte{1}})
+						return err
+					})
+				},
+				Defect: watcherRoutePanics,
+			},
+			{
+				ID:          WatcherChecks.Route.Smoke().Generated(),
+				Statement:   "Route returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *WatcherHandle, c *prop.Case) {
+					drawnReq := c.Draw(prop.Of[router.RouteRequest](), "req")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Route(ctx, &drawnReq)
+						return err
+					})
+				},
+				Defect: watcherRoutePanics,
+			},
+			{
+				ID:          WatcherChecks.Refresh.Cancel(),
+				Statement:   "Refresh returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *WatcherHandle) {
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().Refresh(ctx, &router.RefreshRequest{Cell: shard.CellID("Cell-a")})
+						return err
+					})
+				},
+				Defect: watcherRefreshIgnoresCancel,
+			},
+			{
+				ID:          WatcherChecks.Refresh.Cancel().Generated(),
+				Statement:   "Refresh returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *WatcherHandle, c *prop.Case) {
+					drawnReq := c.Draw(prop.Of[router.RefreshRequest](), "req")
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().Refresh(ctx, &drawnReq)
+						return err
+					})
+				},
+				Defect: watcherRefreshIgnoresCancel,
+			},
+			{
+				ID:          WatcherChecks.Close.Smoke(),
+				Statement:   "Close returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *WatcherHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						return h.Subject().Close()
+					})
+				},
+				Defect: watcherClosePanics,
+			},
+			{
+				ID:          WatcherChecks.Done.Smoke(),
+				Statement:   "Done returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *WatcherHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Done()
+						return nil
+					})
+				},
+				Defect: watcherDonePanics,
+			},
+			{
+				ID:          WatcherChecks.Err.Smoke(),
+				Statement:   "Err returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *WatcherHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						return h.Subject().Err()
+					})
+				},
+				Defect: watcherErrPanics,
+			},
+			{
+				ID:          WatcherChecks.Err.FreshReportsNoPoison(),
+				Statement:   "Err reports no error for a fresh receiver",
+				Claim:       spec.FreshReportsNoPoison,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *WatcherHandle) {
+					probe.ReportsNoError(h, func(ctx context.Context) error {
+						return h.Subject().Err()
+					})
+				},
+				Defect: watcherErrReportsPoison,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Cancel,
+				Callable: "Watcher.Route",
+				Gate:     spec.Unrefused,
+				Why:      "Route does not wait for the router, and it uses ctx only for the telemetry of the lookup",
+				Remedy:   "remove the directive refuse of the claim where Route makes it",
+			},
+			{
+				Claim:    spec.ZeroOnError,
+				Callable: "Watcher.Route",
+				Gate:     spec.Unrefused,
+				Why:      "Route fails only for a key whose shard has no route, and no derived input selects such a key",
+				Remedy:   "remove the directive refuse of the claim where Route makes it",
+			},
+			{
+				Claim:    spec.ZeroOnError,
+				Callable: "Watcher.Refresh",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Refresh",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Watcher.Done",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Done",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+		},
+		Unclaimed: []conform.Unclaimed{
+			{
+				Classification: "mixin:concurrent",
+				Callable:       "Watcher.Route",
+				Stance:         spec.Needs,
+				Note:           "The claim linearizable needs the param machineries=[reference] of the directive suite.",
+			},
+			{
+				Classification: "mixin:waits",
+				Callable:       "Watcher.Refresh",
+				Stance:         spec.Silent,
+				Note:           "The mixin documents that the callable can wait for another call.",
+			},
+			{
+				Classification: "shape:closer",
+				Callable:       "Watcher.Close",
+				Stance:         spec.Silent,
+				Note:           "A close returns nothing that a check could compare.",
+			},
+		},
 		Calls: []conform.Call[WatcherMethods]{
 			{
 				Calls:    watcherRouteCalls,
@@ -299,4 +499,113 @@ func newWatcherOver(_ *WatcherHandle, spend func()) WatcherMethods {
 	return watcherOver{spend: spend}
 }
 
-// dokimi:provenance sha256:df68e8f015f09abf523402993eefce6f7e6b7c5d8707e3133e254cb75a0ca149
+// watcherRoutePanicsDefect is the planted defect of a Watcher whose Route
+// panics.
+type watcherRoutePanicsDefect struct {
+	watcherOverEmbedded
+}
+
+// Route is the override of the planted defect.
+func (*watcherRoutePanicsDefect) Route(p0 context.Context, p1 *router.RouteRequest) (r0 router.RouteResult, r1 error) {
+	panic("the planted defect of a Watcher whose Route panics")
+}
+
+// watcherRoutePanics returns the planted defect of a Watcher whose Route
+// panics over a fresh subject.
+func watcherRoutePanics(h *WatcherHandle) WatcherMethods {
+	return &watcherRoutePanicsDefect{watcherOverEmbedded: h.Fresh()}
+}
+
+// watcherRefreshIgnoresCancelDefect is the planted defect of a Watcher
+// whose Refresh ignores the context.
+type watcherRefreshIgnoresCancelDefect struct {
+	watcherOverEmbedded
+}
+
+// Refresh is the override of the planted defect.
+func (d *watcherRefreshIgnoresCancelDefect) Refresh(
+	p0 context.Context,
+	p1 *router.RefreshRequest,
+) (r0 router.RefreshResult, r1 error) {
+	if p0.Err() != nil {
+		return r0, r1
+	}
+	return d.watcherOverEmbedded.Refresh(p0, p1)
+}
+
+// watcherRefreshIgnoresCancel returns the planted defect of a Watcher
+// whose Refresh ignores the context over a fresh subject.
+func watcherRefreshIgnoresCancel(h *WatcherHandle) WatcherMethods {
+	return &watcherRefreshIgnoresCancelDefect{watcherOverEmbedded: h.Fresh()}
+}
+
+// watcherClosePanicsDefect is the planted defect of a Watcher whose Close
+// panics.
+type watcherClosePanicsDefect struct {
+	watcherOverEmbedded
+}
+
+// Close is the override of the planted defect.
+func (*watcherClosePanicsDefect) Close() (r0 error) {
+	panic("the planted defect of a Watcher whose Close panics")
+}
+
+// watcherClosePanics returns the planted defect of a Watcher whose Close
+// panics over a fresh subject.
+func watcherClosePanics(h *WatcherHandle) WatcherMethods {
+	return &watcherClosePanicsDefect{watcherOverEmbedded: h.Fresh()}
+}
+
+// watcherDonePanicsDefect is the planted defect of a Watcher whose Done
+// panics.
+type watcherDonePanicsDefect struct {
+	watcherOverEmbedded
+}
+
+// Done is the override of the planted defect.
+func (*watcherDonePanicsDefect) Done() (r0 <-chan struct{}) {
+	panic("the planted defect of a Watcher whose Done panics")
+}
+
+// watcherDonePanics returns the planted defect of a Watcher whose Done
+// panics over a fresh subject.
+func watcherDonePanics(h *WatcherHandle) WatcherMethods {
+	return &watcherDonePanicsDefect{watcherOverEmbedded: h.Fresh()}
+}
+
+// watcherErrPanicsDefect is the planted defect of a Watcher whose Err
+// panics.
+type watcherErrPanicsDefect struct {
+	watcherOverEmbedded
+}
+
+// Err is the override of the planted defect.
+func (*watcherErrPanicsDefect) Err() (r0 error) {
+	panic("the planted defect of a Watcher whose Err panics")
+}
+
+// watcherErrPanics returns the planted defect of a Watcher whose Err
+// panics over a fresh subject.
+func watcherErrPanics(h *WatcherHandle) WatcherMethods {
+	return &watcherErrPanicsDefect{watcherOverEmbedded: h.Fresh()}
+}
+
+// watcherErrReportsPoisonDefect is the planted defect of a Watcher whose
+// Err reports an error for a fresh receiver.
+type watcherErrReportsPoisonDefect struct {
+	watcherOverEmbedded
+}
+
+// Err is the override of the planted defect.
+func (*watcherErrReportsPoisonDefect) Err() (r0 error) {
+	r0 = conform.ErrGenerated
+	return r0
+}
+
+// watcherErrReportsPoison returns the planted defect of a Watcher whose
+// Err reports an error for a fresh receiver over a fresh subject.
+func watcherErrReportsPoison(h *WatcherHandle) WatcherMethods {
+	return &watcherErrReportsPoisonDefect{watcherOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:95749791a35cccf6465842e63c764aa9ae5f79727578b20ddfbb3ff22d4eedb8

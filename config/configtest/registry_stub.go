@@ -145,21 +145,6 @@ func NewParsedStub(tb assert.TB, opts ...ParsedStubOption) *ParsedStub {
 	return s
 }
 
-// NewParsedStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewParsedStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...ParsedStubOption) *ParsedStub {
-	return NewParsedStub(tb, append([]ParsedStubOption{
-		ParsedStubWithClock(clk),
-		ParsedStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewParsedStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewParsedStubFailing(tb assert.TB, err error, opts ...ParsedStubOption) *ParsedStub {
-	return NewParsedStub(tb, append([]ParsedStubOption{ParsedStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *ParsedStub) ResetCalls() {
@@ -463,26 +448,6 @@ func NewFactoryStub[T any](tb assert.TB, opts ...FactoryStubOption[T]) *FactoryS
 	return s
 }
 
-// NewFactoryStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewFactoryStubDelayed[T any](
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...FactoryStubOption[T],
-) *FactoryStub[T] {
-	return NewFactoryStub[T](tb, append([]FactoryStubOption[T]{
-		FactoryStubWithClock[T](clk),
-		FactoryStubWithLatency[T](d),
-	}, opts...)...)
-}
-
-// NewFactoryStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewFactoryStubFailing[T any](tb assert.TB, err error, opts ...FactoryStubOption[T]) *FactoryStub[T] {
-	return NewFactoryStub[T](tb, append([]FactoryStubOption[T]{FactoryStubFailing[T](err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *FactoryStub[T]) ResetCalls() {
@@ -605,4 +570,4 @@ func (s *FactoryStub[T]) New(cfg config.Parsed) (T, error) {
 	return r.Result, r.Err
 }
 
-// dokimi:provenance sha256:4fcf514fab95ae89edf7019288d76feb159a029ba4935bb324bcc3555e69d826
+// dokimi:provenance sha256:1888e0026f70f3e281a280c770042bcf376fdf66e4adb8e7f8fe0c24cd35e5c0

@@ -232,21 +232,6 @@ func NewProtocolStub(tb assert.TB, opts ...ProtocolStubOption) *ProtocolStub {
 	return s
 }
 
-// NewProtocolStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewProtocolStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...ProtocolStubOption) *ProtocolStub {
-	return NewProtocolStub(tb, append([]ProtocolStubOption{
-		ProtocolStubWithClock(clk),
-		ProtocolStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewProtocolStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewProtocolStubFailing(tb assert.TB, err error, opts ...ProtocolStubOption) *ProtocolStub {
-	return NewProtocolStub(tb, append([]ProtocolStubOption{ProtocolStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *ProtocolStub) ResetCalls() {
@@ -336,4 +321,4 @@ func (s *ProtocolStub) Script(t handoff.Transfer) (handoff.Script, error) {
 	return r.Result, r.Err
 }
 
-// dokimi:provenance sha256:50e853bb22bfd29de0b53813331bc7f740fccc229cb2eb78d9983ad9c7f7c96b
+// dokimi:provenance sha256:66e2b4ef6040ad763c84f10ba4705ae99cfaefcfd234b62f723f483d0f7ff4d1

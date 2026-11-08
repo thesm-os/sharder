@@ -209,21 +209,6 @@ func NewHandlerStub(tb assert.TB, opts ...HandlerStubOption) *HandlerStub {
 	return s
 }
 
-// NewHandlerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewHandlerStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...HandlerStubOption) *HandlerStub {
-	return NewHandlerStub(tb, append([]HandlerStubOption{
-		HandlerStubWithClock(clk),
-		HandlerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewHandlerStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewHandlerStubFailing(tb assert.TB, err error, opts ...HandlerStubOption) *HandlerStub {
-	return NewHandlerStub(tb, append([]HandlerStubOption{HandlerStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *HandlerStub) ResetCalls() {
@@ -432,21 +417,6 @@ func NewRevokerStub(tb assert.TB, opts ...RevokerStubOption) *RevokerStub {
 	return s
 }
 
-// NewRevokerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewRevokerStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...RevokerStubOption) *RevokerStub {
-	return NewRevokerStub(tb, append([]RevokerStubOption{
-		RevokerStubWithClock(clk),
-		RevokerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewRevokerStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewRevokerStubFailing(tb assert.TB, err error, opts ...RevokerStubOption) *RevokerStub {
-	return NewRevokerStub(tb, append([]RevokerStubOption{RevokerStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *RevokerStub) ResetCalls() {
@@ -615,20 +585,6 @@ func NewLoadReporterStub(tb assert.TB, opts ...LoadReporterStubOption) *LoadRepo
 	return s
 }
 
-// NewLoadReporterStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewLoadReporterStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...LoadReporterStubOption,
-) *LoadReporterStub {
-	return NewLoadReporterStub(tb, append([]LoadReporterStubOption{
-		LoadReporterStubWithClock(clk),
-		LoadReporterStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *LoadReporterStub) ResetCalls() {
@@ -662,4 +618,4 @@ func (s *LoadReporterStub) ShardLoad(id shard.ID) shard.Load {
 	return r.Result
 }
 
-// dokimi:provenance sha256:b34ba3367902b0f169b3b3f3993e2fb75756ad33b04c6ba8d08c5209a4befb85
+// dokimi:provenance sha256:15d67beb532dec4fd87867af87ed3f0c7d7b0f00fce12abd0f924db3eacfaed0

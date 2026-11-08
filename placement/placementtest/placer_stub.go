@@ -189,21 +189,6 @@ func NewPlacerStub(tb assert.TB, opts ...PlacerStubOption) *PlacerStub {
 	return s
 }
 
-// NewPlacerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewPlacerStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...PlacerStubOption) *PlacerStub {
-	return NewPlacerStub(tb, append([]PlacerStubOption{
-		PlacerStubWithClock(clk),
-		PlacerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewPlacerStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewPlacerStubFailing(tb assert.TB, err error, opts ...PlacerStubOption) *PlacerStub {
-	return NewPlacerStub(tb, append([]PlacerStubOption{PlacerStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *PlacerStub) ResetCalls() {
@@ -266,4 +251,4 @@ func (s *PlacerStub) Schedule() placement.Schedule {
 	return r.Result
 }
 
-// dokimi:provenance sha256:b538ace9241b33f3ca28fd5c5f97942bea6faa988663d3e2467f35d603106b55
+// dokimi:provenance sha256:ed22c814eb31f65b52eb554670b88aef331146085b912323f729c90aca730225

@@ -72,25 +72,39 @@ func handlerStubDropShardPins() error {
 	return want0
 }
 
-// handlerStubAddShardSubject returns the subject of [stub.Behaviour] for
-// AddShard. The subject calls a new double that reports to tb.
+// handlerStubAddShardSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for AddShard. The subject calls a new double that
+// reports to tb.
 func handlerStubAddShardSubject(
 	tb assert.TB,
 ) stub.Subject[drivertest.HandlerAddShardCall, drivertest.HandlerAddShardReturn] {
 	tb.Helper()
 	s := drivertest.NewHandlerStub(tb)
 	return stub.Subject[drivertest.HandlerAddShardCall, drivertest.HandlerAddShardReturn]{
-		Stub: s.OnAddShard.MethodStub,
+		Stub:  s.OnAddShard.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = handlerStubAddShard(tb, s)
+		},
+		Arguments: func(tb assert.TB, c drivertest.HandlerAddShardCall) {
+			tb.Helper()
+			a0, a1, a2 := handlerStubAddShardArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.R, a1, "the call records R")
+			expect.Equal(tb, c.T, a2, "the call records T")
 		},
 		Result: func() drivertest.HandlerAddShardReturn {
 			got0 := handlerStubAddShard(tb, s)
 			return drivertest.HandlerAddShardReturn{Err: got0}
 		},
-		Override: func(mark func()) {
-			s.OnAddShard.Func(func(_ context.Context, _ *protocol.Request, _ *fence.Token) error {
-				mark()
+		Returns: func() drivertest.HandlerAddShardReturn {
+			want0 := handlerStubAddShardPins()
+			s.OnAddShard.Returns(want0)
+			return drivertest.HandlerAddShardReturn{Err: want0}
+		},
+		Override: func(seen func(drivertest.HandlerAddShardCall)) {
+			s.OnAddShard.Func(func(p0 context.Context, p1 *protocol.Request, p2 *fence.Token) error {
+				seen(drivertest.HandlerAddShardCall{Ctx: p0, R: p1, T: p2})
 				var z0 error
 				return z0
 			})
@@ -102,25 +116,38 @@ func handlerStubAddShardSubject(
 	}
 }
 
-// handlerStubDropShardSubject returns the subject of [stub.Behaviour] for
-// DropShard. The subject calls a new double that reports to tb.
+// handlerStubDropShardSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for DropShard. The subject calls a new double that
+// reports to tb.
 func handlerStubDropShardSubject(
 	tb assert.TB,
 ) stub.Subject[drivertest.HandlerDropShardCall, drivertest.HandlerDropShardReturn] {
 	tb.Helper()
 	s := drivertest.NewHandlerStub(tb)
 	return stub.Subject[drivertest.HandlerDropShardCall, drivertest.HandlerDropShardReturn]{
-		Stub: s.OnDropShard.MethodStub,
+		Stub:  s.OnDropShard.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = handlerStubDropShard(tb, s)
+		},
+		Arguments: func(tb assert.TB, c drivertest.HandlerDropShardCall) {
+			tb.Helper()
+			a0, a1 := handlerStubDropShardArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.R, a1, "the call records R")
 		},
 		Result: func() drivertest.HandlerDropShardReturn {
 			got0 := handlerStubDropShard(tb, s)
 			return drivertest.HandlerDropShardReturn{Err: got0}
 		},
-		Override: func(mark func()) {
-			s.OnDropShard.Func(func(_ context.Context, _ *protocol.Request) error {
-				mark()
+		Returns: func() drivertest.HandlerDropShardReturn {
+			want0 := handlerStubDropShardPins()
+			s.OnDropShard.Returns(want0)
+			return drivertest.HandlerDropShardReturn{Err: want0}
+		},
+		Override: func(seen func(drivertest.HandlerDropShardCall)) {
+			s.OnDropShard.Func(func(p0 context.Context, p1 *protocol.Request) error {
+				seen(drivertest.HandlerDropShardCall{Ctx: p0, R: p1})
 				var z0 error
 				return z0
 			})
@@ -145,7 +172,6 @@ func handlerStubInstanceOf(tb assert.TB, s *drivertest.HandlerStub) handlerStubI
 		Call: func() {
 			_ = handlerStubAddShard(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -157,121 +183,24 @@ func TestHandlerStub(t *testing.T) {
 	t.Run("AddShard", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "AddShard", handlerStubAddShardSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewHandlerStub(t)
-			_ = handlerStubAddShard(t, s)
-			got := s.OnAddShard.AssertCalledOnce(t, "AddShard records the call")
-			a0, a1, a2 := handlerStubAddShardArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.R, a1, "the call records R")
-			expect.Equal(t, got.T, a2, "the call records T")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewHandlerStub(t)
-			var seen []drivertest.HandlerAddShardCall
-			s.OnAddShard.OnRecord(func(c drivertest.HandlerAddShardCall) { seen = append(seen, c) })
-			_ = handlerStubAddShard(t, s)
-			_ = handlerStubAddShard(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of AddShard")
-		})
 	})
 
 	t.Run("DropShard", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "DropShard", handlerStubDropShardSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewHandlerStub(t)
-			_ = handlerStubDropShard(t, s)
-			got := s.OnDropShard.AssertCalledOnce(t, "DropShard records the call")
-			a0, a1 := handlerStubDropShardArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.R, a1, "the call records R")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewHandlerStub(t)
-			var seen []drivertest.HandlerDropShardCall
-			s.OnDropShard.OnRecord(func(c drivertest.HandlerDropShardCall) { seen = append(seen, c) })
-			_ = handlerStubDropShard(t, s)
-			_ = handlerStubDropShard(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of DropShard")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) handlerStubInstance {
-			return handlerStubInstanceOf(tb, drivertest.NewHandlerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of AddShard", func(t *testing.T) {
+		t.Run("AddShard", func(t *testing.T) {
 			t.Parallel()
-			s := drivertest.NewHandlerStub(t)
-			_ = handlerStubAddShard(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnAddShard.CallCount(), 0, "ResetCalls clears the calls of AddShard")
+			stub.ResetBehaviour(t, "AddShard", handlerStubAddShardSubject)
 		})
 
-		t.Run("keeps the results of Returns of AddShard", func(t *testing.T) {
+		t.Run("DropShard", func(t *testing.T) {
 			t.Parallel()
-			s := drivertest.NewHandlerStub(t)
-			want0 := handlerStubAddShardPins()
-			s.OnAddShard.Returns(want0)
-			s.ResetCalls()
-			got0 := handlerStubAddShard(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of AddShard")
-		})
-
-		t.Run("clears the recorded calls of DropShard", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewHandlerStub(t)
-			_ = handlerStubDropShard(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnDropShard.CallCount(), 0, "ResetCalls clears the calls of DropShard")
-		})
-
-		t.Run("keeps the results of Returns of DropShard", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewHandlerStub(t)
-			want0 := handlerStubDropShardPins()
-			s.OnDropShard.Returns(want0)
-			s.ResetCalls()
-			got0 := handlerStubDropShard(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of DropShard")
-		})
-	})
-
-	t.Run("NewHandlerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) handlerStubInstance {
-			return handlerStubInstanceOf(tb, drivertest.NewHandlerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewHandlerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails AddShard with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("AddShard-failing")
-			s := drivertest.NewHandlerStubFailing(t, want)
-			r0 := handlerStubAddShard(t, s)
-			assert.ErrorIs(t, r0, want, "AddShard fails with the error of NewHandlerStubFailing")
-		})
-
-		t.Run("fails DropShard with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("DropShard-failing")
-			s := drivertest.NewHandlerStubFailing(t, want)
-			r0 := handlerStubDropShard(t, s)
-			assert.ErrorIs(t, r0, want, "DropShard fails with the error of NewHandlerStubFailing")
+			stub.ResetBehaviour(t, "DropShard", handlerStubDropShardSubject)
 		})
 	})
 
@@ -421,49 +350,24 @@ func TestHandlerStub(t *testing.T) {
 func TestHandlerAddShardStub(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Returns", func(t *testing.T) {
+	t.Run("FaultDeadlineExceeded", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("sets the results of each call of AddShard", func(t *testing.T) {
+		t.Run("fails the next call of AddShard with DeadlineExceeded", func(t *testing.T) {
 			t.Parallel()
 			s := drivertest.NewHandlerStub(t)
-			want0 := handlerStubAddShardPins()
-			s.OnAddShard.Returns(want0)
-			got0 := handlerStubAddShard(t, s)
-			assert.ErrorIs(t, got0, want0, "AddShard returns the error that Returns sets")
+			s.OnAddShard.FaultDeadlineExceeded()
+			r0 := handlerStubAddShard(t, s)
+			assert.ErrorIs(t, r0, context.DeadlineExceeded, "the next call of AddShard fails with DeadlineExceeded")
 		})
 
-		t.Run("configures AddShard for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := drivertest.NewHandlerStub(r)
-			s.OnAddShard.Strict()
-			var want0 error
-			s.OnAddShard.Returns(want0)
-			_ = handlerStubAddShard(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of AddShard")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of AddShard to the function", func(t *testing.T) {
+		t.Run("spares the call after the failed call", func(t *testing.T) {
 			t.Parallel()
 			s := drivertest.NewHandlerStub(t)
-			var got0 context.Context
-			var got1 *protocol.Request
-			var got2 *fence.Token
-			s.OnAddShard.Func(func(p0 context.Context, p1 *protocol.Request, p2 *fence.Token) error {
-				got0, got1, got2 = p0, p1, p2
-				var z0 error
-				return z0
-			})
+			s.OnAddShard.FaultDeadlineExceeded()
 			_ = handlerStubAddShard(t, s)
-			a0, a1, a2 := handlerStubAddShardArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives R")
-			expect.Equal(t, got2, a2, "the function receives T")
+			r0 := handlerStubAddShard(t, s)
+			assert.NoError(t, r0, "the call of AddShard after the failed call succeeds")
 		})
 	})
 }
@@ -473,47 +377,24 @@ func TestHandlerAddShardStub(t *testing.T) {
 func TestHandlerDropShardStub(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Returns", func(t *testing.T) {
+	t.Run("FaultDeadlineExceeded", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("sets the results of each call of DropShard", func(t *testing.T) {
+		t.Run("fails the next call of DropShard with DeadlineExceeded", func(t *testing.T) {
 			t.Parallel()
 			s := drivertest.NewHandlerStub(t)
-			want0 := handlerStubDropShardPins()
-			s.OnDropShard.Returns(want0)
-			got0 := handlerStubDropShard(t, s)
-			assert.ErrorIs(t, got0, want0, "DropShard returns the error that Returns sets")
+			s.OnDropShard.FaultDeadlineExceeded()
+			r0 := handlerStubDropShard(t, s)
+			assert.ErrorIs(t, r0, context.DeadlineExceeded, "the next call of DropShard fails with DeadlineExceeded")
 		})
 
-		t.Run("configures DropShard for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := drivertest.NewHandlerStub(r)
-			s.OnDropShard.Strict()
-			var want0 error
-			s.OnDropShard.Returns(want0)
-			_ = handlerStubDropShard(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of DropShard")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of DropShard to the function", func(t *testing.T) {
+		t.Run("spares the call after the failed call", func(t *testing.T) {
 			t.Parallel()
 			s := drivertest.NewHandlerStub(t)
-			var got0 context.Context
-			var got1 *protocol.Request
-			s.OnDropShard.Func(func(p0 context.Context, p1 *protocol.Request) error {
-				got0, got1 = p0, p1
-				var z0 error
-				return z0
-			})
+			s.OnDropShard.FaultDeadlineExceeded()
 			_ = handlerStubDropShard(t, s)
-			a0, a1 := handlerStubDropShardArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives R")
+			r0 := handlerStubDropShard(t, s)
+			assert.NoError(t, r0, "the call of DropShard after the failed call succeeds")
 		})
 	})
 }
@@ -544,24 +425,37 @@ func revokerStubRevokeShardPins() error {
 }
 
 // revokerStubRevokeShardSubject returns the subject of [stub.Behaviour]
-// for RevokeShard. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for RevokeShard. The subject calls a new
+// double that reports to tb.
 func revokerStubRevokeShardSubject(
 	tb assert.TB,
 ) stub.Subject[drivertest.RevokerRevokeShardCall, drivertest.RevokerRevokeShardReturn] {
 	tb.Helper()
 	s := drivertest.NewRevokerStub(tb)
 	return stub.Subject[drivertest.RevokerRevokeShardCall, drivertest.RevokerRevokeShardReturn]{
-		Stub: s.OnRevokeShard.MethodStub,
+		Stub:  s.OnRevokeShard.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = revokerStubRevokeShard(tb, s)
+		},
+		Arguments: func(tb assert.TB, c drivertest.RevokerRevokeShardCall) {
+			tb.Helper()
+			a0, a1 := revokerStubRevokeShardArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.T, a1, "the call records T")
 		},
 		Result: func() drivertest.RevokerRevokeShardReturn {
 			got0 := revokerStubRevokeShard(tb, s)
 			return drivertest.RevokerRevokeShardReturn{Err: got0}
 		},
-		Override: func(mark func()) {
-			s.OnRevokeShard.Func(func(_ context.Context, _ *fence.Token) error {
-				mark()
+		Returns: func() drivertest.RevokerRevokeShardReturn {
+			want0 := revokerStubRevokeShardPins()
+			s.OnRevokeShard.Returns(want0)
+			return drivertest.RevokerRevokeShardReturn{Err: want0}
+		},
+		Override: func(seen func(drivertest.RevokerRevokeShardCall)) {
+			s.OnRevokeShard.Func(func(p0 context.Context, p1 *fence.Token) error {
+				seen(drivertest.RevokerRevokeShardCall{Ctx: p0, T: p1})
 				var z0 error
 				return z0
 			})
@@ -586,7 +480,6 @@ func revokerStubInstanceOf(tb assert.TB, s *drivertest.RevokerStub) revokerStubI
 		Call: func() {
 			_ = revokerStubRevokeShard(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -598,69 +491,14 @@ func TestRevokerStub(t *testing.T) {
 	t.Run("RevokeShard", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "RevokeShard", revokerStubRevokeShardSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewRevokerStub(t)
-			_ = revokerStubRevokeShard(t, s)
-			got := s.OnRevokeShard.AssertCalledOnce(t, "RevokeShard records the call")
-			a0, a1 := revokerStubRevokeShardArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.T, a1, "the call records T")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewRevokerStub(t)
-			var seen []drivertest.RevokerRevokeShardCall
-			s.OnRevokeShard.OnRecord(func(c drivertest.RevokerRevokeShardCall) { seen = append(seen, c) })
-			_ = revokerStubRevokeShard(t, s)
-			_ = revokerStubRevokeShard(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of RevokeShard")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) revokerStubInstance {
-			return revokerStubInstanceOf(tb, drivertest.NewRevokerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of RevokeShard", func(t *testing.T) {
+		t.Run("RevokeShard", func(t *testing.T) {
 			t.Parallel()
-			s := drivertest.NewRevokerStub(t)
-			_ = revokerStubRevokeShard(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnRevokeShard.CallCount(), 0, "ResetCalls clears the calls of RevokeShard")
-		})
-
-		t.Run("keeps the results of Returns of RevokeShard", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewRevokerStub(t)
-			want0 := revokerStubRevokeShardPins()
-			s.OnRevokeShard.Returns(want0)
-			s.ResetCalls()
-			got0 := revokerStubRevokeShard(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of RevokeShard")
-		})
-	})
-
-	t.Run("NewRevokerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) revokerStubInstance {
-			return revokerStubInstanceOf(tb, drivertest.NewRevokerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewRevokerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails RevokeShard with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("RevokeShard-failing")
-			s := drivertest.NewRevokerStubFailing(t, want)
-			r0 := revokerStubRevokeShard(t, s)
-			assert.ErrorIs(t, r0, want, "RevokeShard fails with the error of NewRevokerStubFailing")
+			stub.ResetBehaviour(t, "RevokeShard", revokerStubRevokeShardSubject)
 		})
 	})
 
@@ -765,47 +603,24 @@ func TestRevokerStub(t *testing.T) {
 func TestRevokerRevokeShardStub(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Returns", func(t *testing.T) {
+	t.Run("FaultDeadlineExceeded", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("sets the results of each call of RevokeShard", func(t *testing.T) {
+		t.Run("fails the next call of RevokeShard with DeadlineExceeded", func(t *testing.T) {
 			t.Parallel()
 			s := drivertest.NewRevokerStub(t)
-			want0 := revokerStubRevokeShardPins()
-			s.OnRevokeShard.Returns(want0)
-			got0 := revokerStubRevokeShard(t, s)
-			assert.ErrorIs(t, got0, want0, "RevokeShard returns the error that Returns sets")
+			s.OnRevokeShard.FaultDeadlineExceeded()
+			r0 := revokerStubRevokeShard(t, s)
+			assert.ErrorIs(t, r0, context.DeadlineExceeded, "the next call of RevokeShard fails with DeadlineExceeded")
 		})
 
-		t.Run("configures RevokeShard for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := drivertest.NewRevokerStub(r)
-			s.OnRevokeShard.Strict()
-			var want0 error
-			s.OnRevokeShard.Returns(want0)
-			_ = revokerStubRevokeShard(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of RevokeShard")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of RevokeShard to the function", func(t *testing.T) {
+		t.Run("spares the call after the failed call", func(t *testing.T) {
 			t.Parallel()
 			s := drivertest.NewRevokerStub(t)
-			var got0 context.Context
-			var got1 *fence.Token
-			s.OnRevokeShard.Func(func(p0 context.Context, p1 *fence.Token) error {
-				got0, got1 = p0, p1
-				var z0 error
-				return z0
-			})
+			s.OnRevokeShard.FaultDeadlineExceeded()
 			_ = revokerStubRevokeShard(t, s)
-			a0, a1 := revokerStubRevokeShardArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives T")
+			r0 := revokerStubRevokeShard(t, s)
+			assert.NoError(t, r0, "the call of RevokeShard after the failed call succeeds")
 		})
 	})
 }
@@ -835,24 +650,36 @@ func loadReporterStubShardLoadPins() shard.Load {
 }
 
 // loadReporterStubShardLoadSubject returns the subject of [stub.Behaviour]
-// for ShardLoad. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for ShardLoad. The subject calls a new double
+// that reports to tb.
 func loadReporterStubShardLoadSubject(
 	tb assert.TB,
 ) stub.Subject[drivertest.LoadReporterShardLoadCall, drivertest.LoadReporterShardLoadReturn] {
 	tb.Helper()
 	s := drivertest.NewLoadReporterStub(tb)
 	return stub.Subject[drivertest.LoadReporterShardLoadCall, drivertest.LoadReporterShardLoadReturn]{
-		Stub: s.OnShardLoad.MethodStub,
+		Stub:  s.OnShardLoad.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = loadReporterStubShardLoad(tb, s)
+		},
+		Arguments: func(tb assert.TB, c drivertest.LoadReporterShardLoadCall) {
+			tb.Helper()
+			a0 := loadReporterStubShardLoadArgs(tb)
+			assert.Equal(tb, c.ID, a0, "the call records ID")
 		},
 		Result: func() drivertest.LoadReporterShardLoadReturn {
 			got0 := loadReporterStubShardLoad(tb, s)
 			return drivertest.LoadReporterShardLoadReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnShardLoad.Func(func(_ shard.ID) shard.Load {
-				mark()
+		Returns: func() drivertest.LoadReporterShardLoadReturn {
+			want0 := loadReporterStubShardLoadPins()
+			s.OnShardLoad.Returns(want0)
+			return drivertest.LoadReporterShardLoadReturn{Result: want0}
+		},
+		Override: func(seen func(drivertest.LoadReporterShardLoadCall)) {
+			s.OnShardLoad.Func(func(p0 shard.ID) shard.Load {
+				seen(drivertest.LoadReporterShardLoadCall{ID: p0})
 				var z0 shard.Load
 				return z0
 			})
@@ -874,7 +701,6 @@ func loadReporterStubInstanceOf(tb assert.TB, s *drivertest.LoadReporterStub) lo
 		Call: func() {
 			_ = loadReporterStubShardLoad(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -886,56 +712,14 @@ func TestLoadReporterStub(t *testing.T) {
 	t.Run("ShardLoad", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "ShardLoad", loadReporterStubShardLoadSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewLoadReporterStub(t)
-			_ = loadReporterStubShardLoad(t, s)
-			got := s.OnShardLoad.AssertCalledOnce(t, "ShardLoad records the call")
-			a0 := loadReporterStubShardLoadArgs(t)
-			assert.Equal(t, got.ID, a0, "the call records ID")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewLoadReporterStub(t)
-			var seen []drivertest.LoadReporterShardLoadCall
-			s.OnShardLoad.OnRecord(func(c drivertest.LoadReporterShardLoadCall) { seen = append(seen, c) })
-			_ = loadReporterStubShardLoad(t, s)
-			_ = loadReporterStubShardLoad(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of ShardLoad")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) loadReporterStubInstance {
-			return loadReporterStubInstanceOf(tb, drivertest.NewLoadReporterStub(tb))
-		})
 
-		t.Run("clears the recorded calls of ShardLoad", func(t *testing.T) {
+		t.Run("ShardLoad", func(t *testing.T) {
 			t.Parallel()
-			s := drivertest.NewLoadReporterStub(t)
-			_ = loadReporterStubShardLoad(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnShardLoad.CallCount(), 0, "ResetCalls clears the calls of ShardLoad")
-		})
-
-		t.Run("keeps the results of Returns of ShardLoad", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewLoadReporterStub(t)
-			want0 := loadReporterStubShardLoadPins()
-			s.OnShardLoad.Returns(want0)
-			s.ResetCalls()
-			got0 := loadReporterStubShardLoad(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of ShardLoad")
-		})
-	})
-
-	t.Run("NewLoadReporterStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) loadReporterStubInstance {
-			return loadReporterStubInstanceOf(tb, drivertest.NewLoadReporterStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "ShardLoad", loadReporterStubShardLoadSubject)
 		})
 	})
 
@@ -1022,52 +806,4 @@ func TestLoadReporterStub(t *testing.T) {
 	})
 }
 
-// TestLoadReporterShardLoadStub checks the methods of
-// LoadReporterShardLoadStub, which configures ShardLoad.
-func TestLoadReporterShardLoadStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of ShardLoad", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewLoadReporterStub(t)
-			want0 := loadReporterStubShardLoadPins()
-			s.OnShardLoad.Returns(want0)
-			got0 := loadReporterStubShardLoad(t, s)
-			assert.Equal(t, got0, want0, "ShardLoad returns the Result that Returns sets")
-		})
-
-		t.Run("configures ShardLoad for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := drivertest.NewLoadReporterStub(r)
-			s.OnShardLoad.Strict()
-			var want0 shard.Load
-			s.OnShardLoad.Returns(want0)
-			_ = loadReporterStubShardLoad(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of ShardLoad")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of ShardLoad to the function", func(t *testing.T) {
-			t.Parallel()
-			s := drivertest.NewLoadReporterStub(t)
-			var got0 shard.ID
-			s.OnShardLoad.Func(func(p0 shard.ID) shard.Load {
-				got0 = p0
-				var z0 shard.Load
-				return z0
-			})
-			_ = loadReporterStubShardLoad(t, s)
-			a0 := loadReporterStubShardLoadArgs(t)
-			assert.Equal(t, got0, a0, "the function receives ID")
-		})
-	})
-}
-
-// dokimi:provenance sha256:0bb31bcae7c9bdc7787f64567e927ae51f02ee08b2551b92806966c2c59bcd0e
+// dokimi:provenance sha256:d5abaab76afc9aa84f12a7c5f19e5d3617d91f527eeb01857145eb2c09332dde

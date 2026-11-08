@@ -63,6 +63,13 @@ func (s *HandlerAddShardStub) Func(
 	return s
 }
 
+// FaultDeadlineExceeded makes the next call of AddShard fail with
+// DeadlineExceeded. The calls after it succeed.
+func (s *HandlerAddShardStub) FaultDeadlineExceeded() *HandlerAddShardStub {
+	s.FaultsOnce(context.DeadlineExceeded)
+	return s
+}
+
 // HandlerDropShardStub configures DropShard and records its calls. A fault
 // armed through it takes precedence over the function and the fixed
 // results.
@@ -89,6 +96,13 @@ func (s *HandlerDropShardStub) Returns(err error) *HandlerDropShardStub {
 // arguments. An injected fault takes precedence over it.
 func (s *HandlerDropShardStub) Func(fn func(context.Context, *protocol.Request) error) *HandlerDropShardStub {
 	s.fn = fn
+	return s
+}
+
+// FaultDeadlineExceeded makes the next call of DropShard fail with
+// DeadlineExceeded. The calls after it succeed.
+func (s *HandlerDropShardStub) FaultDeadlineExceeded() *HandlerDropShardStub {
+	s.FaultsOnce(context.DeadlineExceeded)
 	return s
 }
 
@@ -202,21 +216,6 @@ func NewHandlerStub(tb assert.TB, opts ...HandlerStubOption) *HandlerStub {
 	return s
 }
 
-// NewHandlerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewHandlerStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...HandlerStubOption) *HandlerStub {
-	return NewHandlerStub(tb, append([]HandlerStubOption{
-		HandlerStubWithClock(clk),
-		HandlerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewHandlerStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewHandlerStubFailing(tb assert.TB, err error, opts ...HandlerStubOption) *HandlerStub {
-	return NewHandlerStub(tb, append([]HandlerStubOption{HandlerStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *HandlerStub) ResetCalls() {
@@ -319,6 +318,13 @@ func (s *RevokerRevokeShardStub) Func(fn func(context.Context, *fence.Token) err
 	return s
 }
 
+// FaultDeadlineExceeded makes the next call of RevokeShard fail with
+// DeadlineExceeded. The calls after it succeed.
+func (s *RevokerRevokeShardStub) FaultDeadlineExceeded() *RevokerRevokeShardStub {
+	s.FaultsOnce(context.DeadlineExceeded)
+	return s
+}
+
 // The reference to stub.CompatV1 fails the build against another major
 // version of the runtime of doubles.
 var _ = stub.CompatV1
@@ -416,21 +422,6 @@ func NewRevokerStub(tb assert.TB, opts ...RevokerStubOption) *RevokerStub {
 	}
 	s.group.Bind(tb)
 	return s
-}
-
-// NewRevokerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewRevokerStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...RevokerStubOption) *RevokerStub {
-	return NewRevokerStub(tb, append([]RevokerStubOption{
-		RevokerStubWithClock(clk),
-		RevokerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewRevokerStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewRevokerStubFailing(tb assert.TB, err error, opts ...RevokerStubOption) *RevokerStub {
-	return NewRevokerStub(tb, append([]RevokerStubOption{RevokerStubFailing(err)}, opts...)...)
 }
 
 // ResetCalls clears the recorded calls, the counters of the faults and the
@@ -594,20 +585,6 @@ func NewLoadReporterStub(tb assert.TB, opts ...LoadReporterStubOption) *LoadRepo
 	return s
 }
 
-// NewLoadReporterStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewLoadReporterStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...LoadReporterStubOption,
-) *LoadReporterStub {
-	return NewLoadReporterStub(tb, append([]LoadReporterStubOption{
-		LoadReporterStubWithClock(clk),
-		LoadReporterStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *LoadReporterStub) ResetCalls() {
@@ -641,4 +618,4 @@ func (s *LoadReporterStub) ShardLoad(id shard.ID) shard.Load {
 	return r.Result
 }
 
-// dokimi:provenance sha256:e471aabecf8cc7fc5717c9412a1c43e3850f316fec6f1653d46d552e1693a635
+// dokimi:provenance sha256:95ed1e602a2dae8abeea0aa9dd0f1e44fa89aa72b6e9efaf74143d2bef108d05

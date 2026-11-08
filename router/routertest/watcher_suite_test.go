@@ -47,6 +47,7 @@ func TestWatcherSuite(t *testing.T) {
 				},
 				Defect: func(*routertest.WatcherHandle) routertest.WatcherMethods { return &watcherSubject{} },
 			}),
+			conform.ExcuseSuite[routertest.WatcherMethods]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -68,6 +69,7 @@ func TestWatcherSuite(t *testing.T) {
 				},
 				Defect: func(*routertest.WatcherHandle) routertest.WatcherMethods { return &watcherSubject{} },
 			}),
+			conform.ExcuseSuite[routertest.WatcherMethods]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -90,10 +92,15 @@ func TestWatcherSuiteAllocs(t *testing.T) {
 	})
 }
 
+// watcherSuite is the suite of Watcher that the tests of the planted
+// defect of a ceiling apply.
+var watcherSuite = routertest.WatcherSuite()
+
 // watcherIdle returns the planted defect of a ceiling of Watcher with a
-// spend of nothing, a subject that answers each call at once.
+// spend of nothing. Each call of the defect returns its zero results at
+// once.
 func watcherIdle(h *routertest.WatcherHandle) routertest.WatcherMethods {
-	return routertest.WatcherSuite().Calls[0].Over(h, func() {})
+	return watcherSuite.Calls[0].Over(h, func() {})
 }
 
 // TestWatcherSuiteBudgets applies the allocation ceilings of the suite of
@@ -107,6 +114,9 @@ func TestWatcherSuiteBudgets(t *testing.T) {
 		conform.Ceilings(routertest.WatcherChecks.Close.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(routertest.WatcherChecks.Done.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(routertest.WatcherChecks.Err.Callable, conform.Budget{Allocs: new(uint64(0))}),
+		conform.ExcuseSuite[routertest.WatcherMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
+		),
 	)
 }
 
@@ -117,6 +127,9 @@ func FuzzWatcherSuiteRoute(f *testing.F) {
 		f,
 		routertest.WatcherChecks.Route.Callable,
 		watcherIdle,
+		conform.ExcuseSuite[routertest.WatcherMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
+		),
 	)
 }
 
@@ -127,6 +140,9 @@ func FuzzWatcherSuiteRefresh(f *testing.F) {
 		f,
 		routertest.WatcherChecks.Refresh.Callable,
 		watcherIdle,
+		conform.ExcuseSuite[routertest.WatcherMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
+		),
 	)
 }
 
@@ -137,6 +153,9 @@ func FuzzWatcherSuiteClose(f *testing.F) {
 		f,
 		routertest.WatcherChecks.Close.Callable,
 		watcherIdle,
+		conform.ExcuseSuite[routertest.WatcherMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
+		),
 	)
 }
 
@@ -147,6 +166,9 @@ func FuzzWatcherSuiteDone(f *testing.F) {
 		f,
 		routertest.WatcherChecks.Done.Callable,
 		watcherIdle,
+		conform.ExcuseSuite[routertest.WatcherMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
+		),
 	)
 }
 
@@ -157,6 +179,9 @@ func FuzzWatcherSuiteErr(f *testing.F) {
 		f,
 		routertest.WatcherChecks.Err.Callable,
 		watcherIdle,
+		conform.ExcuseSuite[routertest.WatcherMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
+		),
 	)
 }
 
@@ -256,4 +281,4 @@ func FuzzWatcherConformsToWatcherErr(f *testing.F) {
 	routertest.FuzzWatcherSuite(f, routertest.WatcherChecks.Err.Callable, newWatcher)
 }
 
-// dokimi:provenance sha256:b26215706eafb8b45b31b47d0c3d71a56f02861e495989748ccc3064098a559d
+// dokimi:provenance sha256:6e118a5d043166b2b1c04d2ddf33af91ee34f327a39bec914eeec353458c6551

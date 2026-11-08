@@ -11,6 +11,7 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/sharder/membership"
@@ -129,6 +130,8 @@ func (c membershipWatch) WatchesRefuseOtherIncarnations() conform.ID[membership.
 func MembershipSuite() conform.Suite[membership.Membership] {
 	return conform.Suite[membership.Membership]{
 		Declaration: "Membership",
+		Package:     "go.thesmos.sh/sharder/membership",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[membership.Membership]{
 			{
 				ID:        MembershipChecks.Join.JoinsLeaveTheNodeUnchanged(),
@@ -196,6 +199,22 @@ func MembershipSuite() conform.Suite[membership.Membership] {
 				Statement: "Watch yields ErrIncarnation for a scope that another incarnation created, and ends",
 				Apply:     WatchesRefuseOtherIncarnations,
 				Defect:    watchesOtherIncarnations,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Cancel,
+				Callable: "Membership.Join",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter inc of Join",
+				Remedy:   "author a sample of the parameter inc with the directive sample",
+			},
+			{
+				Claim:    spec.Cancel,
+				Callable: "Membership.Watch",
+				Gate:     spec.Failure,
+				Why:      "Watch cannot fail",
+				Remedy:   "give Watch an error result",
 			},
 		},
 		Calls: []conform.Call[membership.Membership]{
@@ -351,4 +370,4 @@ func newMembershipOver(_ *MembershipHandle, spend func()) membership.Membership 
 	return membershipOver{spend: spend}
 }
 
-// dokimi:provenance sha256:1cae4aecf29b5a09235dd88655768819201cba117533dce37c00d16ff36db40e
+// dokimi:provenance sha256:c6fc9bdb22f4ac96b5684381b057446c484cb716ab3b23c6498dcac083acf2fa

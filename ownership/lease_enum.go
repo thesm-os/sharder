@@ -90,4 +90,9 @@ func (v *OnLeaseLoss) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// dokimi:provenance sha256:0df86b2966f61d2296708b417c7d324c878713052b6446a3c07ed8df2e679128
+// StrictKanon marks OnLeaseLoss as a kanon.Strict type. UnmarshalText
+// accepts only the texts that MarshalText writes. A canonical decode of
+// kanon therefore does not encode a decoded OnLeaseLoss again.
+func (OnLeaseLoss) StrictKanon() {}
+
+// dokimi:provenance sha256:de3d8ce5fdfd0c971d9ab7b197278c7e7aa8d3f3515e78b775af8bc5e142e943

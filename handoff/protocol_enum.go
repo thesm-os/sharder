@@ -92,4 +92,9 @@ func (v *Side) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// dokimi:provenance sha256:895901afebdb3494def4950a00eb346a6f026d115f789362cc6e49fcfc4db78f
+// StrictKanon marks Side as a kanon.Strict type. UnmarshalText accepts
+// only the texts that MarshalText writes. A canonical decode of kanon
+// therefore does not encode a decoded Side again.
+func (Side) StrictKanon() {}
+
+// dokimi:provenance sha256:7cb14363c3b174a93c62228cfec52f7189fc5250995ceb152029727d12bbd5c6

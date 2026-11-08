@@ -48,6 +48,7 @@ func TestLayoutSuite(t *testing.T) {
 				},
 				Defect: func(*partitiontest.LayoutHandle) partitiontest.LayoutMethods { return &layoutSubject{} },
 			}),
+			conform.ExcuseSuite[partitiontest.LayoutMethods]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -69,6 +70,7 @@ func TestLayoutSuite(t *testing.T) {
 				},
 				Defect: func(*partitiontest.LayoutHandle) partitiontest.LayoutMethods { return &layoutSubject{} },
 			}),
+			conform.ExcuseSuite[partitiontest.LayoutMethods]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -91,10 +93,15 @@ func TestLayoutSuiteAllocs(t *testing.T) {
 	})
 }
 
+// layoutSuite is the suite of Layout that the tests of the planted defect
+// of a ceiling apply.
+var layoutSuite = partitiontest.LayoutSuite()
+
 // layoutIdle returns the planted defect of a ceiling of Layout with a
-// spend of nothing, a subject that answers each call at once.
+// spend of nothing. Each call of the defect returns its zero results at
+// once.
 func layoutIdle(h *partitiontest.LayoutHandle) partitiontest.LayoutMethods {
-	return partitiontest.LayoutSuite().Calls[0].Over(h, func() {})
+	return layoutSuite.Calls[0].Over(h, func() {})
 }
 
 // TestLayoutSuiteBudgets applies the allocation ceilings of the suite of
@@ -105,6 +112,9 @@ func TestLayoutSuiteBudgets(t *testing.T) {
 	partitiontest.RunLayoutBudgets(
 		t,
 		layoutIdle,
+		conform.ExcuseSuite[partitiontest.LayoutMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
+		),
 	)
 }
 
@@ -115,6 +125,9 @@ func FuzzLayoutSuiteLocate(f *testing.F) {
 		f,
 		partitiontest.LayoutChecks.Locate.Callable,
 		layoutIdle,
+		conform.ExcuseSuite[partitiontest.LayoutMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
+		),
 	)
 }
 
@@ -162,4 +175,4 @@ func FuzzLayoutConformsToLayoutLocate(f *testing.F) {
 	)
 }
 
-// dokimi:provenance sha256:1211dfb4c011d5ac19f1b4b0c2b09f37ecfa89dbb026685ab6e61c18cdc8e753
+// dokimi:provenance sha256:84074c389e918a8b41226d5f31b8906f9b261dd4f01357fb396c80533be175d3

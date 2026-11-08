@@ -146,20 +146,6 @@ func NewConnectorStub(tb assert.TB, opts ...ConnectorStubOption) *ConnectorStub 
 	return s
 }
 
-// NewConnectorStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewConnectorStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...ConnectorStubOption,
-) *ConnectorStub {
-	return NewConnectorStub(tb, append([]ConnectorStubOption{
-		ConnectorStubWithClock(clk),
-		ConnectorStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *ConnectorStub) ResetCalls() {
@@ -194,4 +180,4 @@ func (s *ConnectorStub) Connect(md protocol.Metadata, e *Endpoints) (protocol.Ag
 	return r.Result0, r.Result1
 }
 
-// dokimi:provenance sha256:69b38df27bd7ab0a2098bec83d52396b22559e7a0c32462f1b2108e2192dd819
+// dokimi:provenance sha256:530d1f8cbcf76bbb205a855af6de948e41b03fcbdba2fe86d46051fddfced4c1

@@ -50,6 +50,13 @@ func (s *AcquirerAcquireStub) Func(fn func(context.Context, fence.Token) error) 
 	return s
 }
 
+// FaultDeadlineExceeded makes the next call of Acquire fail with
+// DeadlineExceeded. The calls after it succeed.
+func (s *AcquirerAcquireStub) FaultDeadlineExceeded() *AcquirerAcquireStub {
+	s.FaultsOnce(context.DeadlineExceeded)
+	return s
+}
+
 // The reference to stub.CompatV1 fails the build against another major
 // version of the runtime of doubles.
 var _ = stub.CompatV1
@@ -147,21 +154,6 @@ func NewAcquirerStub(tb assert.TB, opts ...AcquirerStubOption) *AcquirerStub {
 	return s
 }
 
-// NewAcquirerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewAcquirerStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...AcquirerStubOption) *AcquirerStub {
-	return NewAcquirerStub(tb, append([]AcquirerStubOption{
-		AcquirerStubWithClock(clk),
-		AcquirerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewAcquirerStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewAcquirerStubFailing(tb assert.TB, err error, opts ...AcquirerStubOption) *AcquirerStub {
-	return NewAcquirerStub(tb, append([]AcquirerStubOption{AcquirerStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *AcquirerStub) ResetCalls() {
@@ -196,4 +188,4 @@ func (s *AcquirerStub) Acquire(ctx context.Context, t fence.Token) error {
 	return r.Err
 }
 
-// dokimi:provenance sha256:bae49e944ead4f585fe406441901c91809962b071fde0341eab4df225a83d4ef
+// dokimi:provenance sha256:b1100a636e055bada78ebee87750a3ec263669fa4ae2bbbf5dd176b22d7f2a39

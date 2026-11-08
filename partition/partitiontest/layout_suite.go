@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/sharder/shard"
 )
 
@@ -43,6 +45,12 @@ type layoutLocate struct {
 	conform.Callable[LayoutMethods]
 }
 
+// Smoke returns the identity of the check that Locate returns without a
+// panic for derived inputs.
+func (c layoutLocate) Smoke() conform.ID[LayoutMethods] {
+	return c.Check("smoke")
+}
+
 // AllocationBudget returns the identity of the check
 // Layout.Locate/allocation-budget.
 func (c layoutLocate) AllocationBudget() conform.ID[LayoutMethods] {
@@ -54,6 +62,47 @@ func (c layoutLocate) AllocationBudget() conform.ID[LayoutMethods] {
 func LayoutSuite() conform.Suite[LayoutMethods] {
 	return conform.Suite[LayoutMethods]{
 		Declaration: "Layout",
+		Package:     "go.thesmos.sh/sharder/partition",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
+		Checks: []conform.Check[LayoutMethods]{
+			{
+				ID:          LayoutChecks.Locate.Smoke(),
+				Statement:   "Locate returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *LayoutHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Locate([]byte{1})
+						return nil
+					})
+				},
+				Defect: layoutLocatePanics,
+			},
+			{
+				ID:          LayoutChecks.Locate.Smoke().Generated(),
+				Statement:   "Locate returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *LayoutHandle, c *prop.Case) {
+					drawnPos := c.Draw(prop.Of[[]byte](), "pos")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Locate(drawnPos)
+						return nil
+					})
+				},
+				Defect: layoutLocatePanics,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.ZeroOnMiss,
+				Callable: "Layout.Locate",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Locate",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+		},
 		Calls: []conform.Call[LayoutMethods]{
 			{
 				Calls:    layoutLocateCalls,
@@ -154,4 +203,21 @@ func newLayoutOver(_ *LayoutHandle, spend func()) LayoutMethods {
 	return layoutOver{spend: spend}
 }
 
-// dokimi:provenance sha256:b0568e548f4a22fcaa943cef8146904a8660705c9e5920b6dc1e9d3669f6bc36
+// layoutLocatePanicsDefect is the planted defect of a Layout whose Locate
+// panics.
+type layoutLocatePanicsDefect struct {
+	layoutOverEmbedded
+}
+
+// Locate is the override of the planted defect.
+func (*layoutLocatePanicsDefect) Locate(p0 []byte) (r0 shard.ID, r1 bool) {
+	panic("the planted defect of a Layout whose Locate panics")
+}
+
+// layoutLocatePanics returns the planted defect of a Layout whose Locate
+// panics over a fresh subject.
+func layoutLocatePanics(h *LayoutHandle) LayoutMethods {
+	return &layoutLocatePanicsDefect{layoutOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:72286662567a78e04126a8b4fca8074a4ad4fe03488e1bba920353c07bd7505d

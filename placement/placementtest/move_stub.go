@@ -189,26 +189,6 @@ func NewConstraintStub(tb assert.TB, opts ...ConstraintStubOption) *ConstraintSt
 	return s
 }
 
-// NewConstraintStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewConstraintStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...ConstraintStubOption,
-) *ConstraintStub {
-	return NewConstraintStub(tb, append([]ConstraintStubOption{
-		ConstraintStubWithClock(clk),
-		ConstraintStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewConstraintStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewConstraintStubFailing(tb assert.TB, err error, opts ...ConstraintStubOption) *ConstraintStub {
-	return NewConstraintStub(tb, append([]ConstraintStubOption{ConstraintStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *ConstraintStub) ResetCalls() {
@@ -477,15 +457,6 @@ func NewGoalStub(tb assert.TB, opts ...GoalStubOption) *GoalStub {
 	return s
 }
 
-// NewGoalStubDelayed returns a double whose methods sleep d on clk before
-// they return. It applies opts after the clock and the latency.
-func NewGoalStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...GoalStubOption) *GoalStub {
-	return NewGoalStub(tb, append([]GoalStubOption{
-		GoalStubWithClock(clk),
-		GoalStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *GoalStub) ResetCalls() {
@@ -573,4 +544,4 @@ func (s *GoalStub) Delta(st *placement.State, m placement.Move) float64 {
 	return r.Result
 }
 
-// dokimi:provenance sha256:573f69b003ff7d60510162ea9bbf287ee2330c63a16c2b4208ae9c1f84e88d6b
+// dokimi:provenance sha256:61ed9a00832a8e859b03ed41aaeef9de11ee94d55f17e85f2034ecd6d7c9c2dd

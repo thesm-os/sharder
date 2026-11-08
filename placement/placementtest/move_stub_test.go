@@ -54,15 +54,17 @@ func constraintStubCheckPins() error {
 	return want0
 }
 
-// constraintStubNameSubject returns the subject of [stub.Behaviour] for
-// Name. The subject calls a new double that reports to tb.
+// constraintStubNameSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Name. The subject calls a new double that
+// reports to tb.
 func constraintStubNameSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.ConstraintNameCall, placementtest.ConstraintNameReturn] {
 	tb.Helper()
 	s := placementtest.NewConstraintStub(tb)
 	return stub.Subject[placementtest.ConstraintNameCall, placementtest.ConstraintNameReturn]{
-		Stub: s.OnName.MethodStub,
+		Stub:  s.OnName.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = constraintStubName(tb, s)
 		},
@@ -70,9 +72,14 @@ func constraintStubNameSubject(
 			got0 := constraintStubName(tb, s)
 			return placementtest.ConstraintNameReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() placementtest.ConstraintNameReturn {
+			want0 := constraintStubNamePins()
+			s.OnName.Returns(want0)
+			return placementtest.ConstraintNameReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.ConstraintNameCall)) {
 			s.OnName.Func(func() shard.StrategyName {
-				mark()
+				seen(placementtest.ConstraintNameCall{})
 				var z0 shard.StrategyName
 				return z0
 			})
@@ -80,25 +87,38 @@ func constraintStubNameSubject(
 	}
 }
 
-// constraintStubCheckSubject returns the subject of [stub.Behaviour] for
-// Check. The subject calls a new double that reports to tb.
+// constraintStubCheckSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Check. The subject calls a new double that
+// reports to tb.
 func constraintStubCheckSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.ConstraintCheckCall, placementtest.ConstraintCheckReturn] {
 	tb.Helper()
 	s := placementtest.NewConstraintStub(tb)
 	return stub.Subject[placementtest.ConstraintCheckCall, placementtest.ConstraintCheckReturn]{
-		Stub: s.OnCheck.MethodStub,
+		Stub:  s.OnCheck.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = constraintStubCheck(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.ConstraintCheckCall) {
+			tb.Helper()
+			a0, a1 := constraintStubCheckArgs(tb)
+			expect.Equal(tb, c.St, a0, "the call records St")
+			expect.Equal(tb, c.M, a1, "the call records M")
 		},
 		Result: func() placementtest.ConstraintCheckReturn {
 			got0 := constraintStubCheck(tb, s)
 			return placementtest.ConstraintCheckReturn{Err: got0}
 		},
-		Override: func(mark func()) {
-			s.OnCheck.Func(func(_ *placement.State, _ placement.Move) error {
-				mark()
+		Returns: func() placementtest.ConstraintCheckReturn {
+			want0 := constraintStubCheckPins()
+			s.OnCheck.Returns(want0)
+			return placementtest.ConstraintCheckReturn{Err: want0}
+		},
+		Override: func(seen func(placementtest.ConstraintCheckCall)) {
+			s.OnCheck.Func(func(p0 *placement.State, p1 placement.Move) error {
+				seen(placementtest.ConstraintCheckCall{St: p0, M: p1})
 				var z0 error
 				return z0
 			})
@@ -123,7 +143,6 @@ func constraintStubInstanceOf(tb assert.TB, s *placementtest.ConstraintStub) con
 		Call: func() {
 			_ = constraintStubName(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -135,102 +154,24 @@ func TestConstraintStub(t *testing.T) {
 	t.Run("Name", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Name", constraintStubNameSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewConstraintStub(t)
-			var seen []placementtest.ConstraintNameCall
-			s.OnName.OnRecord(func(c placementtest.ConstraintNameCall) { seen = append(seen, c) })
-			_ = constraintStubName(t, s)
-			_ = constraintStubName(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Name")
-		})
 	})
 
 	t.Run("Check", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Check", constraintStubCheckSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewConstraintStub(t)
-			_ = constraintStubCheck(t, s)
-			got := s.OnCheck.AssertCalledOnce(t, "Check records the call")
-			a0, a1 := constraintStubCheckArgs(t)
-			expect.Equal(t, got.St, a0, "the call records St")
-			expect.Equal(t, got.M, a1, "the call records M")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewConstraintStub(t)
-			var seen []placementtest.ConstraintCheckCall
-			s.OnCheck.OnRecord(func(c placementtest.ConstraintCheckCall) { seen = append(seen, c) })
-			_ = constraintStubCheck(t, s)
-			_ = constraintStubCheck(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Check")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) constraintStubInstance {
-			return constraintStubInstanceOf(tb, placementtest.NewConstraintStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Name", func(t *testing.T) {
+		t.Run("Name", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewConstraintStub(t)
-			_ = constraintStubName(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnName.CallCount(), 0, "ResetCalls clears the calls of Name")
+			stub.ResetBehaviour(t, "Name", constraintStubNameSubject)
 		})
 
-		t.Run("keeps the results of Returns of Name", func(t *testing.T) {
+		t.Run("Check", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewConstraintStub(t)
-			want0 := constraintStubNamePins()
-			s.OnName.Returns(want0)
-			s.ResetCalls()
-			got0 := constraintStubName(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Name")
-		})
-
-		t.Run("clears the recorded calls of Check", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewConstraintStub(t)
-			_ = constraintStubCheck(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnCheck.CallCount(), 0, "ResetCalls clears the calls of Check")
-		})
-
-		t.Run("keeps the results of Returns of Check", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewConstraintStub(t)
-			want0 := constraintStubCheckPins()
-			s.OnCheck.Returns(want0)
-			s.ResetCalls()
-			got0 := constraintStubCheck(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of Check")
-		})
-	})
-
-	t.Run("NewConstraintStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) constraintStubInstance {
-			return constraintStubInstanceOf(tb, placementtest.NewConstraintStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewConstraintStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Check with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Check-failing")
-			s := placementtest.NewConstraintStubFailing(t, want)
-			r0 := constraintStubCheck(t, s)
-			assert.ErrorIs(t, r0, want, "Check fails with the error of NewConstraintStubFailing")
+			stub.ResetBehaviour(t, "Check", constraintStubCheckSubject)
 		})
 	})
 
@@ -366,86 +307,6 @@ func TestConstraintStub(t *testing.T) {
 	})
 }
 
-// TestConstraintNameStub checks the methods of ConstraintNameStub, which
-// configures Name.
-func TestConstraintNameStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Name", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewConstraintStub(t)
-			want0 := constraintStubNamePins()
-			s.OnName.Returns(want0)
-			got0 := constraintStubName(t, s)
-			assert.Equal(t, got0, want0, "Name returns the Result that Returns sets")
-		})
-
-		t.Run("configures Name for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewConstraintStub(r)
-			s.OnName.Strict()
-			var want0 shard.StrategyName
-			s.OnName.Returns(want0)
-			_ = constraintStubName(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Name")
-		})
-	})
-}
-
-// TestConstraintCheckStub checks the methods of ConstraintCheckStub, which
-// configures Check.
-func TestConstraintCheckStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Check", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewConstraintStub(t)
-			want0 := constraintStubCheckPins()
-			s.OnCheck.Returns(want0)
-			got0 := constraintStubCheck(t, s)
-			assert.ErrorIs(t, got0, want0, "Check returns the error that Returns sets")
-		})
-
-		t.Run("configures Check for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewConstraintStub(r)
-			s.OnCheck.Strict()
-			var want0 error
-			s.OnCheck.Returns(want0)
-			_ = constraintStubCheck(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Check")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Check to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewConstraintStub(t)
-			var got0 *placement.State
-			var got1 placement.Move
-			s.OnCheck.Func(func(p0 *placement.State, p1 placement.Move) error {
-				got0, got1 = p0, p1
-				var z0 error
-				return z0
-			})
-			_ = constraintStubCheck(t, s)
-			a0, a1 := constraintStubCheckArgs(t)
-			expect.Equal(t, got0, a0, "the function receives St")
-			expect.Equal(t, got1, a1, "the function receives M")
-		})
-	})
-}
-
 // goalStubName calls Name of s with the samples of its arguments.
 func goalStubName(tb assert.TB, s *placementtest.GoalStub) shard.StrategyName {
 	tb.Helper()
@@ -503,13 +364,15 @@ func goalStubDeltaPins() float64 {
 	return want0
 }
 
-// goalStubNameSubject returns the subject of [stub.Behaviour] for Name.
-// The subject calls a new double that reports to tb.
+// goalStubNameSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Name. The subject calls a new double that
+// reports to tb.
 func goalStubNameSubject(tb assert.TB) stub.Subject[placementtest.GoalNameCall, placementtest.GoalNameReturn] {
 	tb.Helper()
 	s := placementtest.NewGoalStub(tb)
 	return stub.Subject[placementtest.GoalNameCall, placementtest.GoalNameReturn]{
-		Stub: s.OnName.MethodStub,
+		Stub:  s.OnName.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = goalStubName(tb, s)
 		},
@@ -517,9 +380,14 @@ func goalStubNameSubject(tb assert.TB) stub.Subject[placementtest.GoalNameCall, 
 			got0 := goalStubName(tb, s)
 			return placementtest.GoalNameReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() placementtest.GoalNameReturn {
+			want0 := goalStubNamePins()
+			s.OnName.Returns(want0)
+			return placementtest.GoalNameReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.GoalNameCall)) {
 			s.OnName.Func(func() shard.StrategyName {
-				mark()
+				seen(placementtest.GoalNameCall{})
 				var z0 shard.StrategyName
 				return z0
 			})
@@ -527,23 +395,35 @@ func goalStubNameSubject(tb assert.TB) stub.Subject[placementtest.GoalNameCall, 
 	}
 }
 
-// goalStubCostSubject returns the subject of [stub.Behaviour] for Cost.
-// The subject calls a new double that reports to tb.
+// goalStubCostSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Cost. The subject calls a new double that
+// reports to tb.
 func goalStubCostSubject(tb assert.TB) stub.Subject[placementtest.GoalCostCall, placementtest.GoalCostReturn] {
 	tb.Helper()
 	s := placementtest.NewGoalStub(tb)
 	return stub.Subject[placementtest.GoalCostCall, placementtest.GoalCostReturn]{
-		Stub: s.OnCost.MethodStub,
+		Stub:  s.OnCost.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = goalStubCost(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.GoalCostCall) {
+			tb.Helper()
+			a0 := goalStubCostArgs(tb)
+			assert.Equal(tb, c.St, a0, "the call records St")
 		},
 		Result: func() placementtest.GoalCostReturn {
 			got0 := goalStubCost(tb, s)
 			return placementtest.GoalCostReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnCost.Func(func(_ *placement.State) float64 {
-				mark()
+		Returns: func() placementtest.GoalCostReturn {
+			want0 := goalStubCostPins()
+			s.OnCost.Returns(want0)
+			return placementtest.GoalCostReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.GoalCostCall)) {
+			s.OnCost.Func(func(p0 *placement.State) float64 {
+				seen(placementtest.GoalCostCall{St: p0})
 				var z0 float64
 				return z0
 			})
@@ -551,23 +431,36 @@ func goalStubCostSubject(tb assert.TB) stub.Subject[placementtest.GoalCostCall, 
 	}
 }
 
-// goalStubDeltaSubject returns the subject of [stub.Behaviour] for Delta.
-// The subject calls a new double that reports to tb.
+// goalStubDeltaSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Delta. The subject calls a new double that
+// reports to tb.
 func goalStubDeltaSubject(tb assert.TB) stub.Subject[placementtest.GoalDeltaCall, placementtest.GoalDeltaReturn] {
 	tb.Helper()
 	s := placementtest.NewGoalStub(tb)
 	return stub.Subject[placementtest.GoalDeltaCall, placementtest.GoalDeltaReturn]{
-		Stub: s.OnDelta.MethodStub,
+		Stub:  s.OnDelta.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = goalStubDelta(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.GoalDeltaCall) {
+			tb.Helper()
+			a0, a1 := goalStubDeltaArgs(tb)
+			expect.Equal(tb, c.St, a0, "the call records St")
+			expect.Equal(tb, c.M, a1, "the call records M")
 		},
 		Result: func() placementtest.GoalDeltaReturn {
 			got0 := goalStubDelta(tb, s)
 			return placementtest.GoalDeltaReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnDelta.Func(func(_ *placement.State, _ placement.Move) float64 {
-				mark()
+		Returns: func() placementtest.GoalDeltaReturn {
+			want0 := goalStubDeltaPins()
+			s.OnDelta.Returns(want0)
+			return placementtest.GoalDeltaReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.GoalDeltaCall)) {
+			s.OnDelta.Func(func(p0 *placement.State, p1 placement.Move) float64 {
+				seen(placementtest.GoalDeltaCall{St: p0, M: p1})
 				var z0 float64
 				return z0
 			})
@@ -588,7 +481,6 @@ func goalStubInstanceOf(tb assert.TB, s *placementtest.GoalStub) goalStubInstanc
 		Call: func() {
 			_ = goalStubName(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -600,132 +492,34 @@ func TestGoalStub(t *testing.T) {
 	t.Run("Name", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Name", goalStubNameSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			var seen []placementtest.GoalNameCall
-			s.OnName.OnRecord(func(c placementtest.GoalNameCall) { seen = append(seen, c) })
-			_ = goalStubName(t, s)
-			_ = goalStubName(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Name")
-		})
 	})
 
 	t.Run("Cost", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Cost", goalStubCostSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			_ = goalStubCost(t, s)
-			got := s.OnCost.AssertCalledOnce(t, "Cost records the call")
-			a0 := goalStubCostArgs(t)
-			assert.Equal(t, got.St, a0, "the call records St")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			var seen []placementtest.GoalCostCall
-			s.OnCost.OnRecord(func(c placementtest.GoalCostCall) { seen = append(seen, c) })
-			_ = goalStubCost(t, s)
-			_ = goalStubCost(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Cost")
-		})
 	})
 
 	t.Run("Delta", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Delta", goalStubDeltaSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			_ = goalStubDelta(t, s)
-			got := s.OnDelta.AssertCalledOnce(t, "Delta records the call")
-			a0, a1 := goalStubDeltaArgs(t)
-			expect.Equal(t, got.St, a0, "the call records St")
-			expect.Equal(t, got.M, a1, "the call records M")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			var seen []placementtest.GoalDeltaCall
-			s.OnDelta.OnRecord(func(c placementtest.GoalDeltaCall) { seen = append(seen, c) })
-			_ = goalStubDelta(t, s)
-			_ = goalStubDelta(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Delta")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) goalStubInstance {
-			return goalStubInstanceOf(tb, placementtest.NewGoalStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Name", func(t *testing.T) {
+		t.Run("Name", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			_ = goalStubName(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnName.CallCount(), 0, "ResetCalls clears the calls of Name")
+			stub.ResetBehaviour(t, "Name", goalStubNameSubject)
 		})
 
-		t.Run("keeps the results of Returns of Name", func(t *testing.T) {
+		t.Run("Cost", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			want0 := goalStubNamePins()
-			s.OnName.Returns(want0)
-			s.ResetCalls()
-			got0 := goalStubName(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Name")
+			stub.ResetBehaviour(t, "Cost", goalStubCostSubject)
 		})
 
-		t.Run("clears the recorded calls of Cost", func(t *testing.T) {
+		t.Run("Delta", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			_ = goalStubCost(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnCost.CallCount(), 0, "ResetCalls clears the calls of Cost")
-		})
-
-		t.Run("keeps the results of Returns of Cost", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			want0 := goalStubCostPins()
-			s.OnCost.Returns(want0)
-			s.ResetCalls()
-			got0 := goalStubCost(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Cost")
-		})
-
-		t.Run("clears the recorded calls of Delta", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			_ = goalStubDelta(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnDelta.CallCount(), 0, "ResetCalls clears the calls of Delta")
-		})
-
-		t.Run("keeps the results of Returns of Delta", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			want0 := goalStubDeltaPins()
-			s.OnDelta.Returns(want0)
-			s.ResetCalls()
-			got0 := goalStubDelta(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Delta")
-		})
-	})
-
-	t.Run("NewGoalStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) goalStubInstance {
-			return goalStubInstanceOf(tb, placementtest.NewGoalStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "Delta", goalStubDeltaSubject)
 		})
 	})
 
@@ -851,132 +645,4 @@ func TestGoalStub(t *testing.T) {
 	})
 }
 
-// TestGoalNameStub checks the methods of GoalNameStub, which configures
-// Name.
-func TestGoalNameStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Name", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			want0 := goalStubNamePins()
-			s.OnName.Returns(want0)
-			got0 := goalStubName(t, s)
-			assert.Equal(t, got0, want0, "Name returns the Result that Returns sets")
-		})
-
-		t.Run("configures Name for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewGoalStub(r)
-			s.OnName.Strict()
-			var want0 shard.StrategyName
-			s.OnName.Returns(want0)
-			_ = goalStubName(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Name")
-		})
-	})
-}
-
-// TestGoalCostStub checks the methods of GoalCostStub, which configures
-// Cost.
-func TestGoalCostStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Cost", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			want0 := goalStubCostPins()
-			s.OnCost.Returns(want0)
-			got0 := goalStubCost(t, s)
-			assert.Equal(t, got0, want0, "Cost returns the Result that Returns sets")
-		})
-
-		t.Run("configures Cost for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewGoalStub(r)
-			s.OnCost.Strict()
-			var want0 float64
-			s.OnCost.Returns(want0)
-			_ = goalStubCost(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Cost")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Cost to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			var got0 *placement.State
-			s.OnCost.Func(func(p0 *placement.State) float64 {
-				got0 = p0
-				var z0 float64
-				return z0
-			})
-			_ = goalStubCost(t, s)
-			a0 := goalStubCostArgs(t)
-			assert.Equal(t, got0, a0, "the function receives St")
-		})
-	})
-}
-
-// TestGoalDeltaStub checks the methods of GoalDeltaStub, which configures
-// Delta.
-func TestGoalDeltaStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Delta", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			want0 := goalStubDeltaPins()
-			s.OnDelta.Returns(want0)
-			got0 := goalStubDelta(t, s)
-			assert.Equal(t, got0, want0, "Delta returns the Result that Returns sets")
-		})
-
-		t.Run("configures Delta for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewGoalStub(r)
-			s.OnDelta.Strict()
-			var want0 float64
-			s.OnDelta.Returns(want0)
-			_ = goalStubDelta(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Delta")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Delta to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewGoalStub(t)
-			var got0 *placement.State
-			var got1 placement.Move
-			s.OnDelta.Func(func(p0 *placement.State, p1 placement.Move) float64 {
-				got0, got1 = p0, p1
-				var z0 float64
-				return z0
-			})
-			_ = goalStubDelta(t, s)
-			a0, a1 := goalStubDeltaArgs(t)
-			expect.Equal(t, got0, a0, "the function receives St")
-			expect.Equal(t, got1, a1, "the function receives M")
-		})
-	})
-}
-
-// dokimi:provenance sha256:77cacbc88732bb7f45f455d38d0f8df52b16a07807b1ffe1abf02357762a2660
+// dokimi:provenance sha256:8e36707b2b108455df6643f58264af7c6e9ec0628c7b64283c43892363d624f3

@@ -17,6 +17,7 @@ import (
 	"go.dokimi.dev/stub"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/page"
+	"go.thesmos.sh/core/version"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/storetest"
@@ -110,23 +111,36 @@ func readerStubWatchPins() iter.Seq2[store.Event, error] {
 	return want0
 }
 
-// readerStubHeadSubject returns the subject of [stub.Behaviour] for Head.
-// The subject calls a new double that reports to tb.
+// readerStubHeadSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Head. The subject calls a new double that
+// reports to tb.
 func readerStubHeadSubject(tb assert.TB) stub.Subject[storetest.ReaderHeadCall, storetest.ReaderHeadReturn] {
 	tb.Helper()
 	s := storetest.NewReaderStub(tb)
 	return stub.Subject[storetest.ReaderHeadCall, storetest.ReaderHeadReturn]{
-		Stub: s.OnHead.MethodStub,
+		Stub:  s.OnHead.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = readerStubHead(tb, s)
+		},
+		Arguments: func(tb assert.TB, c storetest.ReaderHeadCall) {
+			tb.Helper()
+			a0, a1 := readerStubHeadArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.S, a1, "the call records S")
 		},
 		Result: func() storetest.ReaderHeadReturn {
 			got0, got1 := readerStubHead(tb, s)
 			return storetest.ReaderHeadReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnHead.Func(func(_ context.Context, _ shard.Scope) (store.Head, error) {
-				mark()
+		Returns: func() storetest.ReaderHeadReturn {
+			want0, want1 := readerStubHeadPins()
+			s.OnHead.Returns(want0, want1)
+			return storetest.ReaderHeadReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(storetest.ReaderHeadCall)) {
+			s.OnHead.Func(func(p0 context.Context, p1 shard.Scope) (store.Head, error) {
+				seen(storetest.ReaderHeadCall{Ctx: p0, S: p1})
 				var z0 store.Head
 				var z1 error
 				return z0, z1
@@ -139,24 +153,40 @@ func readerStubHeadSubject(tb assert.TB) stub.Subject[storetest.ReaderHeadCall, 
 	}
 }
 
-// readerStubReadSubject returns the subject of [stub.Behaviour] for Read.
-// The subject calls a new double that reports to tb.
+// readerStubReadSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Read. The subject calls a new double that
+// reports to tb.
 func readerStubReadSubject(tb assert.TB) stub.Subject[storetest.ReaderReadCall, storetest.ReaderReadReturn] {
 	tb.Helper()
 	s := storetest.NewReaderStub(tb)
 	return stub.Subject[storetest.ReaderReadCall, storetest.ReaderReadReturn]{
-		Stub: s.OnRead.MethodStub,
+		Stub:  s.OnRead.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _, _ = readerStubRead(tb, s)
+		},
+		Arguments: func(tb assert.TB, c storetest.ReaderReadCall) {
+			tb.Helper()
+			a0, a1, a2, a3, a4 := readerStubReadArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.S, a1, "the call records S")
+			expect.Equal(tb, c.Inc, a2, "the call records Inc")
+			expect.Equal(tb, c.Q, a3, "the call records Q")
+			expect.Equal(tb, c.P, a4, "the call records P")
 		},
 		Result: func() storetest.ReaderReadReturn {
 			got0, got1, got2 := readerStubRead(tb, s)
 			return storetest.ReaderReadReturn{Result0: got0, Result1: got1, Err: got2}
 		},
-		Override: func(mark func()) {
+		Returns: func() storetest.ReaderReadReturn {
+			want0, want1, want2 := readerStubReadPins()
+			s.OnRead.Returns(want0, want1, want2)
+			return storetest.ReaderReadReturn{Result0: want0, Result1: want1, Err: want2}
+		},
+		Override: func(seen func(storetest.ReaderReadCall)) {
 			s.OnRead.Func(
-				func(_ context.Context, _ shard.Scope, _ shard.NamespaceIncarnation, _ store.Query, _ page.Page) (store.State, page.Cursor[shard.Placement], error) {
-					mark()
+				func(p0 context.Context, p1 shard.Scope, p2 shard.NamespaceIncarnation, p3 store.Query, p4 page.Page) (store.State, page.Cursor[shard.Placement], error) {
+					seen(storetest.ReaderReadCall{Ctx: p0, S: p1, Inc: p2, Q: p3, P: p4})
 					var z0 store.State
 					var z1 page.Cursor[shard.Placement]
 					var z2 error
@@ -171,24 +201,40 @@ func readerStubReadSubject(tb assert.TB) stub.Subject[storetest.ReaderReadCall, 
 	}
 }
 
-// readerStubWatchSubject returns the subject of [stub.Behaviour] for
-// Watch. The subject calls a new double that reports to tb.
+// readerStubWatchSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Watch. The subject calls a new double that
+// reports to tb.
 func readerStubWatchSubject(tb assert.TB) stub.Subject[storetest.ReaderWatchCall, storetest.ReaderWatchReturn] {
 	tb.Helper()
 	s := storetest.NewReaderStub(tb)
 	return stub.Subject[storetest.ReaderWatchCall, storetest.ReaderWatchReturn]{
-		Stub: s.OnWatch.MethodStub,
+		Stub:  s.OnWatch.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = readerStubWatch(tb, s)
+		},
+		Arguments: func(tb assert.TB, c storetest.ReaderWatchCall) {
+			tb.Helper()
+			a0, a1, a2, a3, a4 := readerStubWatchArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.S, a1, "the call records S")
+			expect.Equal(tb, c.Inc, a2, "the call records Inc")
+			expect.Equal(tb, c.From, a3, "the call records From")
+			expect.Equal(tb, c.Node, a4, "the call records Node")
 		},
 		Result: func() storetest.ReaderWatchReturn {
 			got0 := readerStubWatch(tb, s)
 			return storetest.ReaderWatchReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() storetest.ReaderWatchReturn {
+			want0 := readerStubWatchPins()
+			s.OnWatch.Returns(want0)
+			return storetest.ReaderWatchReturn{Result: want0}
+		},
+		Override: func(seen func(storetest.ReaderWatchCall)) {
 			s.OnWatch.Func(
-				func(_ context.Context, _ shard.Scope, _ shard.NamespaceIncarnation, _ epoch.Epoch, _ shard.NodeID) iter.Seq2[store.Event, error] {
-					mark()
+				func(p0 context.Context, p1 shard.Scope, p2 shard.NamespaceIncarnation, p3 epoch.Epoch, p4 shard.NodeID) iter.Seq2[store.Event, error] {
+					seen(storetest.ReaderWatchCall{Ctx: p0, S: p1, Inc: p2, From: p3, Node: p4})
 					var z0 iter.Seq2[store.Event, error]
 					return z0
 				},
@@ -210,7 +256,6 @@ func readerStubInstanceOf(tb assert.TB, s *storetest.ReaderStub) readerStubInsta
 		Call: func() {
 			_, _ = readerStubHead(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -222,171 +267,34 @@ func TestReaderStub(t *testing.T) {
 	t.Run("Head", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Head", readerStubHeadSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			_, _ = readerStubHead(t, s)
-			got := s.OnHead.AssertCalledOnce(t, "Head records the call")
-			a0, a1 := readerStubHeadArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.S, a1, "the call records S")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			var seen []storetest.ReaderHeadCall
-			s.OnHead.OnRecord(func(c storetest.ReaderHeadCall) { seen = append(seen, c) })
-			_, _ = readerStubHead(t, s)
-			_, _ = readerStubHead(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Head")
-		})
 	})
 
 	t.Run("Read", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Read", readerStubReadSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			_, _, _ = readerStubRead(t, s)
-			got := s.OnRead.AssertCalledOnce(t, "Read records the call")
-			a0, a1, a2, a3, a4 := readerStubReadArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.S, a1, "the call records S")
-			expect.Equal(t, got.Inc, a2, "the call records Inc")
-			expect.Equal(t, got.Q, a3, "the call records Q")
-			expect.Equal(t, got.P, a4, "the call records P")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			var seen []storetest.ReaderReadCall
-			s.OnRead.OnRecord(func(c storetest.ReaderReadCall) { seen = append(seen, c) })
-			_, _, _ = readerStubRead(t, s)
-			_, _, _ = readerStubRead(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Read")
-		})
 	})
 
 	t.Run("Watch", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Watch", readerStubWatchSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			_ = readerStubWatch(t, s)
-			got := s.OnWatch.AssertCalledOnce(t, "Watch records the call")
-			a0, a1, a2, a3, a4 := readerStubWatchArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.S, a1, "the call records S")
-			expect.Equal(t, got.Inc, a2, "the call records Inc")
-			expect.Equal(t, got.From, a3, "the call records From")
-			expect.Equal(t, got.Node, a4, "the call records Node")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			var seen []storetest.ReaderWatchCall
-			s.OnWatch.OnRecord(func(c storetest.ReaderWatchCall) { seen = append(seen, c) })
-			_ = readerStubWatch(t, s)
-			_ = readerStubWatch(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Watch")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) readerStubInstance {
-			return readerStubInstanceOf(tb, storetest.NewReaderStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Head", func(t *testing.T) {
+		t.Run("Head", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			_, _ = readerStubHead(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnHead.CallCount(), 0, "ResetCalls clears the calls of Head")
+			stub.ResetBehaviour(t, "Head", readerStubHeadSubject)
 		})
 
-		t.Run("keeps the results of Returns of Head", func(t *testing.T) {
+		t.Run("Read", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			want0, want1 := readerStubHeadPins()
-			s.OnHead.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := readerStubHead(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Head")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Head")
+			stub.ResetBehaviour(t, "Read", readerStubReadSubject)
 		})
 
-		t.Run("clears the recorded calls of Read", func(t *testing.T) {
+		t.Run("Watch", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			_, _, _ = readerStubRead(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnRead.CallCount(), 0, "ResetCalls clears the calls of Read")
-		})
-
-		t.Run("keeps the results of Returns of Read", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			want0, want1, want2 := readerStubReadPins()
-			s.OnRead.Returns(want0, want1, want2)
-			s.ResetCalls()
-			got0, _, got2 := readerStubRead(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result0 of Read")
-			expect.ErrorIs(t, got2, want2, "ResetCalls keeps the error of Read")
-		})
-
-		t.Run("clears the recorded calls of Watch", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			_ = readerStubWatch(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWatch.CallCount(), 0, "ResetCalls clears the calls of Watch")
-		})
-
-		t.Run("keeps the results of Returns of Watch", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			want0 := readerStubWatchPins()
-			s.OnWatch.Returns(want0)
-			s.ResetCalls()
-			got0 := readerStubWatch(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Watch")
-		})
-	})
-
-	t.Run("NewReaderStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) readerStubInstance {
-			return readerStubInstanceOf(tb, storetest.NewReaderStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewReaderStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Head with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Head-failing")
-			s := storetest.NewReaderStubFailing(t, want)
-			_, r1 := readerStubHead(t, s)
-			assert.ErrorIs(t, r1, want, "Head fails with the error of NewReaderStubFailing")
-		})
-
-		t.Run("fails Read with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Read-failing")
-			s := storetest.NewReaderStubFailing(t, want)
-			_, _, r2 := readerStubRead(t, s)
-			assert.ErrorIs(t, r2, want, "Read fails with the error of NewReaderStubFailing")
+			stub.ResetBehaviour(t, "Watch", readerStubWatchSubject)
 		})
 	})
 
@@ -566,50 +474,24 @@ func TestReaderStub(t *testing.T) {
 func TestReaderHeadStub(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Returns", func(t *testing.T) {
+	t.Run("FaultOutcomeUnknown", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("sets the results of each call of Head", func(t *testing.T) {
+		t.Run("fails the next call of Head with ErrOutcomeUnknown", func(t *testing.T) {
 			t.Parallel()
 			s := storetest.NewReaderStub(t)
-			want0, want1 := readerStubHeadPins()
-			s.OnHead.Returns(want0, want1)
-			got0, got1 := readerStubHead(t, s)
-			expect.Equal(t, got0, want0, "Head returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Head returns the error that Returns sets")
+			s.OnHead.FaultOutcomeUnknown()
+			_, r1 := readerStubHead(t, s)
+			assert.ErrorIs(t, r1, version.ErrOutcomeUnknown, "the next call of Head fails with ErrOutcomeUnknown")
 		})
 
-		t.Run("configures Head for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewReaderStub(r)
-			s.OnHead.Strict()
-			var want0 store.Head
-			var want1 error
-			s.OnHead.Returns(want0, want1)
-			_, _ = readerStubHead(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Head")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Head to the function", func(t *testing.T) {
+		t.Run("spares the call after the failed call", func(t *testing.T) {
 			t.Parallel()
 			s := storetest.NewReaderStub(t)
-			var got0 context.Context
-			var got1 shard.Scope
-			s.OnHead.Func(func(p0 context.Context, p1 shard.Scope) (store.Head, error) {
-				got0, got1 = p0, p1
-				var z0 store.Head
-				var z1 error
-				return z0, z1
-			})
+			s.OnHead.FaultOutcomeUnknown()
 			_, _ = readerStubHead(t, s)
-			a0, a1 := readerStubHeadArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives S")
+			_, r1 := readerStubHead(t, s)
+			assert.NoError(t, r1, "the call of Head after the failed call succeeds")
 		})
 	})
 }
@@ -619,60 +501,24 @@ func TestReaderHeadStub(t *testing.T) {
 func TestReaderReadStub(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Returns", func(t *testing.T) {
+	t.Run("FaultOutcomeUnknown", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("sets the results of each call of Read", func(t *testing.T) {
+		t.Run("fails the next call of Read with ErrOutcomeUnknown", func(t *testing.T) {
 			t.Parallel()
 			s := storetest.NewReaderStub(t)
-			want0, want1, want2 := readerStubReadPins()
-			s.OnRead.Returns(want0, want1, want2)
-			got0, _, got2 := readerStubRead(t, s)
-			expect.Equal(t, got0, want0, "Read returns the Result0 that Returns sets")
-			expect.ErrorIs(t, got2, want2, "Read returns the error that Returns sets")
+			s.OnRead.FaultOutcomeUnknown()
+			_, _, r2 := readerStubRead(t, s)
+			assert.ErrorIs(t, r2, version.ErrOutcomeUnknown, "the next call of Read fails with ErrOutcomeUnknown")
 		})
 
-		t.Run("configures Read for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewReaderStub(r)
-			s.OnRead.Strict()
-			var want0 store.State
-			var want1 page.Cursor[shard.Placement]
-			var want2 error
-			s.OnRead.Returns(want0, want1, want2)
-			_, _, _ = readerStubRead(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Read")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Read to the function", func(t *testing.T) {
+		t.Run("spares the call after the failed call", func(t *testing.T) {
 			t.Parallel()
 			s := storetest.NewReaderStub(t)
-			var got0 context.Context
-			var got1 shard.Scope
-			var got2 shard.NamespaceIncarnation
-			var got3 store.Query
-			var got4 page.Page
-			s.OnRead.Func(
-				func(p0 context.Context, p1 shard.Scope, p2 shard.NamespaceIncarnation, p3 store.Query, p4 page.Page) (store.State, page.Cursor[shard.Placement], error) {
-					got0, got1, got2, got3, got4 = p0, p1, p2, p3, p4
-					var z0 store.State
-					var z1 page.Cursor[shard.Placement]
-					var z2 error
-					return z0, z1, z2
-				},
-			)
+			s.OnRead.FaultOutcomeUnknown()
 			_, _, _ = readerStubRead(t, s)
-			a0, a1, a2, a3, a4 := readerStubReadArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives S")
-			expect.Equal(t, got2, a2, "the function receives Inc")
-			expect.Equal(t, got3, a3, "the function receives Q")
-			expect.Equal(t, got4, a4, "the function receives P")
+			_, _, r2 := readerStubRead(t, s)
+			assert.NoError(t, r2, "the call of Read after the failed call succeeds")
 		})
 	})
 }
@@ -681,58 +527,6 @@ func TestReaderReadStub(t *testing.T) {
 // configures Watch.
 func TestReaderWatchStub(t *testing.T) {
 	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Watch", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			want0 := readerStubWatchPins()
-			s.OnWatch.Returns(want0)
-			got0 := readerStubWatch(t, s)
-			assert.Equal(t, got0, want0, "Watch returns the Result that Returns sets")
-		})
-
-		t.Run("configures Watch for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewReaderStub(r)
-			s.OnWatch.Strict()
-			var want0 iter.Seq2[store.Event, error]
-			s.OnWatch.Returns(want0)
-			_ = readerStubWatch(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Watch")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Watch to the function", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewReaderStub(t)
-			var got0 context.Context
-			var got1 shard.Scope
-			var got2 shard.NamespaceIncarnation
-			var got3 epoch.Epoch
-			var got4 shard.NodeID
-			s.OnWatch.Func(
-				func(p0 context.Context, p1 shard.Scope, p2 shard.NamespaceIncarnation, p3 epoch.Epoch, p4 shard.NodeID) iter.Seq2[store.Event, error] {
-					got0, got1, got2, got3, got4 = p0, p1, p2, p3, p4
-					var z0 iter.Seq2[store.Event, error]
-					return z0
-				},
-			)
-			_ = readerStubWatch(t, s)
-			a0, a1, a2, a3, a4 := readerStubWatchArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives S")
-			expect.Equal(t, got2, a2, "the function receives Inc")
-			expect.Equal(t, got3, a3, "the function receives From")
-			expect.Equal(t, got4, a4, "the function receives Node")
-		})
-	})
 
 	t.Run("Yields", func(t *testing.T) {
 		t.Parallel()
@@ -831,23 +625,37 @@ func writerStubCommitPins() (epoch.Epoch, error) {
 	return want0, want1
 }
 
-// writerStubCommitSubject returns the subject of [stub.Behaviour] for
-// Commit. The subject calls a new double that reports to tb.
+// writerStubCommitSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Commit. The subject calls a new double that
+// reports to tb.
 func writerStubCommitSubject(tb assert.TB) stub.Subject[storetest.WriterCommitCall, storetest.WriterCommitReturn] {
 	tb.Helper()
 	s := storetest.NewWriterStub(tb)
 	return stub.Subject[storetest.WriterCommitCall, storetest.WriterCommitReturn]{
-		Stub: s.OnCommit.MethodStub,
+		Stub:  s.OnCommit.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = writerStubCommit(tb, s)
+		},
+		Arguments: func(tb assert.TB, c storetest.WriterCommitCall) {
+			tb.Helper()
+			a0, a1, a2 := writerStubCommitArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Expect, a1, "the call records Expect")
+			expect.Equal(tb, c.M, a2, "the call records M")
 		},
 		Result: func() storetest.WriterCommitReturn {
 			got0, got1 := writerStubCommit(tb, s)
 			return storetest.WriterCommitReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnCommit.Func(func(_ context.Context, _ epoch.Epoch, _ *store.Mutation) (epoch.Epoch, error) {
-				mark()
+		Returns: func() storetest.WriterCommitReturn {
+			want0, want1 := writerStubCommitPins()
+			s.OnCommit.Returns(want0, want1)
+			return storetest.WriterCommitReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(storetest.WriterCommitCall)) {
+			s.OnCommit.Func(func(p0 context.Context, p1 epoch.Epoch, p2 *store.Mutation) (epoch.Epoch, error) {
+				seen(storetest.WriterCommitCall{Ctx: p0, Expect: p1, M: p2})
 				var z0 epoch.Epoch
 				var z1 error
 				return z0, z1
@@ -873,7 +681,6 @@ func writerStubInstanceOf(tb assert.TB, s *storetest.WriterStub) writerStubInsta
 		Call: func() {
 			_, _ = writerStubCommit(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -885,71 +692,14 @@ func TestWriterStub(t *testing.T) {
 	t.Run("Commit", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Commit", writerStubCommitSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewWriterStub(t)
-			_, _ = writerStubCommit(t, s)
-			got := s.OnCommit.AssertCalledOnce(t, "Commit records the call")
-			a0, a1, a2 := writerStubCommitArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Expect, a1, "the call records Expect")
-			expect.Equal(t, got.M, a2, "the call records M")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewWriterStub(t)
-			var seen []storetest.WriterCommitCall
-			s.OnCommit.OnRecord(func(c storetest.WriterCommitCall) { seen = append(seen, c) })
-			_, _ = writerStubCommit(t, s)
-			_, _ = writerStubCommit(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Commit")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) writerStubInstance {
-			return writerStubInstanceOf(tb, storetest.NewWriterStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Commit", func(t *testing.T) {
+		t.Run("Commit", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewWriterStub(t)
-			_, _ = writerStubCommit(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnCommit.CallCount(), 0, "ResetCalls clears the calls of Commit")
-		})
-
-		t.Run("keeps the results of Returns of Commit", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewWriterStub(t)
-			want0, want1 := writerStubCommitPins()
-			s.OnCommit.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := writerStubCommit(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Commit")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Commit")
-		})
-	})
-
-	t.Run("NewWriterStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) writerStubInstance {
-			return writerStubInstanceOf(tb, storetest.NewWriterStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewWriterStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Commit with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Commit-failing")
-			s := storetest.NewWriterStubFailing(t, want)
-			_, r1 := writerStubCommit(t, s)
-			assert.ErrorIs(t, r1, want, "Commit fails with the error of NewWriterStubFailing")
+			stub.ResetBehaviour(t, "Commit", writerStubCommitSubject)
 		})
 	})
 
@@ -1048,61 +798,6 @@ func TestWriterStub(t *testing.T) {
 	})
 }
 
-// TestWriterCommitStub checks the methods of WriterCommitStub, which
-// configures Commit.
-func TestWriterCommitStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Commit", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewWriterStub(t)
-			want0, want1 := writerStubCommitPins()
-			s.OnCommit.Returns(want0, want1)
-			got0, got1 := writerStubCommit(t, s)
-			expect.Equal(t, got0, want0, "Commit returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Commit returns the error that Returns sets")
-		})
-
-		t.Run("configures Commit for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewWriterStub(r)
-			s.OnCommit.Strict()
-			var want0 epoch.Epoch
-			var want1 error
-			s.OnCommit.Returns(want0, want1)
-			_, _ = writerStubCommit(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Commit")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Commit to the function", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewWriterStub(t)
-			var got0 context.Context
-			var got1 epoch.Epoch
-			var got2 *store.Mutation
-			s.OnCommit.Func(func(p0 context.Context, p1 epoch.Epoch, p2 *store.Mutation) (epoch.Epoch, error) {
-				got0, got1, got2 = p0, p1, p2
-				var z0 epoch.Epoch
-				var z1 error
-				return z0, z1
-			})
-			_, _ = writerStubCommit(t, s)
-			a0, a1, a2 := writerStubCommitArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Expect")
-			expect.Equal(t, got2, a2, "the function receives M")
-		})
-	})
-}
-
 // leadershipStubTerm calls Term of s with the samples of its arguments.
 func leadershipStubTerm(tb assert.TB, s *storetest.LeadershipStub) epoch.Epoch {
 	tb.Helper()
@@ -1151,15 +846,17 @@ func leadershipStubResignPins() error {
 	return want0
 }
 
-// leadershipStubTermSubject returns the subject of [stub.Behaviour] for
-// Term. The subject calls a new double that reports to tb.
+// leadershipStubTermSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Term. The subject calls a new double that
+// reports to tb.
 func leadershipStubTermSubject(
 	tb assert.TB,
 ) stub.Subject[storetest.LeadershipTermCall, storetest.LeadershipTermReturn] {
 	tb.Helper()
 	s := storetest.NewLeadershipStub(tb)
 	return stub.Subject[storetest.LeadershipTermCall, storetest.LeadershipTermReturn]{
-		Stub: s.OnTerm.MethodStub,
+		Stub:  s.OnTerm.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = leadershipStubTerm(tb, s)
 		},
@@ -1167,9 +864,14 @@ func leadershipStubTermSubject(
 			got0 := leadershipStubTerm(tb, s)
 			return storetest.LeadershipTermReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() storetest.LeadershipTermReturn {
+			want0 := leadershipStubTermPins()
+			s.OnTerm.Returns(want0)
+			return storetest.LeadershipTermReturn{Result: want0}
+		},
+		Override: func(seen func(storetest.LeadershipTermCall)) {
 			s.OnTerm.Func(func() epoch.Epoch {
-				mark()
+				seen(storetest.LeadershipTermCall{})
 				var z0 epoch.Epoch
 				return z0
 			})
@@ -1177,15 +879,17 @@ func leadershipStubTermSubject(
 	}
 }
 
-// leadershipStubDoneSubject returns the subject of [stub.Behaviour] for
-// Done. The subject calls a new double that reports to tb.
+// leadershipStubDoneSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Done. The subject calls a new double that
+// reports to tb.
 func leadershipStubDoneSubject(
 	tb assert.TB,
 ) stub.Subject[storetest.LeadershipDoneCall, storetest.LeadershipDoneReturn] {
 	tb.Helper()
 	s := storetest.NewLeadershipStub(tb)
 	return stub.Subject[storetest.LeadershipDoneCall, storetest.LeadershipDoneReturn]{
-		Stub: s.OnDone.MethodStub,
+		Stub:  s.OnDone.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = leadershipStubDone(tb, s)
 		},
@@ -1193,9 +897,14 @@ func leadershipStubDoneSubject(
 			got0 := leadershipStubDone(tb, s)
 			return storetest.LeadershipDoneReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() storetest.LeadershipDoneReturn {
+			want0 := leadershipStubDonePins()
+			s.OnDone.Returns(want0)
+			return storetest.LeadershipDoneReturn{Result: want0}
+		},
+		Override: func(seen func(storetest.LeadershipDoneCall)) {
 			s.OnDone.Func(func() <-chan struct{} {
-				mark()
+				seen(storetest.LeadershipDoneCall{})
 				var z0 <-chan struct{}
 				return z0
 			})
@@ -1203,25 +912,37 @@ func leadershipStubDoneSubject(
 	}
 }
 
-// leadershipStubResignSubject returns the subject of [stub.Behaviour] for
-// Resign. The subject calls a new double that reports to tb.
+// leadershipStubResignSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Resign. The subject calls a new double that
+// reports to tb.
 func leadershipStubResignSubject(
 	tb assert.TB,
 ) stub.Subject[storetest.LeadershipResignCall, storetest.LeadershipResignReturn] {
 	tb.Helper()
 	s := storetest.NewLeadershipStub(tb)
 	return stub.Subject[storetest.LeadershipResignCall, storetest.LeadershipResignReturn]{
-		Stub: s.OnResign.MethodStub,
+		Stub:  s.OnResign.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = leadershipStubResign(tb, s)
+		},
+		Arguments: func(tb assert.TB, c storetest.LeadershipResignCall) {
+			tb.Helper()
+			a0 := leadershipStubResignArgs(tb)
+			assert.Equal(tb, c.Ctx, a0, "the call records Ctx", assert.ByIdentity())
 		},
 		Result: func() storetest.LeadershipResignReturn {
 			got0 := leadershipStubResign(tb, s)
 			return storetest.LeadershipResignReturn{Err: got0}
 		},
-		Override: func(mark func()) {
-			s.OnResign.Func(func(_ context.Context) error {
-				mark()
+		Returns: func() storetest.LeadershipResignReturn {
+			want0 := leadershipStubResignPins()
+			s.OnResign.Returns(want0)
+			return storetest.LeadershipResignReturn{Err: want0}
+		},
+		Override: func(seen func(storetest.LeadershipResignCall)) {
+			s.OnResign.Func(func(p0 context.Context) error {
+				seen(storetest.LeadershipResignCall{Ctx: p0})
 				var z0 error
 				return z0
 			})
@@ -1246,7 +967,6 @@ func leadershipStubInstanceOf(tb assert.TB, s *storetest.LeadershipStub) leaders
 		Call: func() {
 			_ = leadershipStubTerm(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -1258,134 +978,34 @@ func TestLeadershipStub(t *testing.T) {
 	t.Run("Term", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Term", leadershipStubTermSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			var seen []storetest.LeadershipTermCall
-			s.OnTerm.OnRecord(func(c storetest.LeadershipTermCall) { seen = append(seen, c) })
-			_ = leadershipStubTerm(t, s)
-			_ = leadershipStubTerm(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Term")
-		})
 	})
 
 	t.Run("Done", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Done", leadershipStubDoneSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			var seen []storetest.LeadershipDoneCall
-			s.OnDone.OnRecord(func(c storetest.LeadershipDoneCall) { seen = append(seen, c) })
-			_ = leadershipStubDone(t, s)
-			_ = leadershipStubDone(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Done")
-		})
 	})
 
 	t.Run("Resign", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Resign", leadershipStubResignSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			_ = leadershipStubResign(t, s)
-			got := s.OnResign.AssertCalledOnce(t, "Resign records the call")
-			a0 := leadershipStubResignArgs(t)
-			assert.Equal(t, got.Ctx, a0, "the call records Ctx", assert.ByIdentity())
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			var seen []storetest.LeadershipResignCall
-			s.OnResign.OnRecord(func(c storetest.LeadershipResignCall) { seen = append(seen, c) })
-			_ = leadershipStubResign(t, s)
-			_ = leadershipStubResign(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Resign")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) leadershipStubInstance {
-			return leadershipStubInstanceOf(tb, storetest.NewLeadershipStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Term", func(t *testing.T) {
+		t.Run("Term", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			_ = leadershipStubTerm(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnTerm.CallCount(), 0, "ResetCalls clears the calls of Term")
+			stub.ResetBehaviour(t, "Term", leadershipStubTermSubject)
 		})
 
-		t.Run("keeps the results of Returns of Term", func(t *testing.T) {
+		t.Run("Done", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			want0 := leadershipStubTermPins()
-			s.OnTerm.Returns(want0)
-			s.ResetCalls()
-			got0 := leadershipStubTerm(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Term")
+			stub.ResetBehaviour(t, "Done", leadershipStubDoneSubject)
 		})
 
-		t.Run("clears the recorded calls of Done", func(t *testing.T) {
+		t.Run("Resign", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			_ = leadershipStubDone(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnDone.CallCount(), 0, "ResetCalls clears the calls of Done")
-		})
-
-		t.Run("keeps the results of Returns of Done", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			want0 := leadershipStubDonePins()
-			s.OnDone.Returns(want0)
-			s.ResetCalls()
-			got0 := leadershipStubDone(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Done")
-		})
-
-		t.Run("clears the recorded calls of Resign", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			_ = leadershipStubResign(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnResign.CallCount(), 0, "ResetCalls clears the calls of Resign")
-		})
-
-		t.Run("keeps the results of Returns of Resign", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			want0 := leadershipStubResignPins()
-			s.OnResign.Returns(want0)
-			s.ResetCalls()
-			got0 := leadershipStubResign(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of Resign")
-		})
-	})
-
-	t.Run("NewLeadershipStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) leadershipStubInstance {
-			return leadershipStubInstanceOf(tb, storetest.NewLeadershipStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewLeadershipStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Resign with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Resign-failing")
-			s := storetest.NewLeadershipStubFailing(t, want)
-			r0 := leadershipStubResign(t, s)
-			assert.ErrorIs(t, r0, want, "Resign fails with the error of NewLeadershipStubFailing")
+			stub.ResetBehaviour(t, "Resign", leadershipStubResignSubject)
 		})
 	})
 
@@ -1529,114 +1149,6 @@ func TestLeadershipStub(t *testing.T) {
 			}))
 			_ = leadershipStubResign(t, s)
 			assert.True(t, called, "WithLeadershipResign sets the function of Resign")
-		})
-	})
-}
-
-// TestLeadershipTermStub checks the methods of LeadershipTermStub, which
-// configures Term.
-func TestLeadershipTermStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Term", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			want0 := leadershipStubTermPins()
-			s.OnTerm.Returns(want0)
-			got0 := leadershipStubTerm(t, s)
-			assert.Equal(t, got0, want0, "Term returns the Result that Returns sets")
-		})
-
-		t.Run("configures Term for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewLeadershipStub(r)
-			s.OnTerm.Strict()
-			var want0 epoch.Epoch
-			s.OnTerm.Returns(want0)
-			_ = leadershipStubTerm(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Term")
-		})
-	})
-}
-
-// TestLeadershipDoneStub checks the methods of LeadershipDoneStub, which
-// configures Done.
-func TestLeadershipDoneStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Done", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			want0 := leadershipStubDonePins()
-			s.OnDone.Returns(want0)
-			got0 := leadershipStubDone(t, s)
-			assert.Equal(t, got0, want0, "Done returns the Result that Returns sets")
-		})
-
-		t.Run("configures Done for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewLeadershipStub(r)
-			s.OnDone.Strict()
-			var want0 <-chan struct{}
-			s.OnDone.Returns(want0)
-			_ = leadershipStubDone(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Done")
-		})
-	})
-}
-
-// TestLeadershipResignStub checks the methods of LeadershipResignStub,
-// which configures Resign.
-func TestLeadershipResignStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Resign", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			want0 := leadershipStubResignPins()
-			s.OnResign.Returns(want0)
-			got0 := leadershipStubResign(t, s)
-			assert.ErrorIs(t, got0, want0, "Resign returns the error that Returns sets")
-		})
-
-		t.Run("configures Resign for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewLeadershipStub(r)
-			s.OnResign.Strict()
-			var want0 error
-			s.OnResign.Returns(want0)
-			_ = leadershipStubResign(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Resign")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Resign to the function", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewLeadershipStub(t)
-			var got0 context.Context
-			s.OnResign.Func(func(p0 context.Context) error {
-				got0 = p0
-				var z0 error
-				return z0
-			})
-			_ = leadershipStubResign(t, s)
-			a0 := leadershipStubResignArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Ctx", assert.ByIdentity())
 		})
 	})
 }
@@ -1859,23 +1371,32 @@ func storeStubWatchPins() iter.Seq2[store.Event, error] {
 	return want0
 }
 
-// storeStubWriterSubject returns the subject of [stub.Behaviour] for
-// Writer. The subject calls a new double that reports to tb.
+// storeStubWriterSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Writer. The subject calls a new double that
+// reports to tb.
 func storeStubWriterSubject(tb assert.TB) stub.Subject[storetest.StoreWriterCall, storetest.StoreWriterReturn] {
 	tb.Helper()
 	s := storetest.NewStoreStub(tb)
 	return stub.Subject[storetest.StoreWriterCall, storetest.StoreWriterReturn]{
-		Stub: s.OnWriter.MethodStub,
+		Stub:  s.OnWriter.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = storeStubWriter(tb, s)
+		},
+		Arguments: func(tb assert.TB, c storetest.StoreWriterCall) {
+			tb.Helper()
+			a0, a1, a2 := storeStubWriterArgs(tb)
+			expect.Equal(tb, c.S, a0, "the call records S")
+			expect.Equal(tb, c.Inc, a1, "the call records Inc")
+			expect.Equal(tb, c.Term, a2, "the call records Term")
 		},
 		Result: func() storetest.StoreWriterReturn {
 			got0 := storeStubWriter(tb, s)
 			return storetest.StoreWriterReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnWriter.Func(func(_ shard.Scope, _ shard.NamespaceIncarnation, _ epoch.Epoch) store.Writer {
-				mark()
+		Override: func(seen func(storetest.StoreWriterCall)) {
+			s.OnWriter.Func(func(p0 shard.Scope, p1 shard.NamespaceIncarnation, p2 epoch.Epoch) store.Writer {
+				seen(storetest.StoreWriterCall{S: p0, Inc: p1, Term: p2})
 				var z0 store.Writer
 				return z0
 			})
@@ -1883,23 +1404,37 @@ func storeStubWriterSubject(tb assert.TB) stub.Subject[storetest.StoreWriterCall
 	}
 }
 
-// storeStubOutcomeSubject returns the subject of [stub.Behaviour] for
-// Outcome. The subject calls a new double that reports to tb.
+// storeStubOutcomeSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Outcome. The subject calls a new double that
+// reports to tb.
 func storeStubOutcomeSubject(tb assert.TB) stub.Subject[storetest.StoreOutcomeCall, storetest.StoreOutcomeReturn] {
 	tb.Helper()
 	s := storetest.NewStoreStub(tb)
 	return stub.Subject[storetest.StoreOutcomeCall, storetest.StoreOutcomeReturn]{
-		Stub: s.OnOutcome.MethodStub,
+		Stub:  s.OnOutcome.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _, _ = storeStubOutcome(tb, s)
+		},
+		Arguments: func(tb assert.TB, c storetest.StoreOutcomeCall) {
+			tb.Helper()
+			a0, a1, a2 := storeStubOutcomeArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.S, a1, "the call records S")
+			expect.Equal(tb, c.ID, a2, "the call records ID")
 		},
 		Result: func() storetest.StoreOutcomeReturn {
 			got0, got1, got2 := storeStubOutcome(tb, s)
 			return storetest.StoreOutcomeReturn{Result0: got0, Result1: got1, Err: got2}
 		},
-		Override: func(mark func()) {
-			s.OnOutcome.Func(func(_ context.Context, _ shard.Scope, _ store.CommitID) (store.Receipt, bool, error) {
-				mark()
+		Returns: func() storetest.StoreOutcomeReturn {
+			want0, want1, want2 := storeStubOutcomePins()
+			s.OnOutcome.Returns(want0, want1, want2)
+			return storetest.StoreOutcomeReturn{Result0: want0, Result1: want1, Err: want2}
+		},
+		Override: func(seen func(storetest.StoreOutcomeCall)) {
+			s.OnOutcome.Func(func(p0 context.Context, p1 shard.Scope, p2 store.CommitID) (store.Receipt, bool, error) {
+				seen(storetest.StoreOutcomeCall{Ctx: p0, S: p1, ID: p2})
 				var z0 store.Receipt
 				var z1 bool
 				var z2 error
@@ -1913,23 +1448,36 @@ func storeStubOutcomeSubject(tb assert.TB) stub.Subject[storetest.StoreOutcomeCa
 	}
 }
 
-// storeStubCampaignSubject returns the subject of [stub.Behaviour] for
-// Campaign. The subject calls a new double that reports to tb.
+// storeStubCampaignSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Campaign. The subject calls a new double that
+// reports to tb.
 func storeStubCampaignSubject(tb assert.TB) stub.Subject[storetest.StoreCampaignCall, storetest.StoreCampaignReturn] {
 	tb.Helper()
 	s := storetest.NewStoreStub(tb)
 	return stub.Subject[storetest.StoreCampaignCall, storetest.StoreCampaignReturn]{
-		Stub: s.OnCampaign.MethodStub,
+		Stub:  s.OnCampaign.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = storeStubCampaign(tb, s)
+		},
+		Arguments: func(tb assert.TB, c storetest.StoreCampaignCall) {
+			tb.Helper()
+			a0, a1 := storeStubCampaignArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.S, a1, "the call records S")
 		},
 		Result: func() storetest.StoreCampaignReturn {
 			got0, got1 := storeStubCampaign(tb, s)
 			return storetest.StoreCampaignReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnCampaign.Func(func(_ context.Context, _ shard.Scope) (store.Leadership, error) {
-				mark()
+		Returns: func() storetest.StoreCampaignReturn {
+			want0, want1 := storeStubCampaignPins()
+			s.OnCampaign.Returns(want0, want1)
+			return storetest.StoreCampaignReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(storetest.StoreCampaignCall)) {
+			s.OnCampaign.Func(func(p0 context.Context, p1 shard.Scope) (store.Leadership, error) {
+				seen(storetest.StoreCampaignCall{Ctx: p0, S: p1})
 				var z0 store.Leadership
 				var z1 error
 				return z0, z1
@@ -1942,23 +1490,35 @@ func storeStubCampaignSubject(tb assert.TB) stub.Subject[storetest.StoreCampaign
 	}
 }
 
-// storeStubLimitsSubject returns the subject of [stub.Behaviour] for
-// Limits. The subject calls a new double that reports to tb.
+// storeStubLimitsSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Limits. The subject calls a new double that
+// reports to tb.
 func storeStubLimitsSubject(tb assert.TB) stub.Subject[storetest.StoreLimitsCall, storetest.StoreLimitsReturn] {
 	tb.Helper()
 	s := storetest.NewStoreStub(tb)
 	return stub.Subject[storetest.StoreLimitsCall, storetest.StoreLimitsReturn]{
-		Stub: s.OnLimits.MethodStub,
+		Stub:  s.OnLimits.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = storeStubLimits(tb, s)
+		},
+		Arguments: func(tb assert.TB, c storetest.StoreLimitsCall) {
+			tb.Helper()
+			a0 := storeStubLimitsArgs(tb)
+			assert.Equal(tb, c.S, a0, "the call records S")
 		},
 		Result: func() storetest.StoreLimitsReturn {
 			got0 := storeStubLimits(tb, s)
 			return storetest.StoreLimitsReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnLimits.Func(func(_ shard.Scope) store.Limits {
-				mark()
+		Returns: func() storetest.StoreLimitsReturn {
+			want0 := storeStubLimitsPins()
+			s.OnLimits.Returns(want0)
+			return storetest.StoreLimitsReturn{Result: want0}
+		},
+		Override: func(seen func(storetest.StoreLimitsCall)) {
+			s.OnLimits.Func(func(p0 shard.Scope) store.Limits {
+				seen(storetest.StoreLimitsCall{S: p0})
 				var z0 store.Limits
 				return z0
 			})
@@ -1966,23 +1526,36 @@ func storeStubLimitsSubject(tb assert.TB) stub.Subject[storetest.StoreLimitsCall
 	}
 }
 
-// storeStubFitsSubject returns the subject of [stub.Behaviour] for Fits.
-// The subject calls a new double that reports to tb.
+// storeStubFitsSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Fits. The subject calls a new double that
+// reports to tb.
 func storeStubFitsSubject(tb assert.TB) stub.Subject[storetest.StoreFitsCall, storetest.StoreFitsReturn] {
 	tb.Helper()
 	s := storetest.NewStoreStub(tb)
 	return stub.Subject[storetest.StoreFitsCall, storetest.StoreFitsReturn]{
-		Stub: s.OnFits.MethodStub,
+		Stub:  s.OnFits.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = storeStubFits(tb, s)
+		},
+		Arguments: func(tb assert.TB, c storetest.StoreFitsCall) {
+			tb.Helper()
+			a0, a1 := storeStubFitsArgs(tb)
+			expect.Equal(tb, c.S, a0, "the call records S")
+			expect.Equal(tb, c.M, a1, "the call records M")
 		},
 		Result: func() storetest.StoreFitsReturn {
 			got0 := storeStubFits(tb, s)
 			return storetest.StoreFitsReturn{Err: got0}
 		},
-		Override: func(mark func()) {
-			s.OnFits.Func(func(_ shard.Scope, _ *store.Mutation) error {
-				mark()
+		Returns: func() storetest.StoreFitsReturn {
+			want0 := storeStubFitsPins()
+			s.OnFits.Returns(want0)
+			return storetest.StoreFitsReturn{Err: want0}
+		},
+		Override: func(seen func(storetest.StoreFitsCall)) {
+			s.OnFits.Func(func(p0 shard.Scope, p1 *store.Mutation) error {
+				seen(storetest.StoreFitsCall{S: p0, M: p1})
 				var z0 error
 				return z0
 			})
@@ -1994,13 +1567,15 @@ func storeStubFitsSubject(tb assert.TB) stub.Subject[storetest.StoreFitsCall, st
 	}
 }
 
-// storeStubCloseSubject returns the subject of [stub.Behaviour] for Close.
-// The subject calls a new double that reports to tb.
+// storeStubCloseSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Close. The subject calls a new double that
+// reports to tb.
 func storeStubCloseSubject(tb assert.TB) stub.Subject[storetest.StoreCloseCall, storetest.StoreCloseReturn] {
 	tb.Helper()
 	s := storetest.NewStoreStub(tb)
 	return stub.Subject[storetest.StoreCloseCall, storetest.StoreCloseReturn]{
-		Stub: s.OnClose.MethodStub,
+		Stub:  s.OnClose.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = storeStubClose(tb, s)
 		},
@@ -2008,9 +1583,14 @@ func storeStubCloseSubject(tb assert.TB) stub.Subject[storetest.StoreCloseCall, 
 			got0 := storeStubClose(tb, s)
 			return storetest.StoreCloseReturn{Err: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() storetest.StoreCloseReturn {
+			want0 := storeStubClosePins()
+			s.OnClose.Returns(want0)
+			return storetest.StoreCloseReturn{Err: want0}
+		},
+		Override: func(seen func(storetest.StoreCloseCall)) {
 			s.OnClose.Func(func() error {
-				mark()
+				seen(storetest.StoreCloseCall{})
 				var z0 error
 				return z0
 			})
@@ -2022,23 +1602,36 @@ func storeStubCloseSubject(tb assert.TB) stub.Subject[storetest.StoreCloseCall, 
 	}
 }
 
-// storeStubHeadSubject returns the subject of [stub.Behaviour] for Head.
-// The subject calls a new double that reports to tb.
+// storeStubHeadSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Head. The subject calls a new double that
+// reports to tb.
 func storeStubHeadSubject(tb assert.TB) stub.Subject[storetest.StoreHeadCall, storetest.StoreHeadReturn] {
 	tb.Helper()
 	s := storetest.NewStoreStub(tb)
 	return stub.Subject[storetest.StoreHeadCall, storetest.StoreHeadReturn]{
-		Stub: s.OnHead.MethodStub,
+		Stub:  s.OnHead.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = storeStubHead(tb, s)
+		},
+		Arguments: func(tb assert.TB, c storetest.StoreHeadCall) {
+			tb.Helper()
+			a0, a1 := storeStubHeadArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.S, a1, "the call records S")
 		},
 		Result: func() storetest.StoreHeadReturn {
 			got0, got1 := storeStubHead(tb, s)
 			return storetest.StoreHeadReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnHead.Func(func(_ context.Context, _ shard.Scope) (store.Head, error) {
-				mark()
+		Returns: func() storetest.StoreHeadReturn {
+			want0, want1 := storeStubHeadPins()
+			s.OnHead.Returns(want0, want1)
+			return storetest.StoreHeadReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(storetest.StoreHeadCall)) {
+			s.OnHead.Func(func(p0 context.Context, p1 shard.Scope) (store.Head, error) {
+				seen(storetest.StoreHeadCall{Ctx: p0, S: p1})
 				var z0 store.Head
 				var z1 error
 				return z0, z1
@@ -2051,24 +1644,40 @@ func storeStubHeadSubject(tb assert.TB) stub.Subject[storetest.StoreHeadCall, st
 	}
 }
 
-// storeStubReadSubject returns the subject of [stub.Behaviour] for Read.
-// The subject calls a new double that reports to tb.
+// storeStubReadSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Read. The subject calls a new double that
+// reports to tb.
 func storeStubReadSubject(tb assert.TB) stub.Subject[storetest.StoreReadCall, storetest.StoreReadReturn] {
 	tb.Helper()
 	s := storetest.NewStoreStub(tb)
 	return stub.Subject[storetest.StoreReadCall, storetest.StoreReadReturn]{
-		Stub: s.OnRead.MethodStub,
+		Stub:  s.OnRead.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _, _ = storeStubRead(tb, s)
+		},
+		Arguments: func(tb assert.TB, c storetest.StoreReadCall) {
+			tb.Helper()
+			a0, a1, a2, a3, a4 := storeStubReadArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.S, a1, "the call records S")
+			expect.Equal(tb, c.Inc, a2, "the call records Inc")
+			expect.Equal(tb, c.Q, a3, "the call records Q")
+			expect.Equal(tb, c.P, a4, "the call records P")
 		},
 		Result: func() storetest.StoreReadReturn {
 			got0, got1, got2 := storeStubRead(tb, s)
 			return storetest.StoreReadReturn{Result0: got0, Result1: got1, Err: got2}
 		},
-		Override: func(mark func()) {
+		Returns: func() storetest.StoreReadReturn {
+			want0, want1, want2 := storeStubReadPins()
+			s.OnRead.Returns(want0, want1, want2)
+			return storetest.StoreReadReturn{Result0: want0, Result1: want1, Err: want2}
+		},
+		Override: func(seen func(storetest.StoreReadCall)) {
 			s.OnRead.Func(
-				func(_ context.Context, _ shard.Scope, _ shard.NamespaceIncarnation, _ store.Query, _ page.Page) (store.State, page.Cursor[shard.Placement], error) {
-					mark()
+				func(p0 context.Context, p1 shard.Scope, p2 shard.NamespaceIncarnation, p3 store.Query, p4 page.Page) (store.State, page.Cursor[shard.Placement], error) {
+					seen(storetest.StoreReadCall{Ctx: p0, S: p1, Inc: p2, Q: p3, P: p4})
 					var z0 store.State
 					var z1 page.Cursor[shard.Placement]
 					var z2 error
@@ -2083,24 +1692,40 @@ func storeStubReadSubject(tb assert.TB) stub.Subject[storetest.StoreReadCall, st
 	}
 }
 
-// storeStubWatchSubject returns the subject of [stub.Behaviour] for Watch.
-// The subject calls a new double that reports to tb.
+// storeStubWatchSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Watch. The subject calls a new double that
+// reports to tb.
 func storeStubWatchSubject(tb assert.TB) stub.Subject[storetest.StoreWatchCall, storetest.StoreWatchReturn] {
 	tb.Helper()
 	s := storetest.NewStoreStub(tb)
 	return stub.Subject[storetest.StoreWatchCall, storetest.StoreWatchReturn]{
-		Stub: s.OnWatch.MethodStub,
+		Stub:  s.OnWatch.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = storeStubWatch(tb, s)
+		},
+		Arguments: func(tb assert.TB, c storetest.StoreWatchCall) {
+			tb.Helper()
+			a0, a1, a2, a3, a4 := storeStubWatchArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.S, a1, "the call records S")
+			expect.Equal(tb, c.Inc, a2, "the call records Inc")
+			expect.Equal(tb, c.From, a3, "the call records From")
+			expect.Equal(tb, c.Node, a4, "the call records Node")
 		},
 		Result: func() storetest.StoreWatchReturn {
 			got0 := storeStubWatch(tb, s)
 			return storetest.StoreWatchReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() storetest.StoreWatchReturn {
+			want0 := storeStubWatchPins()
+			s.OnWatch.Returns(want0)
+			return storetest.StoreWatchReturn{Result: want0}
+		},
+		Override: func(seen func(storetest.StoreWatchCall)) {
 			s.OnWatch.Func(
-				func(_ context.Context, _ shard.Scope, _ shard.NamespaceIncarnation, _ epoch.Epoch, _ shard.NodeID) iter.Seq2[store.Event, error] {
-					mark()
+				func(p0 context.Context, p1 shard.Scope, p2 shard.NamespaceIncarnation, p3 epoch.Epoch, p4 shard.NodeID) iter.Seq2[store.Event, error] {
+					seen(storetest.StoreWatchCall{Ctx: p0, S: p1, Inc: p2, From: p3, Node: p4})
 					var z0 iter.Seq2[store.Event, error]
 					return z0
 				},
@@ -2122,7 +1747,6 @@ func storeStubInstanceOf(tb assert.TB, s *storetest.StoreStub) storeStubInstance
 		Call: func() {
 			_ = storeStubWriter(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -2134,444 +1758,94 @@ func TestStoreStub(t *testing.T) {
 	t.Run("Writer", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Writer", storeStubWriterSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_ = storeStubWriter(t, s)
-			got := s.OnWriter.AssertCalledOnce(t, "Writer records the call")
-			a0, a1, a2 := storeStubWriterArgs(t)
-			expect.Equal(t, got.S, a0, "the call records S")
-			expect.Equal(t, got.Inc, a1, "the call records Inc")
-			expect.Equal(t, got.Term, a2, "the call records Term")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var seen []storetest.StoreWriterCall
-			s.OnWriter.OnRecord(func(c storetest.StoreWriterCall) { seen = append(seen, c) })
-			_ = storeStubWriter(t, s)
-			_ = storeStubWriter(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Writer")
-		})
 	})
 
 	t.Run("Outcome", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Outcome", storeStubOutcomeSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_, _, _ = storeStubOutcome(t, s)
-			got := s.OnOutcome.AssertCalledOnce(t, "Outcome records the call")
-			a0, a1, a2 := storeStubOutcomeArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.S, a1, "the call records S")
-			expect.Equal(t, got.ID, a2, "the call records ID")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var seen []storetest.StoreOutcomeCall
-			s.OnOutcome.OnRecord(func(c storetest.StoreOutcomeCall) { seen = append(seen, c) })
-			_, _, _ = storeStubOutcome(t, s)
-			_, _, _ = storeStubOutcome(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Outcome")
-		})
 	})
 
 	t.Run("Campaign", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Campaign", storeStubCampaignSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_, _ = storeStubCampaign(t, s)
-			got := s.OnCampaign.AssertCalledOnce(t, "Campaign records the call")
-			a0, a1 := storeStubCampaignArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.S, a1, "the call records S")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var seen []storetest.StoreCampaignCall
-			s.OnCampaign.OnRecord(func(c storetest.StoreCampaignCall) { seen = append(seen, c) })
-			_, _ = storeStubCampaign(t, s)
-			_, _ = storeStubCampaign(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Campaign")
-		})
 	})
 
 	t.Run("Limits", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Limits", storeStubLimitsSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_ = storeStubLimits(t, s)
-			got := s.OnLimits.AssertCalledOnce(t, "Limits records the call")
-			a0 := storeStubLimitsArgs(t)
-			assert.Equal(t, got.S, a0, "the call records S")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var seen []storetest.StoreLimitsCall
-			s.OnLimits.OnRecord(func(c storetest.StoreLimitsCall) { seen = append(seen, c) })
-			_ = storeStubLimits(t, s)
-			_ = storeStubLimits(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Limits")
-		})
 	})
 
 	t.Run("Fits", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Fits", storeStubFitsSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_ = storeStubFits(t, s)
-			got := s.OnFits.AssertCalledOnce(t, "Fits records the call")
-			a0, a1 := storeStubFitsArgs(t)
-			expect.Equal(t, got.S, a0, "the call records S")
-			expect.Equal(t, got.M, a1, "the call records M")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var seen []storetest.StoreFitsCall
-			s.OnFits.OnRecord(func(c storetest.StoreFitsCall) { seen = append(seen, c) })
-			_ = storeStubFits(t, s)
-			_ = storeStubFits(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Fits")
-		})
 	})
 
 	t.Run("Close", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Close", storeStubCloseSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var seen []storetest.StoreCloseCall
-			s.OnClose.OnRecord(func(c storetest.StoreCloseCall) { seen = append(seen, c) })
-			_ = storeStubClose(t, s)
-			_ = storeStubClose(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Close")
-		})
 	})
 
 	t.Run("Head", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Head", storeStubHeadSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_, _ = storeStubHead(t, s)
-			got := s.OnHead.AssertCalledOnce(t, "Head records the call")
-			a0, a1 := storeStubHeadArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.S, a1, "the call records S")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var seen []storetest.StoreHeadCall
-			s.OnHead.OnRecord(func(c storetest.StoreHeadCall) { seen = append(seen, c) })
-			_, _ = storeStubHead(t, s)
-			_, _ = storeStubHead(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Head")
-		})
 	})
 
 	t.Run("Read", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Read", storeStubReadSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_, _, _ = storeStubRead(t, s)
-			got := s.OnRead.AssertCalledOnce(t, "Read records the call")
-			a0, a1, a2, a3, a4 := storeStubReadArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.S, a1, "the call records S")
-			expect.Equal(t, got.Inc, a2, "the call records Inc")
-			expect.Equal(t, got.Q, a3, "the call records Q")
-			expect.Equal(t, got.P, a4, "the call records P")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var seen []storetest.StoreReadCall
-			s.OnRead.OnRecord(func(c storetest.StoreReadCall) { seen = append(seen, c) })
-			_, _, _ = storeStubRead(t, s)
-			_, _, _ = storeStubRead(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Read")
-		})
 	})
 
 	t.Run("Watch", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Watch", storeStubWatchSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_ = storeStubWatch(t, s)
-			got := s.OnWatch.AssertCalledOnce(t, "Watch records the call")
-			a0, a1, a2, a3, a4 := storeStubWatchArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.S, a1, "the call records S")
-			expect.Equal(t, got.Inc, a2, "the call records Inc")
-			expect.Equal(t, got.From, a3, "the call records From")
-			expect.Equal(t, got.Node, a4, "the call records Node")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var seen []storetest.StoreWatchCall
-			s.OnWatch.OnRecord(func(c storetest.StoreWatchCall) { seen = append(seen, c) })
-			_ = storeStubWatch(t, s)
-			_ = storeStubWatch(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Watch")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) storeStubInstance {
-			return storeStubInstanceOf(tb, storetest.NewStoreStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Writer", func(t *testing.T) {
+		t.Run("Writer", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_ = storeStubWriter(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWriter.CallCount(), 0, "ResetCalls clears the calls of Writer")
+			stub.ResetBehaviour(t, "Writer", storeStubWriterSubject)
 		})
 
-		t.Run("clears the recorded calls of Outcome", func(t *testing.T) {
+		t.Run("Outcome", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_, _, _ = storeStubOutcome(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnOutcome.CallCount(), 0, "ResetCalls clears the calls of Outcome")
+			stub.ResetBehaviour(t, "Outcome", storeStubOutcomeSubject)
 		})
 
-		t.Run("keeps the results of Returns of Outcome", func(t *testing.T) {
+		t.Run("Campaign", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			want0, want1, want2 := storeStubOutcomePins()
-			s.OnOutcome.Returns(want0, want1, want2)
-			s.ResetCalls()
-			got0, got1, got2 := storeStubOutcome(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result0 of Outcome")
-			expect.Equal(t, got1, want1, "ResetCalls keeps the Result1 of Outcome")
-			expect.ErrorIs(t, got2, want2, "ResetCalls keeps the error of Outcome")
+			stub.ResetBehaviour(t, "Campaign", storeStubCampaignSubject)
 		})
 
-		t.Run("clears the recorded calls of Campaign", func(t *testing.T) {
+		t.Run("Limits", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_, _ = storeStubCampaign(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnCampaign.CallCount(), 0, "ResetCalls clears the calls of Campaign")
+			stub.ResetBehaviour(t, "Limits", storeStubLimitsSubject)
 		})
 
-		t.Run("keeps the results of Returns of Campaign", func(t *testing.T) {
+		t.Run("Fits", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			want0, want1 := storeStubCampaignPins()
-			s.OnCampaign.Returns(want0, want1)
-			s.ResetCalls()
-			_, got1 := storeStubCampaign(t, s)
-			assert.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Campaign")
+			stub.ResetBehaviour(t, "Fits", storeStubFitsSubject)
 		})
 
-		t.Run("clears the recorded calls of Limits", func(t *testing.T) {
+		t.Run("Close", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_ = storeStubLimits(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnLimits.CallCount(), 0, "ResetCalls clears the calls of Limits")
+			stub.ResetBehaviour(t, "Close", storeStubCloseSubject)
 		})
 
-		t.Run("keeps the results of Returns of Limits", func(t *testing.T) {
+		t.Run("Head", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			want0 := storeStubLimitsPins()
-			s.OnLimits.Returns(want0)
-			s.ResetCalls()
-			got0 := storeStubLimits(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Limits")
+			stub.ResetBehaviour(t, "Head", storeStubHeadSubject)
 		})
 
-		t.Run("clears the recorded calls of Fits", func(t *testing.T) {
+		t.Run("Read", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_ = storeStubFits(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnFits.CallCount(), 0, "ResetCalls clears the calls of Fits")
+			stub.ResetBehaviour(t, "Read", storeStubReadSubject)
 		})
 
-		t.Run("keeps the results of Returns of Fits", func(t *testing.T) {
+		t.Run("Watch", func(t *testing.T) {
 			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			want0 := storeStubFitsPins()
-			s.OnFits.Returns(want0)
-			s.ResetCalls()
-			got0 := storeStubFits(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of Fits")
-		})
-
-		t.Run("clears the recorded calls of Close", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_ = storeStubClose(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnClose.CallCount(), 0, "ResetCalls clears the calls of Close")
-		})
-
-		t.Run("keeps the results of Returns of Close", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			want0 := storeStubClosePins()
-			s.OnClose.Returns(want0)
-			s.ResetCalls()
-			got0 := storeStubClose(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of Close")
-		})
-
-		t.Run("clears the recorded calls of Head", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_, _ = storeStubHead(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnHead.CallCount(), 0, "ResetCalls clears the calls of Head")
-		})
-
-		t.Run("keeps the results of Returns of Head", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			want0, want1 := storeStubHeadPins()
-			s.OnHead.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := storeStubHead(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Head")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Head")
-		})
-
-		t.Run("clears the recorded calls of Read", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_, _, _ = storeStubRead(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnRead.CallCount(), 0, "ResetCalls clears the calls of Read")
-		})
-
-		t.Run("keeps the results of Returns of Read", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			want0, want1, want2 := storeStubReadPins()
-			s.OnRead.Returns(want0, want1, want2)
-			s.ResetCalls()
-			got0, _, got2 := storeStubRead(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result0 of Read")
-			expect.ErrorIs(t, got2, want2, "ResetCalls keeps the error of Read")
-		})
-
-		t.Run("clears the recorded calls of Watch", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			_ = storeStubWatch(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWatch.CallCount(), 0, "ResetCalls clears the calls of Watch")
-		})
-
-		t.Run("keeps the results of Returns of Watch", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			want0 := storeStubWatchPins()
-			s.OnWatch.Returns(want0)
-			s.ResetCalls()
-			got0 := storeStubWatch(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Watch")
-		})
-	})
-
-	t.Run("NewStoreStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) storeStubInstance {
-			return storeStubInstanceOf(tb, storetest.NewStoreStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewStoreStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Outcome with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Outcome-failing")
-			s := storetest.NewStoreStubFailing(t, want)
-			_, _, r2 := storeStubOutcome(t, s)
-			assert.ErrorIs(t, r2, want, "Outcome fails with the error of NewStoreStubFailing")
-		})
-
-		t.Run("fails Campaign with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Campaign-failing")
-			s := storetest.NewStoreStubFailing(t, want)
-			_, r1 := storeStubCampaign(t, s)
-			assert.ErrorIs(t, r1, want, "Campaign fails with the error of NewStoreStubFailing")
-		})
-
-		t.Run("fails Fits with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Fits-failing")
-			s := storetest.NewStoreStubFailing(t, want)
-			r0 := storeStubFits(t, s)
-			assert.ErrorIs(t, r0, want, "Fits fails with the error of NewStoreStubFailing")
-		})
-
-		t.Run("fails Close with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Close-failing")
-			s := storetest.NewStoreStubFailing(t, want)
-			r0 := storeStubClose(t, s)
-			assert.ErrorIs(t, r0, want, "Close fails with the error of NewStoreStubFailing")
-		})
-
-		t.Run("fails Head with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Head-failing")
-			s := storetest.NewStoreStubFailing(t, want)
-			_, r1 := storeStubHead(t, s)
-			assert.ErrorIs(t, r1, want, "Head fails with the error of NewStoreStubFailing")
-		})
-
-		t.Run("fails Read with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Read-failing")
-			s := storetest.NewStoreStubFailing(t, want)
-			_, _, r2 := storeStubRead(t, s)
-			assert.ErrorIs(t, r2, want, "Read fails with the error of NewStoreStubFailing")
+			stub.ResetBehaviour(t, "Watch", storeStubWatchSubject)
 		})
 	})
 
@@ -2978,103 +2252,29 @@ func TestStoreStub(t *testing.T) {
 	})
 }
 
-// TestStoreWriterStub checks the methods of StoreWriterStub, which
-// configures Writer.
-func TestStoreWriterStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Writer for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewStoreStub(r)
-			s.OnWriter.Strict()
-			var want0 store.Writer
-			s.OnWriter.Returns(want0)
-			_ = storeStubWriter(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Writer")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Writer to the function", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var got0 shard.Scope
-			var got1 shard.NamespaceIncarnation
-			var got2 epoch.Epoch
-			s.OnWriter.Func(func(p0 shard.Scope, p1 shard.NamespaceIncarnation, p2 epoch.Epoch) store.Writer {
-				got0, got1, got2 = p0, p1, p2
-				var z0 store.Writer
-				return z0
-			})
-			_ = storeStubWriter(t, s)
-			a0, a1, a2 := storeStubWriterArgs(t)
-			expect.Equal(t, got0, a0, "the function receives S")
-			expect.Equal(t, got1, a1, "the function receives Inc")
-			expect.Equal(t, got2, a2, "the function receives Term")
-		})
-	})
-}
-
 // TestStoreOutcomeStub checks the methods of StoreOutcomeStub, which
 // configures Outcome.
 func TestStoreOutcomeStub(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Returns", func(t *testing.T) {
+	t.Run("FaultOutcomeUnknown", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("sets the results of each call of Outcome", func(t *testing.T) {
+		t.Run("fails the next call of Outcome with ErrOutcomeUnknown", func(t *testing.T) {
 			t.Parallel()
 			s := storetest.NewStoreStub(t)
-			want0, want1, want2 := storeStubOutcomePins()
-			s.OnOutcome.Returns(want0, want1, want2)
-			got0, got1, got2 := storeStubOutcome(t, s)
-			expect.Equal(t, got0, want0, "Outcome returns the Result0 that Returns sets")
-			expect.Equal(t, got1, want1, "Outcome returns the Result1 that Returns sets")
-			expect.ErrorIs(t, got2, want2, "Outcome returns the error that Returns sets")
+			s.OnOutcome.FaultOutcomeUnknown()
+			_, _, r2 := storeStubOutcome(t, s)
+			assert.ErrorIs(t, r2, version.ErrOutcomeUnknown, "the next call of Outcome fails with ErrOutcomeUnknown")
 		})
 
-		t.Run("configures Outcome for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewStoreStub(r)
-			s.OnOutcome.Strict()
-			var want0 store.Receipt
-			var want1 bool
-			var want2 error
-			s.OnOutcome.Returns(want0, want1, want2)
-			_, _, _ = storeStubOutcome(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Outcome")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Outcome to the function", func(t *testing.T) {
+		t.Run("spares the call after the failed call", func(t *testing.T) {
 			t.Parallel()
 			s := storetest.NewStoreStub(t)
-			var got0 context.Context
-			var got1 shard.Scope
-			var got2 store.CommitID
-			s.OnOutcome.Func(func(p0 context.Context, p1 shard.Scope, p2 store.CommitID) (store.Receipt, bool, error) {
-				got0, got1, got2 = p0, p1, p2
-				var z0 store.Receipt
-				var z1 bool
-				var z2 error
-				return z0, z1, z2
-			})
+			s.OnOutcome.FaultOutcomeUnknown()
 			_, _, _ = storeStubOutcome(t, s)
-			a0, a1, a2 := storeStubOutcomeArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives S")
-			expect.Equal(t, got2, a2, "the function receives ID")
+			_, _, r2 := storeStubOutcome(t, s)
+			assert.NoError(t, r2, "the call of Outcome after the failed call succeeds")
 		})
 	})
 }
@@ -3084,177 +2284,24 @@ func TestStoreOutcomeStub(t *testing.T) {
 func TestStoreCampaignStub(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Returns", func(t *testing.T) {
+	t.Run("FaultOutcomeUnknown", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("sets the results of each call of Campaign", func(t *testing.T) {
+		t.Run("fails the next call of Campaign with ErrOutcomeUnknown", func(t *testing.T) {
 			t.Parallel()
 			s := storetest.NewStoreStub(t)
-			want0, want1 := storeStubCampaignPins()
-			s.OnCampaign.Returns(want0, want1)
-			_, got1 := storeStubCampaign(t, s)
-			assert.ErrorIs(t, got1, want1, "Campaign returns the error that Returns sets")
+			s.OnCampaign.FaultOutcomeUnknown()
+			_, r1 := storeStubCampaign(t, s)
+			assert.ErrorIs(t, r1, version.ErrOutcomeUnknown, "the next call of Campaign fails with ErrOutcomeUnknown")
 		})
 
-		t.Run("configures Campaign for strict mode", func(t *testing.T) {
+		t.Run("spares the call after the failed call", func(t *testing.T) {
 			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewStoreStub(r)
-			s.OnCampaign.Strict()
-			var want0 store.Leadership
-			var want1 error
-			s.OnCampaign.Returns(want0, want1)
+			s := storetest.NewStoreStub(t)
+			s.OnCampaign.FaultOutcomeUnknown()
 			_, _ = storeStubCampaign(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Campaign")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Campaign to the function", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var got0 context.Context
-			var got1 shard.Scope
-			s.OnCampaign.Func(func(p0 context.Context, p1 shard.Scope) (store.Leadership, error) {
-				got0, got1 = p0, p1
-				var z0 store.Leadership
-				var z1 error
-				return z0, z1
-			})
-			_, _ = storeStubCampaign(t, s)
-			a0, a1 := storeStubCampaignArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives S")
-		})
-	})
-}
-
-// TestStoreLimitsStub checks the methods of StoreLimitsStub, which
-// configures Limits.
-func TestStoreLimitsStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Limits", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			want0 := storeStubLimitsPins()
-			s.OnLimits.Returns(want0)
-			got0 := storeStubLimits(t, s)
-			assert.Equal(t, got0, want0, "Limits returns the Result that Returns sets")
-		})
-
-		t.Run("configures Limits for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewStoreStub(r)
-			s.OnLimits.Strict()
-			var want0 store.Limits
-			s.OnLimits.Returns(want0)
-			_ = storeStubLimits(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Limits")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Limits to the function", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var got0 shard.Scope
-			s.OnLimits.Func(func(p0 shard.Scope) store.Limits {
-				got0 = p0
-				var z0 store.Limits
-				return z0
-			})
-			_ = storeStubLimits(t, s)
-			a0 := storeStubLimitsArgs(t)
-			assert.Equal(t, got0, a0, "the function receives S")
-		})
-	})
-}
-
-// TestStoreFitsStub checks the methods of StoreFitsStub, which configures
-// Fits.
-func TestStoreFitsStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Fits", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			want0 := storeStubFitsPins()
-			s.OnFits.Returns(want0)
-			got0 := storeStubFits(t, s)
-			assert.ErrorIs(t, got0, want0, "Fits returns the error that Returns sets")
-		})
-
-		t.Run("configures Fits for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewStoreStub(r)
-			s.OnFits.Strict()
-			var want0 error
-			s.OnFits.Returns(want0)
-			_ = storeStubFits(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Fits")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Fits to the function", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var got0 shard.Scope
-			var got1 *store.Mutation
-			s.OnFits.Func(func(p0 shard.Scope, p1 *store.Mutation) error {
-				got0, got1 = p0, p1
-				var z0 error
-				return z0
-			})
-			_ = storeStubFits(t, s)
-			a0, a1 := storeStubFitsArgs(t)
-			expect.Equal(t, got0, a0, "the function receives S")
-			expect.Equal(t, got1, a1, "the function receives M")
-		})
-	})
-}
-
-// TestStoreCloseStub checks the methods of StoreCloseStub, which
-// configures Close.
-func TestStoreCloseStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Close", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			want0 := storeStubClosePins()
-			s.OnClose.Returns(want0)
-			got0 := storeStubClose(t, s)
-			assert.ErrorIs(t, got0, want0, "Close returns the error that Returns sets")
-		})
-
-		t.Run("configures Close for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewStoreStub(r)
-			s.OnClose.Strict()
-			var want0 error
-			s.OnClose.Returns(want0)
-			_ = storeStubClose(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Close")
+			_, r1 := storeStubCampaign(t, s)
+			assert.NoError(t, r1, "the call of Campaign after the failed call succeeds")
 		})
 	})
 }
@@ -3264,50 +2311,24 @@ func TestStoreCloseStub(t *testing.T) {
 func TestStoreHeadStub(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Returns", func(t *testing.T) {
+	t.Run("FaultOutcomeUnknown", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("sets the results of each call of Head", func(t *testing.T) {
+		t.Run("fails the next call of Head with ErrOutcomeUnknown", func(t *testing.T) {
 			t.Parallel()
 			s := storetest.NewStoreStub(t)
-			want0, want1 := storeStubHeadPins()
-			s.OnHead.Returns(want0, want1)
-			got0, got1 := storeStubHead(t, s)
-			expect.Equal(t, got0, want0, "Head returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Head returns the error that Returns sets")
+			s.OnHead.FaultOutcomeUnknown()
+			_, r1 := storeStubHead(t, s)
+			assert.ErrorIs(t, r1, version.ErrOutcomeUnknown, "the next call of Head fails with ErrOutcomeUnknown")
 		})
 
-		t.Run("configures Head for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewStoreStub(r)
-			s.OnHead.Strict()
-			var want0 store.Head
-			var want1 error
-			s.OnHead.Returns(want0, want1)
-			_, _ = storeStubHead(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Head")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Head to the function", func(t *testing.T) {
+		t.Run("spares the call after the failed call", func(t *testing.T) {
 			t.Parallel()
 			s := storetest.NewStoreStub(t)
-			var got0 context.Context
-			var got1 shard.Scope
-			s.OnHead.Func(func(p0 context.Context, p1 shard.Scope) (store.Head, error) {
-				got0, got1 = p0, p1
-				var z0 store.Head
-				var z1 error
-				return z0, z1
-			})
+			s.OnHead.FaultOutcomeUnknown()
 			_, _ = storeStubHead(t, s)
-			a0, a1 := storeStubHeadArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives S")
+			_, r1 := storeStubHead(t, s)
+			assert.NoError(t, r1, "the call of Head after the failed call succeeds")
 		})
 	})
 }
@@ -3317,60 +2338,24 @@ func TestStoreHeadStub(t *testing.T) {
 func TestStoreReadStub(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Returns", func(t *testing.T) {
+	t.Run("FaultOutcomeUnknown", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("sets the results of each call of Read", func(t *testing.T) {
+		t.Run("fails the next call of Read with ErrOutcomeUnknown", func(t *testing.T) {
 			t.Parallel()
 			s := storetest.NewStoreStub(t)
-			want0, want1, want2 := storeStubReadPins()
-			s.OnRead.Returns(want0, want1, want2)
-			got0, _, got2 := storeStubRead(t, s)
-			expect.Equal(t, got0, want0, "Read returns the Result0 that Returns sets")
-			expect.ErrorIs(t, got2, want2, "Read returns the error that Returns sets")
+			s.OnRead.FaultOutcomeUnknown()
+			_, _, r2 := storeStubRead(t, s)
+			assert.ErrorIs(t, r2, version.ErrOutcomeUnknown, "the next call of Read fails with ErrOutcomeUnknown")
 		})
 
-		t.Run("configures Read for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewStoreStub(r)
-			s.OnRead.Strict()
-			var want0 store.State
-			var want1 page.Cursor[shard.Placement]
-			var want2 error
-			s.OnRead.Returns(want0, want1, want2)
-			_, _, _ = storeStubRead(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Read")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Read to the function", func(t *testing.T) {
+		t.Run("spares the call after the failed call", func(t *testing.T) {
 			t.Parallel()
 			s := storetest.NewStoreStub(t)
-			var got0 context.Context
-			var got1 shard.Scope
-			var got2 shard.NamespaceIncarnation
-			var got3 store.Query
-			var got4 page.Page
-			s.OnRead.Func(
-				func(p0 context.Context, p1 shard.Scope, p2 shard.NamespaceIncarnation, p3 store.Query, p4 page.Page) (store.State, page.Cursor[shard.Placement], error) {
-					got0, got1, got2, got3, got4 = p0, p1, p2, p3, p4
-					var z0 store.State
-					var z1 page.Cursor[shard.Placement]
-					var z2 error
-					return z0, z1, z2
-				},
-			)
+			s.OnRead.FaultOutcomeUnknown()
 			_, _, _ = storeStubRead(t, s)
-			a0, a1, a2, a3, a4 := storeStubReadArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives S")
-			expect.Equal(t, got2, a2, "the function receives Inc")
-			expect.Equal(t, got3, a3, "the function receives Q")
-			expect.Equal(t, got4, a4, "the function receives P")
+			_, _, r2 := storeStubRead(t, s)
+			assert.NoError(t, r2, "the call of Read after the failed call succeeds")
 		})
 	})
 }
@@ -3379,58 +2364,6 @@ func TestStoreReadStub(t *testing.T) {
 // configures Watch.
 func TestStoreWatchStub(t *testing.T) {
 	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Watch", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			want0 := storeStubWatchPins()
-			s.OnWatch.Returns(want0)
-			got0 := storeStubWatch(t, s)
-			assert.Equal(t, got0, want0, "Watch returns the Result that Returns sets")
-		})
-
-		t.Run("configures Watch for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := storetest.NewStoreStub(r)
-			s.OnWatch.Strict()
-			var want0 iter.Seq2[store.Event, error]
-			s.OnWatch.Returns(want0)
-			_ = storeStubWatch(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Watch")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Watch to the function", func(t *testing.T) {
-			t.Parallel()
-			s := storetest.NewStoreStub(t)
-			var got0 context.Context
-			var got1 shard.Scope
-			var got2 shard.NamespaceIncarnation
-			var got3 epoch.Epoch
-			var got4 shard.NodeID
-			s.OnWatch.Func(
-				func(p0 context.Context, p1 shard.Scope, p2 shard.NamespaceIncarnation, p3 epoch.Epoch, p4 shard.NodeID) iter.Seq2[store.Event, error] {
-					got0, got1, got2, got3, got4 = p0, p1, p2, p3, p4
-					var z0 iter.Seq2[store.Event, error]
-					return z0
-				},
-			)
-			_ = storeStubWatch(t, s)
-			a0, a1, a2, a3, a4 := storeStubWatchArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives S")
-			expect.Equal(t, got2, a2, "the function receives Inc")
-			expect.Equal(t, got3, a3, "the function receives From")
-			expect.Equal(t, got4, a4, "the function receives Node")
-		})
-	})
 
 	t.Run("Yields", func(t *testing.T) {
 		t.Parallel()
@@ -3502,4 +2435,4 @@ func TestStoreWatchStub(t *testing.T) {
 	})
 }
 
-// dokimi:provenance sha256:5d1a8dc2f7ff9871b42e64b50306336ef516022468d3236e2b16661cdb12510d
+// dokimi:provenance sha256:0d192170da87815b8494b0bf549637e025e410cb9e91bdebe159bdd465f81224

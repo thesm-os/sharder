@@ -14,6 +14,7 @@ import (
 	"go.dokimi.dev/stub"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/page"
+	"go.thesmos.sh/core/version"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 )
@@ -77,6 +78,13 @@ func (s *ReaderHeadStub) Func(fn func(context.Context, shard.Scope) (store.Head,
 	return s
 }
 
+// FaultOutcomeUnknown makes the next call of Head fail with
+// ErrOutcomeUnknown. The calls after it succeed.
+func (s *ReaderHeadStub) FaultOutcomeUnknown() *ReaderHeadStub {
+	s.FaultsOnce(version.ErrOutcomeUnknown)
+	return s
+}
+
 // ReaderReadStub configures Read and records its calls. A fault armed
 // through it takes precedence over the function and the fixed results.
 type ReaderReadStub struct {
@@ -106,6 +114,13 @@ func (s *ReaderReadStub) Func(
 	fn func(context.Context, shard.Scope, shard.NamespaceIncarnation, store.Query, page.Page) (store.State, page.Cursor[shard.Placement], error),
 ) *ReaderReadStub {
 	s.fn = fn
+	return s
+}
+
+// FaultOutcomeUnknown makes the next call of Read fail with
+// ErrOutcomeUnknown. The calls after it succeed.
+func (s *ReaderReadStub) FaultOutcomeUnknown() *ReaderReadStub {
+	s.FaultsOnce(version.ErrOutcomeUnknown)
 	return s
 }
 
@@ -287,21 +302,6 @@ func NewReaderStub(tb assert.TB, opts ...ReaderStubOption) *ReaderStub {
 	}
 	s.group.Bind(tb)
 	return s
-}
-
-// NewReaderStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewReaderStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...ReaderStubOption) *ReaderStub {
-	return NewReaderStub(tb, append([]ReaderStubOption{
-		ReaderStubWithClock(clk),
-		ReaderStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewReaderStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewReaderStubFailing(tb assert.TB, err error, opts ...ReaderStubOption) *ReaderStub {
-	return NewReaderStub(tb, append([]ReaderStubOption{ReaderStubFailing(err)}, opts...)...)
 }
 
 // ResetCalls clears the recorded calls, the counters of the faults and the
@@ -553,21 +553,6 @@ func NewWriterStub(tb assert.TB, opts ...WriterStubOption) *WriterStub {
 	}
 	s.group.Bind(tb)
 	return s
-}
-
-// NewWriterStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewWriterStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...WriterStubOption) *WriterStub {
-	return NewWriterStub(tb, append([]WriterStubOption{
-		WriterStubWithClock(clk),
-		WriterStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewWriterStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewWriterStubFailing(tb assert.TB, err error, opts ...WriterStubOption) *WriterStub {
-	return NewWriterStub(tb, append([]WriterStubOption{WriterStubFailing(err)}, opts...)...)
 }
 
 // ResetCalls clears the recorded calls, the counters of the faults and the
@@ -826,26 +811,6 @@ func NewLeadershipStub(tb assert.TB, opts ...LeadershipStubOption) *LeadershipSt
 	return s
 }
 
-// NewLeadershipStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewLeadershipStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...LeadershipStubOption,
-) *LeadershipStub {
-	return NewLeadershipStub(tb, append([]LeadershipStubOption{
-		LeadershipStubWithClock(clk),
-		LeadershipStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewLeadershipStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewLeadershipStubFailing(tb assert.TB, err error, opts ...LeadershipStubOption) *LeadershipStub {
-	return NewLeadershipStub(tb, append([]LeadershipStubOption{LeadershipStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *LeadershipStub) ResetCalls() {
@@ -1070,6 +1035,13 @@ func (s *StoreOutcomeStub) Func(
 	return s
 }
 
+// FaultOutcomeUnknown makes the next call of Outcome fail with
+// ErrOutcomeUnknown. The calls after it succeed.
+func (s *StoreOutcomeStub) FaultOutcomeUnknown() *StoreOutcomeStub {
+	s.FaultsOnce(version.ErrOutcomeUnknown)
+	return s
+}
+
 // StoreCampaignStub configures Campaign and records its calls. A fault
 // armed through it takes precedence over the function and the fixed
 // results.
@@ -1097,6 +1069,13 @@ func (s *StoreCampaignStub) Returns(result store.Leadership, err error) *StoreCa
 // arguments. An injected fault takes precedence over it.
 func (s *StoreCampaignStub) Func(fn func(context.Context, shard.Scope) (store.Leadership, error)) *StoreCampaignStub {
 	s.fn = fn
+	return s
+}
+
+// FaultOutcomeUnknown makes the next call of Campaign fail with
+// ErrOutcomeUnknown. The calls after it succeed.
+func (s *StoreCampaignStub) FaultOutcomeUnknown() *StoreCampaignStub {
+	s.FaultsOnce(version.ErrOutcomeUnknown)
 	return s
 }
 
@@ -1213,6 +1192,13 @@ func (s *StoreHeadStub) Func(fn func(context.Context, shard.Scope) (store.Head, 
 	return s
 }
 
+// FaultOutcomeUnknown makes the next call of Head fail with
+// ErrOutcomeUnknown. The calls after it succeed.
+func (s *StoreHeadStub) FaultOutcomeUnknown() *StoreHeadStub {
+	s.FaultsOnce(version.ErrOutcomeUnknown)
+	return s
+}
+
 // StoreReadStub configures Read and records its calls. A fault armed
 // through it takes precedence over the function and the fixed results.
 type StoreReadStub struct {
@@ -1242,6 +1228,13 @@ func (s *StoreReadStub) Func(
 	fn func(context.Context, shard.Scope, shard.NamespaceIncarnation, store.Query, page.Page) (store.State, page.Cursor[shard.Placement], error),
 ) *StoreReadStub {
 	s.fn = fn
+	return s
+}
+
+// FaultOutcomeUnknown makes the next call of Read fail with
+// ErrOutcomeUnknown. The calls after it succeed.
+func (s *StoreReadStub) FaultOutcomeUnknown() *StoreReadStub {
+	s.FaultsOnce(version.ErrOutcomeUnknown)
 	return s
 }
 
@@ -1486,21 +1479,6 @@ func NewStoreStub(tb assert.TB, opts ...StoreStubOption) *StoreStub {
 	}
 	s.group.Bind(tb)
 	return s
-}
-
-// NewStoreStubDelayed returns a double whose methods sleep d on clk before
-// they return. It applies opts after the clock and the latency.
-func NewStoreStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...StoreStubOption) *StoreStub {
-	return NewStoreStub(tb, append([]StoreStubOption{
-		StoreStubWithClock(clk),
-		StoreStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewStoreStubFailing returns a double on which each call of a method that
-// can fail fails with err. It applies opts after the failure.
-func NewStoreStubFailing(tb assert.TB, err error, opts ...StoreStubOption) *StoreStub {
-	return NewStoreStub(tb, append([]StoreStubOption{StoreStubFailing(err)}, opts...)...)
 }
 
 // ResetCalls clears the recorded calls, the counters of the faults and the
@@ -1792,4 +1770,4 @@ func (s0 *StoreStub) Watch(
 	return r.Result
 }
 
-// dokimi:provenance sha256:8b924a652ad3d3e09ac264e15772c90030757b75e2ac65fd400919fa906529d4
+// dokimi:provenance sha256:bc08da492570f33251c46e330c678d25df2809431b372c94e374e1db62ef0982

@@ -47,10 +47,7 @@ func TestStateSuite(t *testing.T) {
 				},
 				Defect: func(*placementtest.StateHandle) placementtest.StateMethods { return &stateSubject{} },
 			}),
-			conform.Excuse(
-				placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[placementtest.StateMethods]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -72,10 +69,7 @@ func TestStateSuite(t *testing.T) {
 				},
 				Defect: func(*placementtest.StateHandle) placementtest.StateMethods { return &stateSubject{} },
 			}),
-			conform.Excuse(
-				placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[placementtest.StateMethods]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -284,10 +278,14 @@ func TestStateSuiteAllocs(t *testing.T) {
 	})
 }
 
+// stateSuite is the suite of State that the tests of the planted defect of
+// a ceiling apply.
+var stateSuite = placementtest.StateSuite()
+
 // stateIdle returns the planted defect of a ceiling of State with a spend
-// of nothing, a subject that answers each call at once.
+// of nothing. Each call of the defect returns its zero results at once.
 func stateIdle(h *placementtest.StateHandle) placementtest.StateMethods {
-	return placementtest.StateSuite().Calls[0].Over(h, func() {})
+	return stateSuite.Calls[0].Over(h, func() {})
 }
 
 // TestStateSuiteBudgets applies the allocation ceilings of the suite of
@@ -299,9 +297,8 @@ func TestStateSuiteBudgets(t *testing.T) {
 		t,
 		stateIdle,
 		conform.Ceilings(placementtest.StateChecks.Apply.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -313,9 +310,8 @@ func FuzzStateSuiteShards(f *testing.F) {
 		f,
 		placementtest.StateChecks.Shards.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -327,9 +323,8 @@ func FuzzStateSuiteShard(f *testing.F) {
 		f,
 		placementtest.StateChecks.Shard.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -341,9 +336,8 @@ func FuzzStateSuiteReplicas(f *testing.F) {
 		f,
 		placementtest.StateChecks.Replicas.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -355,9 +349,8 @@ func FuzzStateSuiteReplicasAt(f *testing.F) {
 		f,
 		placementtest.StateChecks.ReplicasAt.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -369,9 +362,8 @@ func FuzzStateSuiteInitial(f *testing.F) {
 		f,
 		placementtest.StateChecks.Initial.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -383,9 +375,8 @@ func FuzzStateSuiteInitialAt(f *testing.F) {
 		f,
 		placementtest.StateChecks.InitialAt.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -397,9 +388,8 @@ func FuzzStateSuiteInFlight(f *testing.F) {
 		f,
 		placementtest.StateChecks.InFlight.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -411,9 +401,8 @@ func FuzzStateSuiteShardLoad(f *testing.F) {
 		f,
 		placementtest.StateChecks.ShardLoad.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -425,9 +414,8 @@ func FuzzStateSuiteDesired(f *testing.F) {
 		f,
 		placementtest.StateChecks.Desired.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -439,9 +427,8 @@ func FuzzStateSuiteMax(f *testing.F) {
 		f,
 		placementtest.StateChecks.Max.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -453,9 +440,8 @@ func FuzzStateSuiteNodes(f *testing.F) {
 		f,
 		placementtest.StateChecks.Nodes.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -467,9 +453,8 @@ func FuzzStateSuiteNode(f *testing.F) {
 		f,
 		placementtest.StateChecks.Node.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -481,9 +466,8 @@ func FuzzStateSuiteDraining(f *testing.F) {
 		f,
 		placementtest.StateChecks.Draining.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -495,9 +479,8 @@ func FuzzStateSuiteOnNode(f *testing.F) {
 		f,
 		placementtest.StateChecks.OnNode.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -509,9 +492,8 @@ func FuzzStateSuiteRoleCount(f *testing.F) {
 		f,
 		placementtest.StateChecks.RoleCount.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -523,9 +505,8 @@ func FuzzStateSuiteRoleTotal(f *testing.F) {
 		f,
 		placementtest.StateChecks.RoleTotal.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -537,9 +518,8 @@ func FuzzStateSuiteNodeLoad(f *testing.F) {
 		f,
 		placementtest.StateChecks.NodeLoad.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -551,9 +531,8 @@ func FuzzStateSuitePeakLoad(f *testing.F) {
 		f,
 		placementtest.StateChecks.PeakLoad.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -565,9 +544,8 @@ func FuzzStateSuitePeakCounts(f *testing.F) {
 		f,
 		placementtest.StateChecks.PeakCounts.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -579,9 +557,8 @@ func FuzzStateSuitePeakCount(f *testing.F) {
 		f,
 		placementtest.StateChecks.PeakCount.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -593,9 +570,8 @@ func FuzzStateSuitePeakRoleCount(f *testing.F) {
 		f,
 		placementtest.StateChecks.PeakRoleCount.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -607,9 +583,8 @@ func FuzzStateSuiteMetrics(f *testing.F) {
 		f,
 		placementtest.StateChecks.Metrics.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -621,9 +596,8 @@ func FuzzStateSuiteCapacity(f *testing.F) {
 		f,
 		placementtest.StateChecks.Capacity.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -635,9 +609,8 @@ func FuzzStateSuiteUtilisation(f *testing.F) {
 		f,
 		placementtest.StateChecks.Utilisation.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -650,9 +623,8 @@ func FuzzStateSuiteUtilisationSum(f *testing.F) {
 		f,
 		placementtest.StateChecks.UtilisationSum.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -664,9 +636,8 @@ func FuzzStateSuiteTotalLoad(f *testing.F) {
 		f,
 		placementtest.StateChecks.TotalLoad.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -678,9 +649,8 @@ func FuzzStateSuiteLabelled(f *testing.F) {
 		f,
 		placementtest.StateChecks.Labelled.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -692,9 +662,8 @@ func FuzzStateSuiteLabelledNodes(f *testing.F) {
 		f,
 		placementtest.StateChecks.LabelledNodes.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -706,9 +675,8 @@ func FuzzStateSuiteMoved(f *testing.F) {
 		f,
 		placementtest.StateChecks.Moved.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -720,9 +688,8 @@ func FuzzStateSuiteMovedNode(f *testing.F) {
 		f,
 		placementtest.StateChecks.MovedNode.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -734,9 +701,8 @@ func FuzzStateSuiteMovedShard(f *testing.F) {
 		f,
 		placementtest.StateChecks.MovedShard.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -748,9 +714,8 @@ func FuzzStateSuiteApply(f *testing.F) {
 		f,
 		placementtest.StateChecks.Apply.Callable,
 		stateIdle,
-		conform.Excuse(
-			placementtest.StateChecks.Apply.RepeatedMovesDoNotAllocate(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[placementtest.StateMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1164,4 +1129,4 @@ func FuzzStateConformsToStateApply(f *testing.F) {
 	placementtest.FuzzStateSuite(f, placementtest.StateChecks.Apply.Callable, newLargeState, stateOptions()...)
 }
 
-// dokimi:provenance sha256:85c5d54ddef4e048bc448b77aa1de09947e3d364c4b4d06ce2566b83fc66c61b
+// dokimi:provenance sha256:8eea2a8e61ff9b6a78ebf87f36ce864637cd90c40b9d542594991be2363e334f

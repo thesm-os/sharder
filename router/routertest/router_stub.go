@@ -200,21 +200,6 @@ func NewRouterStub(tb assert.TB, opts ...RouterStubOption) *RouterStub {
 	return s
 }
 
-// NewRouterStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewRouterStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...RouterStubOption) *RouterStub {
-	return NewRouterStub(tb, append([]RouterStubOption{
-		RouterStubWithClock(clk),
-		RouterStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewRouterStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewRouterStubFailing(tb assert.TB, err error, opts ...RouterStubOption) *RouterStub {
-	return NewRouterStub(tb, append([]RouterStubOption{RouterStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *RouterStub) ResetCalls() {
@@ -279,4 +264,4 @@ func (s *RouterStub) Refresh(ctx context.Context, req *router.RefreshRequest) (r
 	return r.Result, r.Err
 }
 
-// dokimi:provenance sha256:c1493a0e43a2fd4be7d96d249a08888a2247b847eba5d06b8e056ef0de5b3958
+// dokimi:provenance sha256:8dc32619ad50bc5e5a6c1827131a4c0aa35fbc289ca90dba286e55a87af80853

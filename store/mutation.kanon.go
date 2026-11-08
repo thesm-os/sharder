@@ -18,10 +18,10 @@ import (
 	"go.thesmos.sh/sharder/shard"
 )
 
-// The file compiles against a runtime that supports version 5 of the generator.
+// The file compiles against a runtime that supports version 6 of the generator.
 const (
-	_ = kanon.EnforceVersion(5 - kanon.MinVersion)
-	_ = kanon.EnforceVersion(kanon.MaxVersion - 5)
+	_ = kanon.EnforceVersion(6 - kanon.MinVersion)
+	_ = kanon.EnforceVersion(kanon.MaxVersion - 6)
 )
 
 // The generated types implement kanon.Cloner.
@@ -221,21 +221,24 @@ func (m *Mutation) MarshalBinary() ([]byte, error) {
 }
 
 // UnmarshalBinary sets m to the value encoded in data, as DecodeKanon does with
-// the zero Options, which copy data once.
+// the zero Options, which copy data once for the strings that change.
 func (m *Mutation) UnmarshalBinary(data []byte) error {
 	return m.DecodeKanon(data, kanon.Options{})
 }
 
 // DecodeKanon sets m to the value encoded in data and reuses the memory of m:
 // the values that its pointers point at, its nested structs, the capacity of
-// its slices and maps, and up to 16 values of each map whose values refer to
-// memory. It first clears the fields that the encoding leaves out, as Reset
-// does. Every decoded string is a substring of the slab of opts. It returns a
-// *kanon.DecodeError for malformed input, after which m contains the fields
+// its slices and maps, up to 16 values of each map whose values refer to
+// memory, and its strings. It first clears the fields that the encoding leaves
+// out, as Reset does. With a slab in opts, every decoded string is a substring
+// of the slab. Without one, the decode keeps each string of m that data repeats
+// at its place, and takes every other string from one copy of data. It returns
+// a *kanon.DecodeError for malformed input, after which m contains the fields
 // decoded before the error.
 func (m *Mutation) DecodeKanon(data []byte, opts kanon.Options) error {
-	slab, off := opts.Source(data)
-	return m.decodeKanon(data, slab, off, opts.Limit())
+	var slab wire.Slab
+	off := slab.Reset(data, opts)
+	return m.decodeKanon(data, &slab, off, opts.Limit())
 }
 
 // MergeKanon decodes data into m without resetting m first, with the options
@@ -245,15 +248,16 @@ func (m *Mutation) DecodeKanon(data []byte, opts kanon.Options) error {
 // union, and any other field takes the value in data. The fields that the
 // encoding leaves out keep their values.
 func (m *Mutation) MergeKanon(data []byte, opts kanon.Options) error {
-	slab, off := opts.Source(data)
-	return m.mergeKanon(data, slab, off, opts.Limit())
+	var slab wire.Slab
+	off := slab.Reset(data, opts)
+	return m.mergeKanon(data, &slab, off, opts.Limit())
 }
 
 // decodeKanon sets m to the value encoded in data, which starts at offset off
 // of slab, as DecodeKanon does. The decode enters depth levels below m at most.
 // DecodeKanon and the decode of the structs of the package that contain
 // Mutation call it.
-func (m *Mutation) decodeKanon(data []byte, slab string, off, depth int) error {
+func (m *Mutation) decodeKanon(data []byte, slab *wire.Slab, off, depth int) error {
 	m.Spec = m.Spec[:0]
 	m.Done = m.Done[:0]
 	m.Transitions = m.Transitions[:0]
@@ -265,7 +269,8 @@ func (m *Mutation) decodeKanon(data []byte, slab string, off, depth int) error {
 	m.Drain = m.Drain[:0]
 	m.Undrain = m.Undrain[:0]
 	m.Confirm = m.Confirm[:0]
-	seen, err := m.fieldsKanon(data, slab, off, depth, [1]uint64{})
+	var seen [1]uint64
+	err := m.fieldsKanon(data, slab, off, depth, &seen)
 	if seen[0]&(1<<0) == 0 {
 		m.Cell = nil
 	}
@@ -282,228 +287,228 @@ func (m *Mutation) decodeKanon(data []byte, slab string, off, depth int) error {
 // into m, as MergeKanon does. The decode enters depth levels below m at most.
 // MergeKanon and the decode of the structs of the package that contain Mutation
 // call it.
-func (m *Mutation) mergeKanon(data []byte, slab string, off, depth int) error {
-	_, err := m.fieldsKanon(data, slab, off, depth, [1]uint64{^uint64(0)})
-	return err
+func (m *Mutation) mergeKanon(data []byte, slab *wire.Slab, off, depth int) error {
+	seen := [1]uint64{^uint64(0)}
+	return m.fieldsKanon(data, slab, off, depth, &seen)
 }
 
 // fieldsKanon decodes the fields in data into m for decodeKanon and mergeKanon.
 // The first occurrence of a tracked field whose bit in seen is clear decodes
 // into the memory of the field, and every other occurrence merges. fieldsKanon
-// returns seen with the bits of the tracked fields that data contains.
-func (m *Mutation) fieldsKanon(data []byte, slab string, off, depth int, seen [1]uint64) ([1]uint64, error) {
+// sets the bits of the tracked fields that data contains in seen.
+func (m *Mutation) fieldsKanon(data []byte, slab *wire.Slab, off, depth int, seen *[1]uint64) error {
 	for i := 0; i < len(data); {
 		at := i
 		tag, n := wire.Uvarint(data[i:])
 		if n <= 0 {
-			return seen, wire.ReadError(n, "Mutation", 0, off+i)
+			return wire.ReadError(n, "Mutation", 0, off+i)
 		}
 		i += n
 		switch tag >> 3 {
 		case 5:
 			if tag != 5<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.Cell", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.Cell", off+at)
 			}
 			if m.Cell == nil {
 				m.Cell = new(shard.Cell)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.Cell", 5, off+i)
+				return wire.ReadError(n, "Mutation.Cell", 5, off+i)
 			}
 			i += n
 			if depth < 2 {
-				return seen, wire.DepthError("shard.Cell", 0, off+i)
+				return wire.DepthError("shard.Cell", 0, off+i)
 			}
 			var err error
 			if seen[0]&(1<<0) == 0 {
 				seen[0] |= 1 << 0
-				err = m.Cell.DecodeKanon(data[i:i+int(l)], wire.Nested(slab, off+i, depth-2))
+				err = slab.Locate(m.Cell.DecodeKanon(data[i:i+int(l)], slab.Nested(off+i, depth-2)), off+i)
 			} else {
-				err = m.Cell.MergeKanon(data[i:i+int(l)], wire.Nested(slab, off+i, depth-2))
+				err = slab.Locate(m.Cell.MergeKanon(data[i:i+int(l)], slab.Nested(off+i, depth-2)), off+i)
 			}
 			if err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		case 6:
 			if tag != 6<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.Mapping", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.Mapping", off+at)
 			}
 			if m.Mapping == nil {
 				m.Mapping = new(shard.Mapping)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.Mapping", 6, off+i)
+				return wire.ReadError(n, "Mutation.Mapping", 6, off+i)
 			}
 			i += n
 			if depth < 2 {
-				return seen, wire.DepthError("shard.Mapping", 0, off+i)
+				return wire.DepthError("shard.Mapping", 0, off+i)
 			}
 			var err error
 			if seen[0]&(1<<1) == 0 {
 				seen[0] |= 1 << 1
-				err = m.Mapping.DecodeKanon(data[i:i+int(l)], wire.Nested(slab, off+i, depth-2))
+				err = slab.Locate(m.Mapping.DecodeKanon(data[i:i+int(l)], slab.Nested(off+i, depth-2)), off+i)
 			} else {
-				err = m.Mapping.MergeKanon(data[i:i+int(l)], wire.Nested(slab, off+i, depth-2))
+				err = slab.Locate(m.Mapping.MergeKanon(data[i:i+int(l)], slab.Nested(off+i, depth-2)), off+i)
 			}
 			if err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		case 7:
 			if tag != 7<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.Spec", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.Spec", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.Spec", 7, off+i)
+				return wire.ReadError(n, "Mutation.Spec", 7, off+i)
 			}
 			i += n
 			m.Spec = append(m.Spec[:0], data[i:i+int(l)]...)
 			i += int(l)
 		case 4:
 			if tag != 4<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.Done", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.Done", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.Done", 4, off+i)
+				return wire.ReadError(n, "Mutation.Done", 4, off+i)
 			}
 			i += n
 			if err := _mutation_readSliceShardID(&m.Done, data[i:i+int(l)], slab, off+i, depth-1, "Mutation.Done", 4); err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		case 3:
 			if tag != 3<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.Transitions", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.Transitions", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.Transitions", 3, off+i)
+				return wire.ReadError(n, "Mutation.Transitions", 3, off+i)
 			}
 			i += n
 			if err := _mutation_readSliceTransition(&m.Transitions, data[i:i+int(l)], slab, off+i, depth-1, "Mutation.Transitions", 3); err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		case 2:
 			if tag != 2<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.Put", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.Put", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.Put", 2, off+i)
+				return wire.ReadError(n, "Mutation.Put", 2, off+i)
 			}
 			i += n
 			if err := _mutation_readSliceShardPlacement(&m.Put, data[i:i+int(l)], slab, off+i, depth-1, "Mutation.Put", 2); err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		case 8:
 			if tag != 8<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.Applied", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.Applied", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.Applied", 8, off+i)
+				return wire.ReadError(n, "Mutation.Applied", 8, off+i)
 			}
 			i += n
 			if err := _mutation_readSliceApplied(&m.Applied, data[i:i+int(l)], slab, off+i, depth-1, "Mutation.Applied", 8); err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		case 9:
 			if tag != 9<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.Forget", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.Forget", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.Forget", 9, off+i)
+				return wire.ReadError(n, "Mutation.Forget", 9, off+i)
 			}
 			i += n
 			if err := _mutation_readSliceProposalID(&m.Forget, data[i:i+int(l)], slab, off+i, depth-1, "Mutation.Forget", 9); err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		case 10:
 			if tag != 10<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.Reserve", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.Reserve", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.Reserve", 10, off+i)
+				return wire.ReadError(n, "Mutation.Reserve", 10, off+i)
 			}
 			i += n
 			if err := _mutation_readSliceBudgetReservation(&m.Reserve, data[i:i+int(l)], slab, off+i, depth-1, "Mutation.Reserve", 10); err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		case 11:
 			if tag != 11<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.Release", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.Release", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.Release", 11, off+i)
+				return wire.ReadError(n, "Mutation.Release", 11, off+i)
 			}
 			i += n
 			if err := _mutation_readSliceBudgetID(&m.Release, data[i:i+int(l)], slab, off+i, depth-1, "Mutation.Release", 11); err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		case 12:
 			if tag != 12<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.Drain", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.Drain", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.Drain", 12, off+i)
+				return wire.ReadError(n, "Mutation.Drain", 12, off+i)
 			}
 			i += n
 			if err := _mutation_readSliceDrain(&m.Drain, data[i:i+int(l)], slab, off+i, depth-1, "Mutation.Drain", 12); err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		case 13:
 			if tag != 13<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.Undrain", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.Undrain", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.Undrain", 13, off+i)
+				return wire.ReadError(n, "Mutation.Undrain", 13, off+i)
 			}
 			i += n
 			if err := _mutation_readSliceDrainKey(&m.Undrain, data[i:i+int(l)], slab, off+i, depth-1, "Mutation.Undrain", 13); err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		case 14:
 			if tag != 14<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.Confirm", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.Confirm", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.Confirm", 14, off+i)
+				return wire.ReadError(n, "Mutation.Confirm", 14, off+i)
 			}
 			i += n
 			if err := _mutation_readSliceCommitID(&m.Confirm, data[i:i+int(l)], slab, off+i, depth-1, "Mutation.Confirm", 14); err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		case 1:
 			if tag != 1<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Mutation.ID", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Mutation.ID", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Mutation.ID", 1, off+i)
+				return wire.ReadError(n, "Mutation.ID", 1, off+i)
 			}
 			i += n
 			if depth < 1 {
-				return seen, wire.DepthError("CommitID", 0, off+i)
+				return wire.DepthError("CommitID", 0, off+i)
 			}
 			var err error
 			if seen[0]&(1<<2) == 0 {
@@ -513,18 +518,18 @@ func (m *Mutation) fieldsKanon(data []byte, slab string, off, depth int, seen [1
 				err = m.ID.mergeKanon(data[i:i+int(l)], slab, off+i, depth-1)
 			}
 			if err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		default:
 			n, err := wire.Skip(data[i:], tag, "Mutation", 0, off+at)
 			if err != nil {
-				return seen, err
+				return err
 			}
 			i += n
 		}
 	}
-	return seen, nil
+	return nil
 }
 
 // Reset clears every field of m, the fields that the encoding leaves out
@@ -683,21 +688,24 @@ func (m *Applied) MarshalBinary() ([]byte, error) {
 }
 
 // UnmarshalBinary sets m to the value encoded in data, as DecodeKanon does with
-// the zero Options, which copy data once.
+// the zero Options, which copy data once for the strings that change.
 func (m *Applied) UnmarshalBinary(data []byte) error {
 	return m.DecodeKanon(data, kanon.Options{})
 }
 
 // DecodeKanon sets m to the value encoded in data and reuses the memory of m:
 // the values that its pointers point at, its nested structs, the capacity of
-// its slices and maps, and up to 16 values of each map whose values refer to
-// memory. It first clears the fields that the encoding leaves out, as Reset
-// does. Every decoded string is a substring of the slab of opts. It returns a
-// *kanon.DecodeError for malformed input, after which m contains the fields
+// its slices and maps, up to 16 values of each map whose values refer to
+// memory, and its strings. It first clears the fields that the encoding leaves
+// out, as Reset does. With a slab in opts, every decoded string is a substring
+// of the slab. Without one, the decode keeps each string of m that data repeats
+// at its place, and takes every other string from one copy of data. It returns
+// a *kanon.DecodeError for malformed input, after which m contains the fields
 // decoded before the error.
 func (m *Applied) DecodeKanon(data []byte, opts kanon.Options) error {
-	slab, off := opts.Source(data)
-	return m.decodeKanon(data, slab, off, opts.Limit())
+	var slab wire.Slab
+	off := slab.Reset(data, opts)
+	return m.decodeKanon(data, &slab, off, opts.Limit())
 }
 
 // MergeKanon decodes data into m without resetting m first, with the options
@@ -707,18 +715,22 @@ func (m *Applied) DecodeKanon(data []byte, opts kanon.Options) error {
 // union, and any other field takes the value in data. The fields that the
 // encoding leaves out keep their values.
 func (m *Applied) MergeKanon(data []byte, opts kanon.Options) error {
-	slab, off := opts.Source(data)
-	return m.mergeKanon(data, slab, off, opts.Limit())
+	var slab wire.Slab
+	off := slab.Reset(data, opts)
+	return m.mergeKanon(data, &slab, off, opts.Limit())
 }
 
 // decodeKanon sets m to the value encoded in data, which starts at offset off
 // of slab, as DecodeKanon does. The decode enters depth levels below m at most.
 // DecodeKanon and the decode of the structs of the package that contain Applied
 // call it.
-func (m *Applied) decodeKanon(data []byte, slab string, off, depth int) error {
-	m.Caller = ""
-	seen, err := m.fieldsKanon(data, slab, off, depth, [1]uint64{})
+func (m *Applied) decodeKanon(data []byte, slab *wire.Slab, off, depth int) error {
+	var seen [1]uint64
+	err := m.fieldsKanon(data, slab, off, depth, &seen)
 	if seen[0]&(1<<0) == 0 {
+		m.Caller = ""
+	}
+	if seen[0]&(1<<1) == 0 {
 		m.Proposal.Reset()
 	}
 	return err
@@ -728,67 +740,68 @@ func (m *Applied) decodeKanon(data []byte, slab string, off, depth int) error {
 // into m, as MergeKanon does. The decode enters depth levels below m at most.
 // MergeKanon and the decode of the structs of the package that contain Applied
 // call it.
-func (m *Applied) mergeKanon(data []byte, slab string, off, depth int) error {
-	_, err := m.fieldsKanon(data, slab, off, depth, [1]uint64{^uint64(0)})
-	return err
+func (m *Applied) mergeKanon(data []byte, slab *wire.Slab, off, depth int) error {
+	seen := [1]uint64{^uint64(0)}
+	return m.fieldsKanon(data, slab, off, depth, &seen)
 }
 
 // fieldsKanon decodes the fields in data into m for decodeKanon and mergeKanon.
 // The first occurrence of a tracked field whose bit in seen is clear decodes
 // into the memory of the field, and every other occurrence merges. fieldsKanon
-// returns seen with the bits of the tracked fields that data contains.
-func (m *Applied) fieldsKanon(data []byte, slab string, off, depth int, seen [1]uint64) ([1]uint64, error) {
+// sets the bits of the tracked fields that data contains in seen.
+func (m *Applied) fieldsKanon(data []byte, slab *wire.Slab, off, depth int, seen *[1]uint64) error {
 	for i := 0; i < len(data); {
 		at := i
 		tag, n := wire.Uvarint(data[i:])
 		if n <= 0 {
-			return seen, wire.ReadError(n, "Applied", 0, off+i)
+			return wire.ReadError(n, "Applied", 0, off+i)
 		}
 		i += n
 		switch tag >> 3 {
 		case 2:
 			if tag != 2<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Applied.Caller", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Applied.Caller", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Applied.Caller", 2, off+i)
+				return wire.ReadError(n, "Applied.Caller", 2, off+i)
 			}
 			i += n
-			m.Caller = shard.Identity(slab[off+i : off+i+int(l)])
+			m.Caller = shard.Identity(slab.String(string(m.Caller), data[i:i+int(l)], off+i))
 			i += int(l)
+			seen[0] |= 1 << 0
 		case 1:
 			if tag != 1<<3|wire.Bytes {
-				return seen, wire.FormatError(tag, wire.Bytes, "Applied.Proposal", off+at)
+				return wire.FormatError(tag, wire.Bytes, "Applied.Proposal", off+at)
 			}
 			l, n := wire.Uvarint(data[i:])
 			if n <= 0 || uint64(len(data)-i-n) < l {
-				return seen, wire.ReadError(n, "Applied.Proposal", 1, off+i)
+				return wire.ReadError(n, "Applied.Proposal", 1, off+i)
 			}
 			i += n
 			if depth < 1 {
-				return seen, wire.DepthError("proposal.Proposal", 0, off+i)
+				return wire.DepthError("proposal.Proposal", 0, off+i)
 			}
 			var err error
-			if seen[0]&(1<<0) == 0 {
-				seen[0] |= 1 << 0
-				err = m.Proposal.DecodeKanon(data[i:i+int(l)], wire.Nested(slab, off+i, depth-1))
+			if seen[0]&(1<<1) == 0 {
+				seen[0] |= 1 << 1
+				err = slab.Locate(m.Proposal.DecodeKanon(data[i:i+int(l)], slab.Nested(off+i, depth-1)), off+i)
 			} else {
-				err = m.Proposal.MergeKanon(data[i:i+int(l)], wire.Nested(slab, off+i, depth-1))
+				err = slab.Locate(m.Proposal.MergeKanon(data[i:i+int(l)], slab.Nested(off+i, depth-1)), off+i)
 			}
 			if err != nil {
-				return seen, err
+				return err
 			}
 			i += int(l)
 		default:
 			n, err := wire.Skip(data[i:], tag, "Applied", 0, off+at)
 			if err != nil {
-				return seen, err
+				return err
 			}
 			i += n
 		}
 	}
-	return seen, nil
+	return nil
 }
 
 // Reset clears every field of m, the fields that the encoding leaves out
@@ -1084,7 +1097,7 @@ func _mutation_putSliceShardPlacement(buf []byte, x []shard.Placement, loc strin
 // []shard.ID without its length, to *dst. data starts at offset off of slab,
 // and the decode enters depth levels below the value at most. loc and num
 // locate the field in errors.
-func _mutation_readSliceShardID(dst *[]shard.ID, data []byte, slab string, off, depth int, loc string, num int) error {
+func _mutation_readSliceShardID(dst *[]shard.ID, data []byte, slab *wire.Slab, off, depth int, loc string, num int) error {
 	if depth < 0 {
 		return wire.DepthError(loc, num, off)
 	}
@@ -1114,7 +1127,7 @@ func _mutation_readSliceShardID(dst *[]shard.ID, data []byte, slab string, off, 
 // []Transition without its length, to *dst. data starts at offset off of slab,
 // and the decode enters depth levels below the value at most. loc and num
 // locate the field in errors.
-func _mutation_readSliceTransition(dst *[]Transition, data []byte, slab string, off, depth int, loc string, num int) error {
+func _mutation_readSliceTransition(dst *[]Transition, data []byte, slab *wire.Slab, off, depth int, loc string, num int) error {
 	if depth < 0 {
 		return wire.DepthError(loc, num, off)
 	}
@@ -1123,7 +1136,11 @@ func _mutation_readSliceTransition(dst *[]Transition, data []byte, slab string, 
 		x = make([]Transition, 0, wire.SliceCap[Transition](wire.CountValues(data)))
 	}
 	for i := 0; i < len(data); {
-		x = append(x, Transition{})
+		if len(x) < cap(x) {
+			x = x[:len(x)+1]
+		} else {
+			x = append(x, Transition{})
+		}
 		last := len(x) - 1
 		l, n := wire.Uvarint(data[i:])
 		if n <= 0 || uint64(len(data)-i-n) < l {
@@ -1146,7 +1163,7 @@ func _mutation_readSliceTransition(dst *[]Transition, data []byte, slab string, 
 // []shard.Placement without its length, to *dst. data starts at offset off of
 // slab, and the decode enters depth levels below the value at most. loc and num
 // locate the field in errors.
-func _mutation_readSliceShardPlacement(dst *[]shard.Placement, data []byte, slab string, off, depth int, loc string, num int) error {
+func _mutation_readSliceShardPlacement(dst *[]shard.Placement, data []byte, slab *wire.Slab, off, depth int, loc string, num int) error {
 	if depth < 0 {
 		return wire.DepthError(loc, num, off)
 	}
@@ -1169,7 +1186,7 @@ func _mutation_readSliceShardPlacement(dst *[]shard.Placement, data []byte, slab
 		if depth < 1 {
 			return wire.DepthError("shard.Placement", 0, off+i)
 		}
-		if err := x[last].DecodeKanon(data[i:i+int(l)], wire.Nested(slab, off+i, depth-1)); err != nil {
+		if err := slab.Locate(x[last].DecodeKanon(data[i:i+int(l)], slab.Nested(off+i, depth-1)), off+i); err != nil {
 			return err
 		}
 		i += int(l)
@@ -1182,7 +1199,7 @@ func _mutation_readSliceShardPlacement(dst *[]shard.Placement, data []byte, slab
 // []Applied without its length, to *dst. data starts at offset off of slab, and
 // the decode enters depth levels below the value at most. loc and num locate
 // the field in errors.
-func _mutation_readSliceApplied(dst *[]Applied, data []byte, slab string, off, depth int, loc string, num int) error {
+func _mutation_readSliceApplied(dst *[]Applied, data []byte, slab *wire.Slab, off, depth int, loc string, num int) error {
 	if depth < 0 {
 		return wire.DepthError(loc, num, off)
 	}
@@ -1218,7 +1235,7 @@ func _mutation_readSliceApplied(dst *[]Applied, data []byte, slab string, off, d
 // []proposal.ID without its length, to *dst. data starts at offset off of slab,
 // and the decode enters depth levels below the value at most. loc and num
 // locate the field in errors.
-func _mutation_readSliceProposalID(dst *[]proposal.ID, data []byte, slab string, off, depth int, loc string, num int) error {
+func _mutation_readSliceProposalID(dst *[]proposal.ID, data []byte, slab *wire.Slab, off, depth int, loc string, num int) error {
 	if depth < 0 {
 		return wire.DepthError(loc, num, off)
 	}
@@ -1248,7 +1265,7 @@ func _mutation_readSliceProposalID(dst *[]proposal.ID, data []byte, slab string,
 // a []budget.Reservation without its length, to *dst. data starts at offset off
 // of slab, and the decode enters depth levels below the value at most. loc and
 // num locate the field in errors.
-func _mutation_readSliceBudgetReservation(dst *[]budget.Reservation, data []byte, slab string, off, depth int, loc string, num int) error {
+func _mutation_readSliceBudgetReservation(dst *[]budget.Reservation, data []byte, slab *wire.Slab, off, depth int, loc string, num int) error {
 	if depth < 0 {
 		return wire.DepthError(loc, num, off)
 	}
@@ -1271,7 +1288,7 @@ func _mutation_readSliceBudgetReservation(dst *[]budget.Reservation, data []byte
 		if depth < 1 {
 			return wire.DepthError("budget.Reservation", 0, off+i)
 		}
-		if err := x[last].DecodeKanon(data[i:i+int(l)], wire.Nested(slab, off+i, depth-1)); err != nil {
+		if err := slab.Locate(x[last].DecodeKanon(data[i:i+int(l)], slab.Nested(off+i, depth-1)), off+i); err != nil {
 			return err
 		}
 		i += int(l)
@@ -1284,7 +1301,7 @@ func _mutation_readSliceBudgetReservation(dst *[]budget.Reservation, data []byte
 // []budget.ID without its length, to *dst. data starts at offset off of slab,
 // and the decode enters depth levels below the value at most. loc and num
 // locate the field in errors.
-func _mutation_readSliceBudgetID(dst *[]budget.ID, data []byte, slab string, off, depth int, loc string, num int) error {
+func _mutation_readSliceBudgetID(dst *[]budget.ID, data []byte, slab *wire.Slab, off, depth int, loc string, num int) error {
 	if depth < 0 {
 		return wire.DepthError(loc, num, off)
 	}
@@ -1314,7 +1331,7 @@ func _mutation_readSliceBudgetID(dst *[]budget.ID, data []byte, slab string, off
 // without its length, to *dst. data starts at offset off of slab, and the
 // decode enters depth levels below the value at most. loc and num locate the
 // field in errors.
-func _mutation_readSliceDrain(dst *[]Drain, data []byte, slab string, off, depth int, loc string, num int) error {
+func _mutation_readSliceDrain(dst *[]Drain, data []byte, slab *wire.Slab, off, depth int, loc string, num int) error {
 	if depth < 0 {
 		return wire.DepthError(loc, num, off)
 	}
@@ -1323,7 +1340,11 @@ func _mutation_readSliceDrain(dst *[]Drain, data []byte, slab string, off, depth
 		x = make([]Drain, 0, wire.SliceCap[Drain](wire.CountValues(data)))
 	}
 	for i := 0; i < len(data); {
-		x = append(x, Drain{})
+		if len(x) < cap(x) {
+			x = x[:len(x)+1]
+		} else {
+			x = append(x, Drain{})
+		}
 		last := len(x) - 1
 		l, n := wire.Uvarint(data[i:])
 		if n <= 0 || uint64(len(data)-i-n) < l {
@@ -1346,7 +1367,7 @@ func _mutation_readSliceDrain(dst *[]Drain, data []byte, slab string, off, depth
 // []DrainKey without its length, to *dst. data starts at offset off of slab,
 // and the decode enters depth levels below the value at most. loc and num
 // locate the field in errors.
-func _mutation_readSliceDrainKey(dst *[]DrainKey, data []byte, slab string, off, depth int, loc string, num int) error {
+func _mutation_readSliceDrainKey(dst *[]DrainKey, data []byte, slab *wire.Slab, off, depth int, loc string, num int) error {
 	if depth < 0 {
 		return wire.DepthError(loc, num, off)
 	}
@@ -1355,7 +1376,11 @@ func _mutation_readSliceDrainKey(dst *[]DrainKey, data []byte, slab string, off,
 		x = make([]DrainKey, 0, wire.SliceCap[DrainKey](wire.CountValues(data)))
 	}
 	for i := 0; i < len(data); {
-		x = append(x, DrainKey{})
+		if len(x) < cap(x) {
+			x = x[:len(x)+1]
+		} else {
+			x = append(x, DrainKey{})
+		}
 		last := len(x) - 1
 		l, n := wire.Uvarint(data[i:])
 		if n <= 0 || uint64(len(data)-i-n) < l {
@@ -1378,7 +1403,7 @@ func _mutation_readSliceDrainKey(dst *[]DrainKey, data []byte, slab string, off,
 // []CommitID without its length, to *dst. data starts at offset off of slab,
 // and the decode enters depth levels below the value at most. loc and num
 // locate the field in errors.
-func _mutation_readSliceCommitID(dst *[]CommitID, data []byte, slab string, off, depth int, loc string, num int) error {
+func _mutation_readSliceCommitID(dst *[]CommitID, data []byte, slab *wire.Slab, off, depth int, loc string, num int) error {
 	if depth < 0 {
 		return wire.DepthError(loc, num, off)
 	}

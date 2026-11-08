@@ -96,4 +96,9 @@ func (v *Event) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// dokimi:provenance sha256:69927ae05ddf9421a0903994d4439b32c49ae6a2486db1a0116c24c35223dddf
+// StrictKanon marks Event as a kanon.Strict type. UnmarshalText accepts
+// only the texts that MarshalText writes. A canonical decode of kanon
+// therefore does not encode a decoded Event again.
+func (Event) StrictKanon() {}
+
+// dokimi:provenance sha256:429f60eeb38a4d01a8d093ea3dda97c37118be41244e0bc8c18461819492c304

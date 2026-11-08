@@ -93,4 +93,9 @@ func (v *Action) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// dokimi:provenance sha256:8514205f629158616b83f7968b1fad0c1ae962e44e84418de5b74814579cc5fb
+// StrictKanon marks Action as a kanon.Strict type. UnmarshalText accepts
+// only the texts that MarshalText writes. A canonical decode of kanon
+// therefore does not encode a decoded Action again.
+func (Action) StrictKanon() {}
+
+// dokimi:provenance sha256:7d65b0db0246d6901e90e40d5c3cb393cfff0d3344dc7e52868b28e48047f72a

@@ -44,25 +44,39 @@ func agentClientStubDoPins() error {
 	return want0
 }
 
-// agentClientStubDoSubject returns the subject of [stub.Behaviour] for Do.
-// The subject calls a new double that reports to tb.
+// agentClientStubDoSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Do. The subject calls a new double that
+// reports to tb.
 func agentClientStubDoSubject(
 	tb assert.TB,
 ) stub.Subject[protocoltest.AgentClientDoCall, protocoltest.AgentClientDoReturn] {
 	tb.Helper()
 	s := protocoltest.NewAgentClientStub(tb)
 	return stub.Subject[protocoltest.AgentClientDoCall, protocoltest.AgentClientDoReturn]{
-		Stub: s.OnDo.MethodStub,
+		Stub:  s.OnDo.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = agentClientStubDo(tb, s)
+		},
+		Arguments: func(tb assert.TB, c protocoltest.AgentClientDoCall) {
+			tb.Helper()
+			a0, a1, a2 := agentClientStubDoArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Node, a1, "the call records Node")
+			expect.Equal(tb, c.R, a2, "the call records R")
 		},
 		Result: func() protocoltest.AgentClientDoReturn {
 			got0 := agentClientStubDo(tb, s)
 			return protocoltest.AgentClientDoReturn{Err: got0}
 		},
-		Override: func(mark func()) {
-			s.OnDo.Func(func(_ context.Context, _ *shard.Node, _ *protocol.Request) error {
-				mark()
+		Returns: func() protocoltest.AgentClientDoReturn {
+			want0 := agentClientStubDoPins()
+			s.OnDo.Returns(want0)
+			return protocoltest.AgentClientDoReturn{Err: want0}
+		},
+		Override: func(seen func(protocoltest.AgentClientDoCall)) {
+			s.OnDo.Func(func(p0 context.Context, p1 *shard.Node, p2 *protocol.Request) error {
+				seen(protocoltest.AgentClientDoCall{Ctx: p0, Node: p1, R: p2})
 				var z0 error
 				return z0
 			})
@@ -88,7 +102,6 @@ func agentClientStubInstanceOf(tb assert.TB, s *protocoltest.AgentClientStub) ag
 		Call: func() {
 			_ = agentClientStubDo(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -100,70 +113,14 @@ func TestAgentClientStub(t *testing.T) {
 	t.Run("Do", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Do", agentClientStubDoSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewAgentClientStub(t)
-			_ = agentClientStubDo(t, s)
-			got := s.OnDo.AssertCalledOnce(t, "Do records the call")
-			a0, a1, a2 := agentClientStubDoArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Node, a1, "the call records Node")
-			expect.Equal(t, got.R, a2, "the call records R")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewAgentClientStub(t)
-			var seen []protocoltest.AgentClientDoCall
-			s.OnDo.OnRecord(func(c protocoltest.AgentClientDoCall) { seen = append(seen, c) })
-			_ = agentClientStubDo(t, s)
-			_ = agentClientStubDo(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Do")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) agentClientStubInstance {
-			return agentClientStubInstanceOf(tb, protocoltest.NewAgentClientStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Do", func(t *testing.T) {
+		t.Run("Do", func(t *testing.T) {
 			t.Parallel()
-			s := protocoltest.NewAgentClientStub(t)
-			_ = agentClientStubDo(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnDo.CallCount(), 0, "ResetCalls clears the calls of Do")
-		})
-
-		t.Run("keeps the results of Returns of Do", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewAgentClientStub(t)
-			want0 := agentClientStubDoPins()
-			s.OnDo.Returns(want0)
-			s.ResetCalls()
-			got0 := agentClientStubDo(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of Do")
-		})
-	})
-
-	t.Run("NewAgentClientStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) agentClientStubInstance {
-			return agentClientStubInstanceOf(tb, protocoltest.NewAgentClientStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewAgentClientStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Do with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Do-failing")
-			s := protocoltest.NewAgentClientStubFailing(t, want)
-			r0 := agentClientStubDo(t, s)
-			assert.ErrorIs(t, r0, want, "Do fails with the error of NewAgentClientStubFailing")
+			stub.ResetBehaviour(t, "Do", agentClientStubDoSubject)
 		})
 	})
 
@@ -275,56 +232,4 @@ func TestAgentClientStub(t *testing.T) {
 	})
 }
 
-// TestAgentClientDoStub checks the methods of AgentClientDoStub, which
-// configures Do.
-func TestAgentClientDoStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Do", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewAgentClientStub(t)
-			want0 := agentClientStubDoPins()
-			s.OnDo.Returns(want0)
-			got0 := agentClientStubDo(t, s)
-			assert.ErrorIs(t, got0, want0, "Do returns the error that Returns sets")
-		})
-
-		t.Run("configures Do for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := protocoltest.NewAgentClientStub(r)
-			s.OnDo.Strict()
-			var want0 error
-			s.OnDo.Returns(want0)
-			_ = agentClientStubDo(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Do")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Do to the function", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewAgentClientStub(t)
-			var got0 context.Context
-			var got1 *shard.Node
-			var got2 *protocol.Request
-			s.OnDo.Func(func(p0 context.Context, p1 *shard.Node, p2 *protocol.Request) error {
-				got0, got1, got2 = p0, p1, p2
-				var z0 error
-				return z0
-			})
-			_ = agentClientStubDo(t, s)
-			a0, a1, a2 := agentClientStubDoArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Node")
-			expect.Equal(t, got2, a2, "the function receives R")
-		})
-	})
-}
-
-// dokimi:provenance sha256:0489006cf131a9fbdb3c017e0b53f68ee3f583be76ac5e1b42398247b44cd6ee
+// dokimi:provenance sha256:4ffbc92b5186fed316cb4f8d885c6f835843ac845e94213bf0e39d3332d9d211

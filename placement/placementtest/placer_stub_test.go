@@ -58,23 +58,36 @@ func placerStubSchedulePins() placement.Schedule {
 	return want0
 }
 
-// placerStubPlaceSubject returns the subject of [stub.Behaviour] for
-// Place. The subject calls a new double that reports to tb.
+// placerStubPlaceSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Place. The subject calls a new double that
+// reports to tb.
 func placerStubPlaceSubject(tb assert.TB) stub.Subject[placementtest.PlacerPlaceCall, placementtest.PlacerPlaceReturn] {
 	tb.Helper()
 	s := placementtest.NewPlacerStub(tb)
 	return stub.Subject[placementtest.PlacerPlaceCall, placementtest.PlacerPlaceReturn]{
-		Stub: s.OnPlace.MethodStub,
+		Stub:  s.OnPlace.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = placerStubPlace(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.PlacerPlaceCall) {
+			tb.Helper()
+			a0, a1 := placerStubPlaceArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.In, a1, "the call records In")
 		},
 		Result: func() placementtest.PlacerPlaceReturn {
 			got0, got1 := placerStubPlace(tb, s)
 			return placementtest.PlacerPlaceReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnPlace.Func(func(_ context.Context, _ *placement.Input) (placement.Plan, error) {
-				mark()
+		Returns: func() placementtest.PlacerPlaceReturn {
+			want0, want1 := placerStubPlacePins()
+			s.OnPlace.Returns(want0, want1)
+			return placementtest.PlacerPlaceReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(placementtest.PlacerPlaceCall)) {
+			s.OnPlace.Func(func(p0 context.Context, p1 *placement.Input) (placement.Plan, error) {
+				seen(placementtest.PlacerPlaceCall{Ctx: p0, In: p1})
 				var z0 placement.Plan
 				var z1 error
 				return z0, z1
@@ -87,15 +100,17 @@ func placerStubPlaceSubject(tb assert.TB) stub.Subject[placementtest.PlacerPlace
 	}
 }
 
-// placerStubScheduleSubject returns the subject of [stub.Behaviour] for
-// Schedule. The subject calls a new double that reports to tb.
+// placerStubScheduleSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Schedule. The subject calls a new double that
+// reports to tb.
 func placerStubScheduleSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.PlacerScheduleCall, placementtest.PlacerScheduleReturn] {
 	tb.Helper()
 	s := placementtest.NewPlacerStub(tb)
 	return stub.Subject[placementtest.PlacerScheduleCall, placementtest.PlacerScheduleReturn]{
-		Stub: s.OnSchedule.MethodStub,
+		Stub:  s.OnSchedule.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = placerStubSchedule(tb, s)
 		},
@@ -103,9 +118,14 @@ func placerStubScheduleSubject(
 			got0 := placerStubSchedule(tb, s)
 			return placementtest.PlacerScheduleReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() placementtest.PlacerScheduleReturn {
+			want0 := placerStubSchedulePins()
+			s.OnSchedule.Returns(want0)
+			return placementtest.PlacerScheduleReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.PlacerScheduleCall)) {
 			s.OnSchedule.Func(func() placement.Schedule {
-				mark()
+				seen(placementtest.PlacerScheduleCall{})
 				var z0 placement.Schedule
 				return z0
 			})
@@ -126,7 +146,6 @@ func placerStubInstanceOf(tb assert.TB, s *placementtest.PlacerStub) placerStubI
 		Call: func() {
 			_, _ = placerStubPlace(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -138,103 +157,24 @@ func TestPlacerStub(t *testing.T) {
 	t.Run("Place", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Place", placerStubPlaceSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewPlacerStub(t)
-			_, _ = placerStubPlace(t, s)
-			got := s.OnPlace.AssertCalledOnce(t, "Place records the call")
-			a0, a1 := placerStubPlaceArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.In, a1, "the call records In")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewPlacerStub(t)
-			var seen []placementtest.PlacerPlaceCall
-			s.OnPlace.OnRecord(func(c placementtest.PlacerPlaceCall) { seen = append(seen, c) })
-			_, _ = placerStubPlace(t, s)
-			_, _ = placerStubPlace(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Place")
-		})
 	})
 
 	t.Run("Schedule", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Schedule", placerStubScheduleSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewPlacerStub(t)
-			var seen []placementtest.PlacerScheduleCall
-			s.OnSchedule.OnRecord(func(c placementtest.PlacerScheduleCall) { seen = append(seen, c) })
-			_ = placerStubSchedule(t, s)
-			_ = placerStubSchedule(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Schedule")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) placerStubInstance {
-			return placerStubInstanceOf(tb, placementtest.NewPlacerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Place", func(t *testing.T) {
+		t.Run("Place", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewPlacerStub(t)
-			_, _ = placerStubPlace(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnPlace.CallCount(), 0, "ResetCalls clears the calls of Place")
+			stub.ResetBehaviour(t, "Place", placerStubPlaceSubject)
 		})
 
-		t.Run("keeps the results of Returns of Place", func(t *testing.T) {
+		t.Run("Schedule", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewPlacerStub(t)
-			want0, want1 := placerStubPlacePins()
-			s.OnPlace.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := placerStubPlace(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Place")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Place")
-		})
-
-		t.Run("clears the recorded calls of Schedule", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewPlacerStub(t)
-			_ = placerStubSchedule(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSchedule.CallCount(), 0, "ResetCalls clears the calls of Schedule")
-		})
-
-		t.Run("keeps the results of Returns of Schedule", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewPlacerStub(t)
-			want0 := placerStubSchedulePins()
-			s.OnSchedule.Returns(want0)
-			s.ResetCalls()
-			got0 := placerStubSchedule(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Schedule")
-		})
-	})
-
-	t.Run("NewPlacerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) placerStubInstance {
-			return placerStubInstanceOf(tb, placementtest.NewPlacerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewPlacerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Place with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Place-failing")
-			s := placementtest.NewPlacerStubFailing(t, want)
-			_, r1 := placerStubPlace(t, s)
-			assert.ErrorIs(t, r1, want, "Place fails with the error of NewPlacerStubFailing")
+			stub.ResetBehaviour(t, "Schedule", placerStubScheduleSubject)
 		})
 	})
 
@@ -362,87 +302,4 @@ func TestPlacerStub(t *testing.T) {
 	})
 }
 
-// TestPlacerPlaceStub checks the methods of PlacerPlaceStub, which
-// configures Place.
-func TestPlacerPlaceStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Place", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewPlacerStub(t)
-			want0, want1 := placerStubPlacePins()
-			s.OnPlace.Returns(want0, want1)
-			got0, got1 := placerStubPlace(t, s)
-			expect.Equal(t, got0, want0, "Place returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Place returns the error that Returns sets")
-		})
-
-		t.Run("configures Place for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewPlacerStub(r)
-			s.OnPlace.Strict()
-			var want0 placement.Plan
-			var want1 error
-			s.OnPlace.Returns(want0, want1)
-			_, _ = placerStubPlace(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Place")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Place to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewPlacerStub(t)
-			var got0 context.Context
-			var got1 *placement.Input
-			s.OnPlace.Func(func(p0 context.Context, p1 *placement.Input) (placement.Plan, error) {
-				got0, got1 = p0, p1
-				var z0 placement.Plan
-				var z1 error
-				return z0, z1
-			})
-			_, _ = placerStubPlace(t, s)
-			a0, a1 := placerStubPlaceArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives In")
-		})
-	})
-}
-
-// TestPlacerScheduleStub checks the methods of PlacerScheduleStub, which
-// configures Schedule.
-func TestPlacerScheduleStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Schedule", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewPlacerStub(t)
-			want0 := placerStubSchedulePins()
-			s.OnSchedule.Returns(want0)
-			got0 := placerStubSchedule(t, s)
-			assert.Equal(t, got0, want0, "Schedule returns the Result that Returns sets")
-		})
-
-		t.Run("configures Schedule for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewPlacerStub(r)
-			s.OnSchedule.Strict()
-			var want0 placement.Schedule
-			s.OnSchedule.Returns(want0)
-			_ = placerStubSchedule(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Schedule")
-		})
-	})
-}
-
-// dokimi:provenance sha256:897403a4d275c52a75a51553e080673b250c8857bf87a1f73f800bcc10935789
+// dokimi:provenance sha256:be95e5e60f9aa14e2f932eb5ef26a0d948df3ab0ec01d09a59db6f04a2789758

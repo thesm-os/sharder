@@ -12,6 +12,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/epoch"
@@ -63,6 +65,12 @@ type machineRoute struct {
 	conform.Callable[MachineMethods]
 }
 
+// Smoke returns the identity of the check that Route returns without a
+// panic for derived inputs.
+func (c machineRoute) Smoke() conform.ID[MachineMethods] {
+	return c.Check("smoke")
+}
+
 // AllocationBudget returns the identity of the check
 // Machine.Route/allocation-budget.
 func (c machineRoute) AllocationBudget() conform.ID[MachineMethods] {
@@ -73,6 +81,18 @@ func (c machineRoute) AllocationBudget() conform.ID[MachineMethods] {
 // checks.
 type machineErr struct {
 	conform.Callable[MachineMethods]
+}
+
+// Smoke returns the identity of the check that Err returns without a panic
+// for derived inputs.
+func (c machineErr) Smoke() conform.ID[MachineMethods] {
+	return c.Check("smoke")
+}
+
+// FreshReportsNoPoison returns the identity of the check that Err reports
+// no error for a fresh receiver.
+func (c machineErr) FreshReportsNoPoison() conform.ID[MachineMethods] {
+	return c.Check("fresh-reports-no-poison")
 }
 
 // machineStep is the name of Machine.Step, with the identities of its
@@ -93,13 +113,92 @@ func (c machineStep) ViewsAllocateOnlyMovedRoutes() conform.ID[MachineMethods] {
 func MachineSuite() conform.Suite[MachineMethods] {
 	return conform.Suite[MachineMethods]{
 		Declaration: "Machine",
+		Package:     "go.thesmos.sh/sharder/internal/machine/routes",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[MachineMethods]{
+			{
+				ID:          MachineChecks.Route.Smoke(),
+				Statement:   "Route returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *MachineHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Route(ctx, []byte{1})
+						return err
+					})
+				},
+				Defect: machineRoutePanics,
+			},
+			{
+				ID:          MachineChecks.Route.Smoke().Generated(),
+				Statement:   "Route returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *MachineHandle, c *prop.Case) {
+					drawnKey := c.Draw(prop.Of[[]byte](), "key")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Route(ctx, drawnKey)
+						return err
+					})
+				},
+				Defect: machineRoutePanics,
+			},
+			{
+				ID:          MachineChecks.Err.Smoke(),
+				Statement:   "Err returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *MachineHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						return h.Subject().Err()
+					})
+				},
+				Defect: machineErrPanics,
+			},
+			{
+				ID:          MachineChecks.Err.FreshReportsNoPoison(),
+				Statement:   "Err reports no error for a fresh receiver",
+				Claim:       spec.FreshReportsNoPoison,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *MachineHandle) {
+					probe.ReportsNoError(h, func(ctx context.Context) error {
+						return h.Subject().Err()
+					})
+				},
+				Defect: machineErrReportsPoison,
+			},
 			{
 				ID:        MachineChecks.Step.ViewsAllocateOnlyMovedRoutes(),
 				Statement: "a view of a cell allocates only the route and the endpoints of each slot whose node it moves",
 				Apply:     ViewsAllocateOnlyMovedRoutes,
 				Defect:    copiesViews,
 				Counted:   true,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Cancel,
+				Callable: "Machine.Route",
+				Gate:     spec.Unrefused,
+				Why:      "Route does not wait for a step, and it uses ctx only for the telemetry of the lookup",
+				Remedy:   "remove the directive refuse of the claim where Route makes it",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Machine.Step",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Step",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+		},
+		Unclaimed: []conform.Unclaimed{
+			{
+				Classification: "mixin:concurrent",
+				Callable:       "Machine.Route",
+				Stance:         spec.Needs,
+				Note:           "The claim linearizable needs the param machineries=[reference] of the directive suite.",
 			},
 		},
 		Calls: []conform.Call[MachineMethods]{
@@ -196,9 +295,19 @@ func MachineSuite() conform.Suite[MachineMethods] {
 				var clockNowAt atomic.Int64
 				clockTimeResults := c.Draw(prop.List(prop.Of[time.Time]()), "clock-time")
 				var clockTimeAt atomic.Int64
+				clockElapsedResults := c.Draw(prop.List(prop.Of[time.Duration]()), "clock-elapsed")
+				var clockElapsedAt atomic.Int64
 				clockNewTimerResults := c.Draw(prop.List(prop.Of[clock.Timer]()), "clock-new-timer")
 				var clockNewTimerAt atomic.Int64
-				clockUpdateResults := c.Draw(prop.List(prop.Of[clock.Instant]()), "clock-update")
+				clockUpdateResults0 := c.Draw(prop.List(prop.Of[clock.Instant]()), "clock-update-0")
+				clockUpdateResults1 := c.Draw(
+					prop.List(
+						prop.SampledFrom[error](nil, conform.ErrGenerated),
+						prop.MinSize(len(clockUpdateResults0)),
+						prop.MaxSize(len(clockUpdateResults0)),
+					),
+					"clock-update-1",
+				)
 				var clockUpdateAt atomic.Int64
 				return &machineClockInput{
 					onNow: func() (r0 clock.Instant) {
@@ -215,6 +324,13 @@ func MachineSuite() conform.Suite[MachineMethods] {
 						}
 						return clockTimeResults[i]
 					},
+					onElapsed: func() (r0 time.Duration) {
+						i := int(clockElapsedAt.Add(1) - 1)
+						if i >= len(clockElapsedResults) {
+							return r0
+						}
+						return clockElapsedResults[i]
+					},
 					onNewTimer: func(time.Duration) (r0 clock.Timer) {
 						i := int(clockNewTimerAt.Add(1) - 1)
 						if i >= len(clockNewTimerResults) {
@@ -222,12 +338,14 @@ func MachineSuite() conform.Suite[MachineMethods] {
 						}
 						return clockNewTimerResults[i]
 					},
-					onUpdate: func(clock.Instant) (r0 clock.Instant) {
+					onUpdate: func(clock.Instant) (r0 clock.Instant, r1 error) {
 						i := int(clockUpdateAt.Add(1) - 1)
-						if i >= len(clockUpdateResults) {
-							return r0
+						if i >= len(clockUpdateResults0) {
+							r1 = conform.ErrGenerated
+							return r0, r1
 						}
-						return clockUpdateResults[i]
+						return clockUpdateResults0[i],
+							clockUpdateResults1[i]
 					},
 				}
 			})),
@@ -637,8 +755,9 @@ type machineClockInput struct {
 	machineClockInputEmbedded
 	onNow      func() clock.Instant
 	onTime     func() time.Time
+	onElapsed  func() time.Duration
 	onNewTimer func(a0 time.Duration) clock.Timer
-	onUpdate   func(a0 clock.Instant) clock.Instant
+	onUpdate   func(a0 clock.Instant) (clock.Instant, error)
 }
 
 // Now calls the function of Now.
@@ -651,13 +770,18 @@ func (in machineClockInput) Time() time.Time {
 	return in.onTime()
 }
 
+// Elapsed calls the function of Elapsed.
+func (in machineClockInput) Elapsed() time.Duration {
+	return in.onElapsed()
+}
+
 // NewTimer calls the function of NewTimer.
 func (in machineClockInput) NewTimer(a0 time.Duration) clock.Timer {
 	return in.onNewTimer(a0)
 }
 
 // Update calls the function of Update.
-func (in machineClockInput) Update(a0 clock.Instant) clock.Instant {
+func (in machineClockInput) Update(a0 clock.Instant) (clock.Instant, error) {
 	return in.onUpdate(a0)
 }
 
@@ -770,4 +894,56 @@ func newMachineOver(_ *MachineHandle, spend func()) MachineMethods {
 	return machineOver{spend: spend}
 }
 
-// dokimi:provenance sha256:f706d8fc3b22b10f2e2bb068488730539a5d33e3adf0828cf297994a190e8b9c
+// machineRoutePanicsDefect is the planted defect of a Machine whose Route
+// panics.
+type machineRoutePanicsDefect struct {
+	machineOverEmbedded
+}
+
+// Route is the override of the planted defect.
+func (*machineRoutePanicsDefect) Route(p0 context.Context, p1 []byte) (r0 routes.Route, r1 error) {
+	panic("the planted defect of a Machine whose Route panics")
+}
+
+// machineRoutePanics returns the planted defect of a Machine whose Route
+// panics over a fresh subject.
+func machineRoutePanics(h *MachineHandle) MachineMethods {
+	return &machineRoutePanicsDefect{machineOverEmbedded: h.Fresh()}
+}
+
+// machineErrPanicsDefect is the planted defect of a Machine whose Err
+// panics.
+type machineErrPanicsDefect struct {
+	machineOverEmbedded
+}
+
+// Err is the override of the planted defect.
+func (*machineErrPanicsDefect) Err() (r0 error) {
+	panic("the planted defect of a Machine whose Err panics")
+}
+
+// machineErrPanics returns the planted defect of a Machine whose Err
+// panics over a fresh subject.
+func machineErrPanics(h *MachineHandle) MachineMethods {
+	return &machineErrPanicsDefect{machineOverEmbedded: h.Fresh()}
+}
+
+// machineErrReportsPoisonDefect is the planted defect of a Machine whose
+// Err reports an error for a fresh receiver.
+type machineErrReportsPoisonDefect struct {
+	machineOverEmbedded
+}
+
+// Err is the override of the planted defect.
+func (*machineErrReportsPoisonDefect) Err() (r0 error) {
+	r0 = conform.ErrGenerated
+	return r0
+}
+
+// machineErrReportsPoison returns the planted defect of a Machine whose
+// Err reports an error for a fresh receiver over a fresh subject.
+func machineErrReportsPoison(h *MachineHandle) MachineMethods {
+	return &machineErrReportsPoisonDefect{machineOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:6cf6c42f417b9675821e13dd09848bb04ba5a3d89f8cade83381a445705bbbcc

@@ -48,38 +48,7 @@ func TestPlacerSuite(t *testing.T) {
 				},
 				Defect: func(*placementtest.PlacerHandle) placement.Placer { return &placerSubject{} },
 			}),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.ConcurrentPlacesMatchSequentialPlaces(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceIgnoresParallelism(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceIsPure(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceKeepsTheCursorInTheLayout(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceReturnsTheCauseOfAnEndedContext(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceReturnsValidPlans(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceTargetsOnlyChanges(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[placement.Placer]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -101,38 +70,7 @@ func TestPlacerSuite(t *testing.T) {
 				},
 				Defect: func(*placementtest.PlacerHandle) placement.Placer { return &placerSubject{} },
 			}),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.ConcurrentPlacesMatchSequentialPlaces(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceIgnoresParallelism(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceIsPure(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceKeepsTheCursorInTheLayout(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceReturnsTheCauseOfAnEndedContext(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceReturnsValidPlans(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				placementtest.PlacerChecks.Place.PlaceTargetsOnlyChanges(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[placement.Placer]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -189,10 +127,15 @@ func TestPlacerSuite(t *testing.T) {
 	})
 }
 
+// placerSuite is the suite of Placer that the tests of the planted defect
+// of a ceiling apply.
+var placerSuite = placementtest.PlacerSuite()
+
 // placerIdle returns the planted defect of a ceiling of Placer with a
-// spend of nothing, a subject that answers each call at once.
+// spend of nothing. Each call of the defect returns its zero results at
+// once.
 func placerIdle(h *placementtest.PlacerHandle) placement.Placer {
-	return placementtest.PlacerSuite().Calls[0].Over(h, func() {})
+	return placerSuite.Calls[0].Over(h, func() {})
 }
 
 // TestPlacerSuiteBudgets applies the allocation ceilings of the suite of
@@ -205,38 +148,7 @@ func TestPlacerSuiteBudgets(t *testing.T) {
 		placerIdle,
 		conform.Ceilings(placementtest.PlacerChecks.Place.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(placementtest.PlacerChecks.Schedule.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.ConcurrentPlacesMatchSequentialPlaces(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceIgnoresParallelism(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceKeepsTheCursorInTheLayout(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceReturnsTheCauseOfAnEndedContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceReturnsValidPlans(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceTargetsOnlyChanges(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[placement.Placer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -247,38 +159,7 @@ func FuzzPlacerSuitePlace(f *testing.F) {
 		f,
 		placementtest.PlacerChecks.Place.Callable,
 		placerIdle,
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.ConcurrentPlacesMatchSequentialPlaces(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceIgnoresParallelism(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceKeepsTheCursorInTheLayout(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceReturnsTheCauseOfAnEndedContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceReturnsValidPlans(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceTargetsOnlyChanges(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[placement.Placer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -289,38 +170,7 @@ func FuzzPlacerSuiteSchedule(f *testing.F) {
 		f,
 		placementtest.PlacerChecks.Schedule.Callable,
 		placerIdle,
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.ConcurrentPlacesMatchSequentialPlaces(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceIgnoresParallelism(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceIsPure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceKeepsTheCursorInTheLayout(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceReturnsTheCauseOfAnEndedContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceReturnsValidPlans(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			placementtest.PlacerChecks.Place.PlaceTargetsOnlyChanges(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[placement.Placer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -335,4 +185,4 @@ func BenchmarkPlacerSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:697fefdb71f72b0683a56c1820a08248aa7a65a72905c861e9e89f428bcd8053
+// dokimi:provenance sha256:69949e370a550c1b0661208e032f1ca5b60376f882356e73e8b57a0a5c76772a

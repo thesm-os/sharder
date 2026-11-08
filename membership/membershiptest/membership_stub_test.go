@@ -16,6 +16,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/stub"
 	"go.thesmos.sh/core/epoch"
+	"go.thesmos.sh/core/version"
 	"go.thesmos.sh/sharder/membership"
 	"go.thesmos.sh/sharder/membership/membershiptest"
 	"go.thesmos.sh/sharder/ownership"
@@ -72,14 +73,16 @@ func sessionStubLeavePins() error {
 }
 
 // sessionStubIncarnationSubject returns the subject of [stub.Behaviour]
-// for Incarnation. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for Incarnation. The subject calls a new
+// double that reports to tb.
 func sessionStubIncarnationSubject(
 	tb assert.TB,
 ) stub.Subject[membershiptest.SessionIncarnationCall, membershiptest.SessionIncarnationReturn] {
 	tb.Helper()
 	s := membershiptest.NewSessionStub(tb)
 	return stub.Subject[membershiptest.SessionIncarnationCall, membershiptest.SessionIncarnationReturn]{
-		Stub: s.OnIncarnation.MethodStub,
+		Stub:  s.OnIncarnation.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = sessionStubIncarnation(tb, s)
 		},
@@ -87,9 +90,14 @@ func sessionStubIncarnationSubject(
 			got0 := sessionStubIncarnation(tb, s)
 			return membershiptest.SessionIncarnationReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() membershiptest.SessionIncarnationReturn {
+			want0 := sessionStubIncarnationPins()
+			s.OnIncarnation.Returns(want0)
+			return membershiptest.SessionIncarnationReturn{Result: want0}
+		},
+		Override: func(seen func(membershiptest.SessionIncarnationCall)) {
 			s.OnIncarnation.Func(func() epoch.Epoch {
-				mark()
+				seen(membershiptest.SessionIncarnationCall{})
 				var z0 epoch.Epoch
 				return z0
 			})
@@ -97,15 +105,17 @@ func sessionStubIncarnationSubject(
 	}
 }
 
-// sessionStubDoneSubject returns the subject of [stub.Behaviour] for Done.
-// The subject calls a new double that reports to tb.
+// sessionStubDoneSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Done. The subject calls a new double that
+// reports to tb.
 func sessionStubDoneSubject(
 	tb assert.TB,
 ) stub.Subject[membershiptest.SessionDoneCall, membershiptest.SessionDoneReturn] {
 	tb.Helper()
 	s := membershiptest.NewSessionStub(tb)
 	return stub.Subject[membershiptest.SessionDoneCall, membershiptest.SessionDoneReturn]{
-		Stub: s.OnDone.MethodStub,
+		Stub:  s.OnDone.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = sessionStubDone(tb, s)
 		},
@@ -113,9 +123,14 @@ func sessionStubDoneSubject(
 			got0 := sessionStubDone(tb, s)
 			return membershiptest.SessionDoneReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() membershiptest.SessionDoneReturn {
+			want0 := sessionStubDonePins()
+			s.OnDone.Returns(want0)
+			return membershiptest.SessionDoneReturn{Result: want0}
+		},
+		Override: func(seen func(membershiptest.SessionDoneCall)) {
 			s.OnDone.Func(func() <-chan struct{} {
-				mark()
+				seen(membershiptest.SessionDoneCall{})
 				var z0 <-chan struct{}
 				return z0
 			})
@@ -123,25 +138,37 @@ func sessionStubDoneSubject(
 	}
 }
 
-// sessionStubLeaveSubject returns the subject of [stub.Behaviour] for
-// Leave. The subject calls a new double that reports to tb.
+// sessionStubLeaveSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Leave. The subject calls a new double that
+// reports to tb.
 func sessionStubLeaveSubject(
 	tb assert.TB,
 ) stub.Subject[membershiptest.SessionLeaveCall, membershiptest.SessionLeaveReturn] {
 	tb.Helper()
 	s := membershiptest.NewSessionStub(tb)
 	return stub.Subject[membershiptest.SessionLeaveCall, membershiptest.SessionLeaveReturn]{
-		Stub: s.OnLeave.MethodStub,
+		Stub:  s.OnLeave.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = sessionStubLeave(tb, s)
+		},
+		Arguments: func(tb assert.TB, c membershiptest.SessionLeaveCall) {
+			tb.Helper()
+			a0 := sessionStubLeaveArgs(tb)
+			assert.Equal(tb, c.Ctx, a0, "the call records Ctx", assert.ByIdentity())
 		},
 		Result: func() membershiptest.SessionLeaveReturn {
 			got0 := sessionStubLeave(tb, s)
 			return membershiptest.SessionLeaveReturn{Err: got0}
 		},
-		Override: func(mark func()) {
-			s.OnLeave.Func(func(_ context.Context) error {
-				mark()
+		Returns: func() membershiptest.SessionLeaveReturn {
+			want0 := sessionStubLeavePins()
+			s.OnLeave.Returns(want0)
+			return membershiptest.SessionLeaveReturn{Err: want0}
+		},
+		Override: func(seen func(membershiptest.SessionLeaveCall)) {
+			s.OnLeave.Func(func(p0 context.Context) error {
+				seen(membershiptest.SessionLeaveCall{Ctx: p0})
 				var z0 error
 				return z0
 			})
@@ -166,7 +193,6 @@ func sessionStubInstanceOf(tb assert.TB, s *membershiptest.SessionStub) sessionS
 		Call: func() {
 			_ = sessionStubIncarnation(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -178,134 +204,34 @@ func TestSessionStub(t *testing.T) {
 	t.Run("Incarnation", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Incarnation", sessionStubIncarnationSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			var seen []membershiptest.SessionIncarnationCall
-			s.OnIncarnation.OnRecord(func(c membershiptest.SessionIncarnationCall) { seen = append(seen, c) })
-			_ = sessionStubIncarnation(t, s)
-			_ = sessionStubIncarnation(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Incarnation")
-		})
 	})
 
 	t.Run("Done", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Done", sessionStubDoneSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			var seen []membershiptest.SessionDoneCall
-			s.OnDone.OnRecord(func(c membershiptest.SessionDoneCall) { seen = append(seen, c) })
-			_ = sessionStubDone(t, s)
-			_ = sessionStubDone(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Done")
-		})
 	})
 
 	t.Run("Leave", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Leave", sessionStubLeaveSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			_ = sessionStubLeave(t, s)
-			got := s.OnLeave.AssertCalledOnce(t, "Leave records the call")
-			a0 := sessionStubLeaveArgs(t)
-			assert.Equal(t, got.Ctx, a0, "the call records Ctx", assert.ByIdentity())
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			var seen []membershiptest.SessionLeaveCall
-			s.OnLeave.OnRecord(func(c membershiptest.SessionLeaveCall) { seen = append(seen, c) })
-			_ = sessionStubLeave(t, s)
-			_ = sessionStubLeave(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Leave")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) sessionStubInstance {
-			return sessionStubInstanceOf(tb, membershiptest.NewSessionStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Incarnation", func(t *testing.T) {
+		t.Run("Incarnation", func(t *testing.T) {
 			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			_ = sessionStubIncarnation(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnIncarnation.CallCount(), 0, "ResetCalls clears the calls of Incarnation")
+			stub.ResetBehaviour(t, "Incarnation", sessionStubIncarnationSubject)
 		})
 
-		t.Run("keeps the results of Returns of Incarnation", func(t *testing.T) {
+		t.Run("Done", func(t *testing.T) {
 			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			want0 := sessionStubIncarnationPins()
-			s.OnIncarnation.Returns(want0)
-			s.ResetCalls()
-			got0 := sessionStubIncarnation(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Incarnation")
+			stub.ResetBehaviour(t, "Done", sessionStubDoneSubject)
 		})
 
-		t.Run("clears the recorded calls of Done", func(t *testing.T) {
+		t.Run("Leave", func(t *testing.T) {
 			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			_ = sessionStubDone(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnDone.CallCount(), 0, "ResetCalls clears the calls of Done")
-		})
-
-		t.Run("keeps the results of Returns of Done", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			want0 := sessionStubDonePins()
-			s.OnDone.Returns(want0)
-			s.ResetCalls()
-			got0 := sessionStubDone(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Done")
-		})
-
-		t.Run("clears the recorded calls of Leave", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			_ = sessionStubLeave(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnLeave.CallCount(), 0, "ResetCalls clears the calls of Leave")
-		})
-
-		t.Run("keeps the results of Returns of Leave", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			want0 := sessionStubLeavePins()
-			s.OnLeave.Returns(want0)
-			s.ResetCalls()
-			got0 := sessionStubLeave(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of Leave")
-		})
-	})
-
-	t.Run("NewSessionStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) sessionStubInstance {
-			return sessionStubInstanceOf(tb, membershiptest.NewSessionStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewSessionStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Leave with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Leave-failing")
-			s := membershiptest.NewSessionStubFailing(t, want)
-			r0 := sessionStubLeave(t, s)
-			assert.ErrorIs(t, r0, want, "Leave fails with the error of NewSessionStubFailing")
+			stub.ResetBehaviour(t, "Leave", sessionStubLeaveSubject)
 		})
 	})
 
@@ -456,114 +382,6 @@ func TestSessionStub(t *testing.T) {
 	})
 }
 
-// TestSessionIncarnationStub checks the methods of SessionIncarnationStub,
-// which configures Incarnation.
-func TestSessionIncarnationStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Incarnation", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			want0 := sessionStubIncarnationPins()
-			s.OnIncarnation.Returns(want0)
-			got0 := sessionStubIncarnation(t, s)
-			assert.Equal(t, got0, want0, "Incarnation returns the Result that Returns sets")
-		})
-
-		t.Run("configures Incarnation for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := membershiptest.NewSessionStub(r)
-			s.OnIncarnation.Strict()
-			var want0 epoch.Epoch
-			s.OnIncarnation.Returns(want0)
-			_ = sessionStubIncarnation(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Incarnation")
-		})
-	})
-}
-
-// TestSessionDoneStub checks the methods of SessionDoneStub, which
-// configures Done.
-func TestSessionDoneStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Done", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			want0 := sessionStubDonePins()
-			s.OnDone.Returns(want0)
-			got0 := sessionStubDone(t, s)
-			assert.Equal(t, got0, want0, "Done returns the Result that Returns sets")
-		})
-
-		t.Run("configures Done for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := membershiptest.NewSessionStub(r)
-			s.OnDone.Strict()
-			var want0 <-chan struct{}
-			s.OnDone.Returns(want0)
-			_ = sessionStubDone(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Done")
-		})
-	})
-}
-
-// TestSessionLeaveStub checks the methods of SessionLeaveStub, which
-// configures Leave.
-func TestSessionLeaveStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Leave", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			want0 := sessionStubLeavePins()
-			s.OnLeave.Returns(want0)
-			got0 := sessionStubLeave(t, s)
-			assert.ErrorIs(t, got0, want0, "Leave returns the error that Returns sets")
-		})
-
-		t.Run("configures Leave for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := membershiptest.NewSessionStub(r)
-			s.OnLeave.Strict()
-			var want0 error
-			s.OnLeave.Returns(want0)
-			_ = sessionStubLeave(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Leave")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Leave to the function", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewSessionStub(t)
-			var got0 context.Context
-			s.OnLeave.Func(func(p0 context.Context) error {
-				got0 = p0
-				var z0 error
-				return z0
-			})
-			_ = sessionStubLeave(t, s)
-			a0 := sessionStubLeaveArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Ctx", assert.ByIdentity())
-		})
-	})
-}
-
 // membershipStubJoinArgs returns the samples of the arguments of Join.
 func membershipStubJoinArgs(
 	tb assert.TB,
@@ -619,26 +437,42 @@ func membershipStubWatchPins() iter.Seq2[membership.View, error] {
 	return want0
 }
 
-// membershipStubJoinSubject returns the subject of [stub.Behaviour] for
-// Join. The subject calls a new double that reports to tb.
+// membershipStubJoinSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Join. The subject calls a new double that
+// reports to tb.
 func membershipStubJoinSubject(
 	tb assert.TB,
 ) stub.Subject[membershiptest.MembershipJoinCall, membershiptest.MembershipJoinReturn] {
 	tb.Helper()
 	s := membershiptest.NewMembershipStub(tb)
 	return stub.Subject[membershiptest.MembershipJoinCall, membershiptest.MembershipJoinReturn]{
-		Stub: s.OnJoin.MethodStub,
+		Stub:  s.OnJoin.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = membershipStubJoin(tb, s)
+		},
+		Arguments: func(tb assert.TB, c membershiptest.MembershipJoinCall) {
+			tb.Helper()
+			a0, a1, a2, a3, a4 := membershipStubJoinArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.S, a1, "the call records S")
+			expect.Equal(tb, c.Inc, a2, "the call records Inc")
+			expect.Equal(tb, c.N, a3, "the call records N")
+			expect.Equal(tb, c.L, a4, "the call records L")
 		},
 		Result: func() membershiptest.MembershipJoinReturn {
 			got0, got1 := membershipStubJoin(tb, s)
 			return membershiptest.MembershipJoinReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
+		Returns: func() membershiptest.MembershipJoinReturn {
+			want0, want1 := membershipStubJoinPins()
+			s.OnJoin.Returns(want0, want1)
+			return membershiptest.MembershipJoinReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(membershiptest.MembershipJoinCall)) {
 			s.OnJoin.Func(
-				func(_ context.Context, _ shard.Scope, _ shard.NamespaceIncarnation, _ *shard.Node, _ ownership.Lease) (membership.Session, error) {
-					mark()
+				func(p0 context.Context, p1 shard.Scope, p2 shard.NamespaceIncarnation, p3 *shard.Node, p4 ownership.Lease) (membership.Session, error) {
+					seen(membershiptest.MembershipJoinCall{Ctx: p0, S: p1, Inc: p2, N: p3, L: p4})
 					var z0 membership.Session
 					var z1 error
 					return z0, z1
@@ -652,26 +486,40 @@ func membershipStubJoinSubject(
 	}
 }
 
-// membershipStubWatchSubject returns the subject of [stub.Behaviour] for
-// Watch. The subject calls a new double that reports to tb.
+// membershipStubWatchSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Watch. The subject calls a new double that
+// reports to tb.
 func membershipStubWatchSubject(
 	tb assert.TB,
 ) stub.Subject[membershiptest.MembershipWatchCall, membershiptest.MembershipWatchReturn] {
 	tb.Helper()
 	s := membershiptest.NewMembershipStub(tb)
 	return stub.Subject[membershiptest.MembershipWatchCall, membershiptest.MembershipWatchReturn]{
-		Stub: s.OnWatch.MethodStub,
+		Stub:  s.OnWatch.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = membershipStubWatch(tb, s)
+		},
+		Arguments: func(tb assert.TB, c membershiptest.MembershipWatchCall) {
+			tb.Helper()
+			a0, a1, a2 := membershipStubWatchArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.S, a1, "the call records S")
+			expect.Equal(tb, c.Inc, a2, "the call records Inc")
 		},
 		Result: func() membershiptest.MembershipWatchReturn {
 			got0 := membershipStubWatch(tb, s)
 			return membershiptest.MembershipWatchReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() membershiptest.MembershipWatchReturn {
+			want0 := membershipStubWatchPins()
+			s.OnWatch.Returns(want0)
+			return membershiptest.MembershipWatchReturn{Result: want0}
+		},
+		Override: func(seen func(membershiptest.MembershipWatchCall)) {
 			s.OnWatch.Func(
-				func(_ context.Context, _ shard.Scope, _ shard.NamespaceIncarnation) iter.Seq2[membership.View, error] {
-					mark()
+				func(p0 context.Context, p1 shard.Scope, p2 shard.NamespaceIncarnation) iter.Seq2[membership.View, error] {
+					seen(membershiptest.MembershipWatchCall{Ctx: p0, S: p1, Inc: p2})
 					var z0 iter.Seq2[membership.View, error]
 					return z0
 				},
@@ -694,7 +542,6 @@ func membershipStubInstanceOf(tb assert.TB, s *membershiptest.MembershipStub) me
 		Call: func() {
 			_, _ = membershipStubJoin(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -706,116 +553,24 @@ func TestMembershipStub(t *testing.T) {
 	t.Run("Join", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Join", membershipStubJoinSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewMembershipStub(t)
-			_, _ = membershipStubJoin(t, s)
-			got := s.OnJoin.AssertCalledOnce(t, "Join records the call")
-			a0, a1, a2, a3, a4 := membershipStubJoinArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.S, a1, "the call records S")
-			expect.Equal(t, got.Inc, a2, "the call records Inc")
-			expect.Equal(t, got.N, a3, "the call records N")
-			expect.Equal(t, got.L, a4, "the call records L")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewMembershipStub(t)
-			var seen []membershiptest.MembershipJoinCall
-			s.OnJoin.OnRecord(func(c membershiptest.MembershipJoinCall) { seen = append(seen, c) })
-			_, _ = membershipStubJoin(t, s)
-			_, _ = membershipStubJoin(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Join")
-		})
 	})
 
 	t.Run("Watch", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Watch", membershipStubWatchSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewMembershipStub(t)
-			_ = membershipStubWatch(t, s)
-			got := s.OnWatch.AssertCalledOnce(t, "Watch records the call")
-			a0, a1, a2 := membershipStubWatchArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.S, a1, "the call records S")
-			expect.Equal(t, got.Inc, a2, "the call records Inc")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewMembershipStub(t)
-			var seen []membershiptest.MembershipWatchCall
-			s.OnWatch.OnRecord(func(c membershiptest.MembershipWatchCall) { seen = append(seen, c) })
-			_ = membershipStubWatch(t, s)
-			_ = membershipStubWatch(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Watch")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) membershipStubInstance {
-			return membershipStubInstanceOf(tb, membershiptest.NewMembershipStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Join", func(t *testing.T) {
+		t.Run("Join", func(t *testing.T) {
 			t.Parallel()
-			s := membershiptest.NewMembershipStub(t)
-			_, _ = membershipStubJoin(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnJoin.CallCount(), 0, "ResetCalls clears the calls of Join")
+			stub.ResetBehaviour(t, "Join", membershipStubJoinSubject)
 		})
 
-		t.Run("keeps the results of Returns of Join", func(t *testing.T) {
+		t.Run("Watch", func(t *testing.T) {
 			t.Parallel()
-			s := membershiptest.NewMembershipStub(t)
-			want0, want1 := membershipStubJoinPins()
-			s.OnJoin.Returns(want0, want1)
-			s.ResetCalls()
-			_, got1 := membershipStubJoin(t, s)
-			assert.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Join")
-		})
-
-		t.Run("clears the recorded calls of Watch", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewMembershipStub(t)
-			_ = membershipStubWatch(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWatch.CallCount(), 0, "ResetCalls clears the calls of Watch")
-		})
-
-		t.Run("keeps the results of Returns of Watch", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewMembershipStub(t)
-			want0 := membershipStubWatchPins()
-			s.OnWatch.Returns(want0)
-			s.ResetCalls()
-			got0 := membershipStubWatch(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Watch")
-		})
-	})
-
-	t.Run("NewMembershipStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) membershipStubInstance {
-			return membershipStubInstanceOf(tb, membershiptest.NewMembershipStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewMembershipStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Join with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Join-failing")
-			s := membershiptest.NewMembershipStubFailing(t, want)
-			_, r1 := membershipStubJoin(t, s)
-			assert.ErrorIs(t, r1, want, "Join fails with the error of NewMembershipStubFailing")
+			stub.ResetBehaviour(t, "Watch", membershipStubWatchSubject)
 		})
 	})
 
@@ -964,57 +719,24 @@ func TestMembershipStub(t *testing.T) {
 func TestMembershipJoinStub(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Returns", func(t *testing.T) {
+	t.Run("FaultOutcomeUnknown", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("sets the results of each call of Join", func(t *testing.T) {
+		t.Run("fails the next call of Join with ErrOutcomeUnknown", func(t *testing.T) {
 			t.Parallel()
 			s := membershiptest.NewMembershipStub(t)
-			want0, want1 := membershipStubJoinPins()
-			s.OnJoin.Returns(want0, want1)
-			_, got1 := membershipStubJoin(t, s)
-			assert.ErrorIs(t, got1, want1, "Join returns the error that Returns sets")
+			s.OnJoin.FaultOutcomeUnknown()
+			_, r1 := membershipStubJoin(t, s)
+			assert.ErrorIs(t, r1, version.ErrOutcomeUnknown, "the next call of Join fails with ErrOutcomeUnknown")
 		})
 
-		t.Run("configures Join for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := membershiptest.NewMembershipStub(r)
-			s.OnJoin.Strict()
-			var want0 membership.Session
-			var want1 error
-			s.OnJoin.Returns(want0, want1)
-			_, _ = membershipStubJoin(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Join")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Join to the function", func(t *testing.T) {
+		t.Run("spares the call after the failed call", func(t *testing.T) {
 			t.Parallel()
 			s := membershiptest.NewMembershipStub(t)
-			var got0 context.Context
-			var got1 shard.Scope
-			var got2 shard.NamespaceIncarnation
-			var got3 *shard.Node
-			var got4 ownership.Lease
-			s.OnJoin.Func(
-				func(p0 context.Context, p1 shard.Scope, p2 shard.NamespaceIncarnation, p3 *shard.Node, p4 ownership.Lease) (membership.Session, error) {
-					got0, got1, got2, got3, got4 = p0, p1, p2, p3, p4
-					var z0 membership.Session
-					var z1 error
-					return z0, z1
-				},
-			)
+			s.OnJoin.FaultOutcomeUnknown()
 			_, _ = membershipStubJoin(t, s)
-			a0, a1, a2, a3, a4 := membershipStubJoinArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives S")
-			expect.Equal(t, got2, a2, "the function receives Inc")
-			expect.Equal(t, got3, a3, "the function receives N")
-			expect.Equal(t, got4, a4, "the function receives L")
+			_, r1 := membershipStubJoin(t, s)
+			assert.NoError(t, r1, "the call of Join after the failed call succeeds")
 		})
 	})
 }
@@ -1023,54 +745,6 @@ func TestMembershipJoinStub(t *testing.T) {
 // configures Watch.
 func TestMembershipWatchStub(t *testing.T) {
 	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Watch", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewMembershipStub(t)
-			want0 := membershipStubWatchPins()
-			s.OnWatch.Returns(want0)
-			got0 := membershipStubWatch(t, s)
-			assert.Equal(t, got0, want0, "Watch returns the Result that Returns sets")
-		})
-
-		t.Run("configures Watch for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := membershiptest.NewMembershipStub(r)
-			s.OnWatch.Strict()
-			var want0 iter.Seq2[membership.View, error]
-			s.OnWatch.Returns(want0)
-			_ = membershipStubWatch(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Watch")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Watch to the function", func(t *testing.T) {
-			t.Parallel()
-			s := membershiptest.NewMembershipStub(t)
-			var got0 context.Context
-			var got1 shard.Scope
-			var got2 shard.NamespaceIncarnation
-			s.OnWatch.Func(
-				func(p0 context.Context, p1 shard.Scope, p2 shard.NamespaceIncarnation) iter.Seq2[membership.View, error] {
-					got0, got1, got2 = p0, p1, p2
-					var z0 iter.Seq2[membership.View, error]
-					return z0
-				},
-			)
-			_ = membershipStubWatch(t, s)
-			a0, a1, a2 := membershipStubWatchArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives S")
-			expect.Equal(t, got2, a2, "the function receives Inc")
-		})
-	})
 
 	t.Run("Yields", func(t *testing.T) {
 		t.Parallel()
@@ -1142,4 +816,4 @@ func TestMembershipWatchStub(t *testing.T) {
 	})
 }
 
-// dokimi:provenance sha256:d11d0f25c6809a4a100558dc560e003711655c3230f5fd8a3bb24d29107ed33c
+// dokimi:provenance sha256:e31d7295e2febfeb3563f39fe1a1b4b174d3bba26cce3ffeaba223109f162bfe

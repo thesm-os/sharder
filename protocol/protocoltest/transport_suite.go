@@ -11,11 +11,14 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/sharder/budget"
 	"go.thesmos.sh/sharder/proposal"
 	"go.thesmos.sh/sharder/protocol"
+	"go.thesmos.sh/sharder/shard"
 )
 
 // The suite refers to the compatibility witness of its runtime.
@@ -68,12 +71,50 @@ func (c connectorConnect) ClientsRefuseOtherVersions() conform.ID[Connector] {
 	return c.Check("clients-refuse-other-versions")
 }
 
+// Smoke returns the identity of the check that Connect returns without a
+// panic for derived inputs.
+func (c connectorConnect) Smoke() conform.ID[Connector] {
+	return c.Check("smoke")
+}
+
 // ConnectorSuite returns the checks of Connector, and the calls and the
 // budgets of its callables.
 func ConnectorSuite() conform.Suite[Connector] {
 	return conform.Suite[Connector]{
 		Declaration: "Connector",
+		Package:     "go.thesmos.sh/sharder/protocol/protocoltest",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[Connector]{
+			{
+				ID:          ConnectorChecks.Connect.Smoke(),
+				Statement:   "Connect returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *ConnectorHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().
+							Connect(protocol.Metadata{Caller: shard.Identity("Caller-a")}, &Endpoints{Scope: shard.Scope{Namespace: shard.Namespace("Namespace-a")}})
+						return nil
+					})
+				},
+				Defect: connectorConnectPanics,
+			},
+			{
+				ID:          ConnectorChecks.Connect.Smoke().Generated(),
+				Statement:   "Connect returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *ConnectorHandle, c *prop.Case) {
+					drawnMd := c.Draw(prop.Of[protocol.Metadata](), "md")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().
+							Connect(drawnMd, &Endpoints{Scope: shard.Scope{Namespace: shard.Namespace("Namespace-a")}})
+						return nil
+					})
+				},
+				Defect: connectorConnectPanics,
+			},
 			{
 				ID:        ConnectorChecks.Connect.ClientsKeepErrorClasses(),
 				Statement: "a client returns an error of the class of the error of the server",
@@ -376,4 +417,24 @@ func newConnectorOver(_ *ConnectorHandle, spend func()) Connector {
 	return connectorOver{spend: spend}
 }
 
-// dokimi:provenance sha256:414b2695d524acee6b4216fe9ecda7ef91794f6999532e8c81b40e3cec06747e
+// connectorConnectPanicsDefect is the planted defect of a Connector whose
+// Connect panics.
+type connectorConnectPanicsDefect struct {
+	connectorOverEmbedded
+}
+
+// Connect is the override of the planted defect.
+func (*connectorConnectPanicsDefect) Connect(
+	p0 protocol.Metadata,
+	p1 *Endpoints,
+) (r0 protocol.AgentClient, r1 protocol.ControllerClient) {
+	panic("the planted defect of a Connector whose Connect panics")
+}
+
+// connectorConnectPanics returns the planted defect of a Connector whose
+// Connect panics over a fresh subject.
+func connectorConnectPanics(h *ConnectorHandle) Connector {
+	return &connectorConnectPanicsDefect{connectorOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:77ee54af6a6890a9f5cc56937bec4e710450e4b19be0073743aff4964e23b701

@@ -86,4 +86,9 @@ func (v *Interruption) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// dokimi:provenance sha256:39efb077fa59f593944335ba83d3de27effac51356b9b9e2a90bc0c376cba65a
+// StrictKanon marks Interruption as a kanon.Strict type. UnmarshalText
+// accepts only the texts that MarshalText writes. A canonical decode of
+// kanon therefore does not encode a decoded Interruption again.
+func (Interruption) StrictKanon() {}
+
+// dokimi:provenance sha256:b12cfebabebc4fde39e549ec4baa580b42b1c6311ad74dc8399cc23f4dabc05d

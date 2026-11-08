@@ -149,26 +149,6 @@ func NewAgentClientStub(tb assert.TB, opts ...AgentClientStubOption) *AgentClien
 	return s
 }
 
-// NewAgentClientStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewAgentClientStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...AgentClientStubOption,
-) *AgentClientStub {
-	return NewAgentClientStub(tb, append([]AgentClientStubOption{
-		AgentClientStubWithClock(clk),
-		AgentClientStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewAgentClientStubFailing returns a double on which each call of a
-// method that can fail fails with err. It applies opts after the failure.
-func NewAgentClientStubFailing(tb assert.TB, err error, opts ...AgentClientStubOption) *AgentClientStub {
-	return NewAgentClientStub(tb, append([]AgentClientStubOption{AgentClientStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *AgentClientStub) ResetCalls() {
@@ -207,4 +187,4 @@ func (s *AgentClientStub) Do(ctx context.Context, node *shard.Node, r *protocol.
 	return r1.Err
 }
 
-// dokimi:provenance sha256:1136f1553005b4ec0ba484d1848e65a8fea911444fa041684dfc9c0eccbf12f8
+// dokimi:provenance sha256:c2d560ac629a2ebbbf9249d185f47a82cf19670380fa92bebf6e5d83710100cc

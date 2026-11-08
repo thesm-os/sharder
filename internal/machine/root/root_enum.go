@@ -109,6 +109,11 @@ func (v *state) UnmarshalText(text []byte) error {
 	return nil
 }
 
+// StrictKanon marks state as a kanon.Strict type. UnmarshalText accepts
+// only the texts that MarshalText writes. A canonical decode of kanon
+// therefore does not encode a decoded state again.
+func (state) StrictKanon() {}
+
 func _() {
 	// An "invalid array index" compiler error means that the value of a
 	// variant changed. Run dokimi again to write the table of the new values.
@@ -212,4 +217,9 @@ func (v *event) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// dokimi:provenance sha256:7c7cc32a69826f8661dc05fa0ce6eca92f0709a0a5d141c625e79aba4a8daf4e
+// StrictKanon marks event as a kanon.Strict type. UnmarshalText accepts
+// only the texts that MarshalText writes. A canonical decode of kanon
+// therefore does not encode a decoded event again.
+func (event) StrictKanon() {}
+
+// dokimi:provenance sha256:dab8ecdd2e5ce96b3a4a96103b06541ad7d8d1620d4cbebc4560f7ce58c103f9

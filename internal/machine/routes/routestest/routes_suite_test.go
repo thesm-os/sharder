@@ -47,10 +47,7 @@ func TestMachineSuite(t *testing.T) {
 				},
 				Defect: func(*routestest.MachineHandle) routestest.MachineMethods { return &machineSubject{} },
 			}),
-			conform.Excuse(
-				routestest.MachineChecks.Step.ViewsAllocateOnlyMovedRoutes(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[routestest.MachineMethods]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -72,10 +69,7 @@ func TestMachineSuite(t *testing.T) {
 				},
 				Defect: func(*routestest.MachineHandle) routestest.MachineMethods { return &machineSubject{} },
 			}),
-			conform.Excuse(
-				routestest.MachineChecks.Step.ViewsAllocateOnlyMovedRoutes(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[routestest.MachineMethods]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -104,10 +98,15 @@ func TestMachineSuiteAllocs(t *testing.T) {
 	})
 }
 
+// machineSuite is the suite of Machine that the tests of the planted
+// defect of a ceiling apply.
+var machineSuite = routestest.MachineSuite()
+
 // machineIdle returns the planted defect of a ceiling of Machine with a
-// spend of nothing, a subject that answers each call at once.
+// spend of nothing. Each call of the defect returns its zero results at
+// once.
 func machineIdle(h *routestest.MachineHandle) routestest.MachineMethods {
-	return routestest.MachineSuite().Calls[0].Over(h, func() {})
+	return machineSuite.Calls[0].Over(h, func() {})
 }
 
 // TestMachineSuiteBudgets applies the allocation ceilings of the suite of
@@ -120,9 +119,8 @@ func TestMachineSuiteBudgets(t *testing.T) {
 		machineIdle,
 		conform.Ceilings(routestest.MachineChecks.Err.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(routestest.MachineChecks.Step.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			routestest.MachineChecks.Step.ViewsAllocateOnlyMovedRoutes(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[routestest.MachineMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -134,9 +132,8 @@ func FuzzMachineSuiteRoute(f *testing.F) {
 		f,
 		routestest.MachineChecks.Route.Callable,
 		machineIdle,
-		conform.Excuse(
-			routestest.MachineChecks.Step.ViewsAllocateOnlyMovedRoutes(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[routestest.MachineMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -148,9 +145,8 @@ func FuzzMachineSuiteErr(f *testing.F) {
 		f,
 		routestest.MachineChecks.Err.Callable,
 		machineIdle,
-		conform.Excuse(
-			routestest.MachineChecks.Step.ViewsAllocateOnlyMovedRoutes(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[routestest.MachineMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -162,9 +158,8 @@ func FuzzMachineSuiteStep(f *testing.F) {
 		f,
 		routestest.MachineChecks.Step.Callable,
 		machineIdle,
-		conform.Excuse(
-			routestest.MachineChecks.Step.ViewsAllocateOnlyMovedRoutes(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[routestest.MachineMethods](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -247,4 +242,4 @@ func FuzzMachineConformsToMachineStep(f *testing.F) {
 	routestest.FuzzMachineSuite(f, routestest.MachineChecks.Step.Callable, newServed)
 }
 
-// dokimi:provenance sha256:4b8798ba1fd7ad68a583420b32b911f88c4f0226dd9dcf3755f02934d5f11c36
+// dokimi:provenance sha256:f457f13b403be93976808828707480a4e3ef3d5ba27631eb9da40978aa5bad32

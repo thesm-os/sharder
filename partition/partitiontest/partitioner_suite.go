@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/sharder/partition"
 	"go.thesmos.sh/sharder/shard"
 )
@@ -61,6 +63,18 @@ func (c partitionerPosition) PositionIsDeterministic() conform.ID[partition.Part
 	return c.Check("position-is-deterministic")
 }
 
+// Smoke returns the identity of the check that Position returns without a
+// panic for derived inputs.
+func (c partitionerPosition) Smoke() conform.ID[partition.Partitioner] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Position returns
+// the same value for the same inputs.
+func (c partitionerPosition) Deterministic() conform.ID[partition.Partitioner] {
+	return c.Check("deterministic")
+}
+
 // partitionerMapping is the name of Partitioner.Mapping, with the
 // identities of its checks.
 type partitionerMapping struct {
@@ -92,6 +106,18 @@ func (c partitionerMapping) MappingVersionsItsHash() conform.ID[partition.Partit
 	return c.Check("mapping-versions-its-hash")
 }
 
+// Smoke returns the identity of the check that Mapping returns without a
+// panic for derived inputs.
+func (c partitionerMapping) Smoke() conform.ID[partition.Partitioner] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Mapping returns the
+// same value for the same inputs.
+func (c partitionerMapping) Deterministic() conform.ID[partition.Partitioner] {
+	return c.Check("deterministic")
+}
+
 // partitionerInitial is the name of Partitioner.Initial, with the
 // identities of its checks.
 type partitionerInitial struct {
@@ -117,12 +143,168 @@ func (c partitionerInitial) InitialPartitionsThePositionSpace() conform.ID[parti
 	return c.Check("initial-partitions-the-position-space")
 }
 
+// Smoke returns the identity of the check that Initial returns without a
+// panic for derived inputs.
+func (c partitionerInitial) Smoke() conform.ID[partition.Partitioner] {
+	return c.Check("smoke")
+}
+
+// ZeroOnError returns the identity of the check that Initial returns the
+// zero value beside an error.
+func (c partitionerInitial) ZeroOnError() conform.ID[partition.Partitioner] {
+	return c.Check("zero-on-error")
+}
+
 // PartitionerSuite returns the checks of Partitioner, and the calls and
 // the budgets of its callables.
 func PartitionerSuite() conform.Suite[partition.Partitioner] {
 	return conform.Suite[partition.Partitioner]{
 		Declaration: "Partitioner",
+		Package:     "go.thesmos.sh/sharder/partition",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[partition.Partitioner]{
+			{
+				ID:          PartitionerChecks.Position.Smoke(),
+				Statement:   "Position returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *PartitionerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Position([]byte{1}, []byte{1})
+						return nil
+					})
+				},
+				Defect: partitionerPositionPanics,
+			},
+			{
+				ID:          PartitionerChecks.Position.Smoke().Generated(),
+				Statement:   "Position returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *PartitionerHandle, c *prop.Case) {
+					drawnDst := c.Draw(prop.Of[[]byte](), "dst")
+					drawnKey := c.Draw(prop.Of[[]byte](), "key")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Position(drawnDst, drawnKey)
+						return nil
+					})
+				},
+				Defect: partitionerPositionPanics,
+			},
+			{
+				ID:          PartitionerChecks.Position.Deterministic(),
+				Statement:   "Position returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[partition.Partitioner]{PartitionerChecks.Position.Smoke()},
+				Apply: func(h *PartitionerHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) ([]byte, error) {
+						r0 := h.Subject().Position([]byte{1}, []byte{1})
+						return r0, nil
+					})
+				},
+				Defect: partitionerPositionDrifts,
+			},
+			{
+				ID:          PartitionerChecks.Position.Deterministic().Generated(),
+				Statement:   "Position returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[partition.Partitioner]{PartitionerChecks.Position.Smoke().Generated()},
+				Property: func(h *PartitionerHandle, c *prop.Case) {
+					drawnDst := c.Draw(prop.Of[[]byte](), "dst")
+					drawnKey := c.Draw(prop.Of[[]byte](), "key")
+					probe.RepeatAgrees(h, func(ctx context.Context) ([]byte, error) {
+						r0 := h.Subject().Position(drawnDst, drawnKey)
+						return r0, nil
+					})
+				},
+				Defect: partitionerPositionDrifts,
+			},
+			{
+				ID:          PartitionerChecks.Mapping.Smoke(),
+				Statement:   "Mapping returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *PartitionerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Mapping()
+						return nil
+					})
+				},
+				Defect: partitionerMappingPanics,
+			},
+			{
+				ID:          PartitionerChecks.Mapping.Deterministic(),
+				Statement:   "Mapping returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[partition.Partitioner]{PartitionerChecks.Mapping.Smoke()},
+				Apply: func(h *PartitionerHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (shard.Mapping, error) {
+						r0 := h.Subject().Mapping()
+						return r0, nil
+					})
+				},
+				Defect: partitionerMappingDrifts,
+			},
+			{
+				ID:          PartitionerChecks.Initial.Smoke(),
+				Statement:   "Initial returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *PartitionerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Initial(shard.Range{Start: []byte{1}})
+						return err
+					})
+				},
+				Defect: partitionerInitialPanics,
+			},
+			{
+				ID:          PartitionerChecks.Initial.Smoke().Generated(),
+				Statement:   "Initial returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *PartitionerHandle, c *prop.Case) {
+					drawnR := c.Draw(prop.Of[shard.Range](), "r")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Initial(drawnR)
+						return err
+					})
+				},
+				Defect: partitionerInitialPanics,
+			},
+			{
+				ID:          PartitionerChecks.Initial.ZeroOnError(),
+				Statement:   "Initial returns the zero value beside an error",
+				Claim:       spec.ZeroOnError,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *PartitionerHandle) {
+					probe.ZeroBesideError(h, func(ctx context.Context) ([]partition.Span, error) {
+						return h.Subject().Initial(shard.Range{Start: []byte{1}})
+					}, []partition.Span(nil))
+				},
+				Defect: partitionerInitialValueBeside,
+			},
+			{
+				ID:          PartitionerChecks.Initial.ZeroOnError().Generated(),
+				Statement:   "Initial returns the zero value beside an error",
+				Claim:       spec.ZeroOnError,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *PartitionerHandle, c *prop.Case) {
+					drawnR := c.Draw(prop.Of[shard.Range](), "r")
+					probe.ZeroBesideError(h, func(ctx context.Context) ([]partition.Span, error) {
+						return h.Subject().Initial(drawnR)
+					}, []partition.Span(nil))
+				},
+				Defect: partitionerInitialValueBeside,
+			},
 			{
 				ID:        PartitionerChecks.Position.PositionAppendsIntoTheRoomOfDst(),
 				Statement: "Position appends the position into the array of dst when dst has room for the position",
@@ -333,6 +515,123 @@ func newPartitionerOver(_ *PartitionerHandle, spend func()) partition.Partitione
 	return partitionerOver{spend: spend}
 }
 
+// partitionerPositionPanicsDefect is the planted defect of a Partitioner
+// whose Position panics.
+type partitionerPositionPanicsDefect struct {
+	partitionerOverEmbedded
+}
+
+// Position is the override of the planted defect.
+func (*partitionerPositionPanicsDefect) Position(p0, p1 []byte) (r0 []byte) {
+	panic("the planted defect of a Partitioner whose Position panics")
+}
+
+// partitionerPositionPanics returns the planted defect of a Partitioner
+// whose Position panics over a fresh subject.
+func partitionerPositionPanics(h *PartitionerHandle) partition.Partitioner {
+	return &partitionerPositionPanicsDefect{partitionerOverEmbedded: h.Fresh()}
+}
+
+// partitionerPositionDriftsDefect is the planted defect of a Partitioner
+// whose Position returns another value on the repeat.
+type partitionerPositionDriftsDefect struct {
+	partitionerOverEmbedded
+	calls int
+}
+
+// Position is the override of the planted defect.
+func (d *partitionerPositionDriftsDefect) Position(p0, p1 []byte) (r0 []byte) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = []byte{2}
+	}
+	return r0
+}
+
+// partitionerPositionDrifts returns the planted defect of a Partitioner
+// whose Position returns another value on the repeat over a fresh subject.
+func partitionerPositionDrifts(h *PartitionerHandle) partition.Partitioner {
+	return &partitionerPositionDriftsDefect{partitionerOverEmbedded: h.Fresh()}
+}
+
+// partitionerMappingPanicsDefect is the planted defect of a Partitioner
+// whose Mapping panics.
+type partitionerMappingPanicsDefect struct {
+	partitionerOverEmbedded
+}
+
+// Mapping is the override of the planted defect.
+func (*partitionerMappingPanicsDefect) Mapping() (r0 shard.Mapping) {
+	panic("the planted defect of a Partitioner whose Mapping panics")
+}
+
+// partitionerMappingPanics returns the planted defect of a Partitioner
+// whose Mapping panics over a fresh subject.
+func partitionerMappingPanics(h *PartitionerHandle) partition.Partitioner {
+	return &partitionerMappingPanicsDefect{partitionerOverEmbedded: h.Fresh()}
+}
+
+// partitionerMappingDriftsDefect is the planted defect of a Partitioner
+// whose Mapping returns another value on the repeat.
+type partitionerMappingDriftsDefect struct {
+	partitionerOverEmbedded
+	calls int
+}
+
+// Mapping is the override of the planted defect.
+func (d *partitionerMappingDriftsDefect) Mapping() (r0 shard.Mapping) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = shard.Mapping{Partitioner: shard.StrategyName("Partitioner-b")}
+	}
+	return r0
+}
+
+// partitionerMappingDrifts returns the planted defect of a Partitioner
+// whose Mapping returns another value on the repeat over a fresh subject.
+func partitionerMappingDrifts(h *PartitionerHandle) partition.Partitioner {
+	return &partitionerMappingDriftsDefect{partitionerOverEmbedded: h.Fresh()}
+}
+
+// partitionerInitialPanicsDefect is the planted defect of a Partitioner
+// whose Initial panics.
+type partitionerInitialPanicsDefect struct {
+	partitionerOverEmbedded
+}
+
+// Initial is the override of the planted defect.
+func (*partitionerInitialPanicsDefect) Initial(p0 shard.Range) (r0 []partition.Span, r1 error) {
+	panic("the planted defect of a Partitioner whose Initial panics")
+}
+
+// partitionerInitialPanics returns the planted defect of a Partitioner
+// whose Initial panics over a fresh subject.
+func partitionerInitialPanics(h *PartitionerHandle) partition.Partitioner {
+	return &partitionerInitialPanicsDefect{partitionerOverEmbedded: h.Fresh()}
+}
+
+// partitionerInitialValueBesideDefect is the planted defect of a
+// Partitioner whose Initial returns a value beside an error.
+type partitionerInitialValueBesideDefect struct {
+	partitionerOverEmbedded
+}
+
+// Initial is the override of the planted defect.
+func (d *partitionerInitialValueBesideDefect) Initial(p0 shard.Range) (r0 []partition.Span, r1 error) {
+	r0, r1 = d.partitionerOverEmbedded.Initial(p0)
+	if r1 != nil {
+		r0 = []partition.Span{{Range: shard.Range{Start: []byte{2}}}}
+	}
+	return r0, r1
+}
+
+// partitionerInitialValueBeside returns the planted defect of a
+// Partitioner whose Initial returns a value beside an error over a fresh
+// subject.
+func partitionerInitialValueBeside(h *PartitionerHandle) partition.Partitioner {
+	return &partitionerInitialValueBesideDefect{partitionerOverEmbedded: h.Fresh()}
+}
+
 // The suite refers to the compatibility witness of its runtime.
 var _ = conform.CompatV1
 
@@ -364,6 +663,18 @@ func (c hashSum64) Sum64IsDeterministic() conform.ID[partition.Hash] {
 	return c.Check("sum64-is-deterministic")
 }
 
+// Smoke returns the identity of the check that Sum64 returns without a
+// panic for derived inputs.
+func (c hashSum64) Smoke() conform.ID[partition.Hash] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Sum64 returns the
+// same value for the same inputs.
+func (c hashSum64) Deterministic() conform.ID[partition.Hash] {
+	return c.Check("deterministic")
+}
+
 // AllocationBudget returns the identity of the check
 // Hash.Sum64/allocation-budget.
 func (c hashSum64) AllocationBudget() conform.ID[partition.Hash] {
@@ -382,12 +693,113 @@ func (c hashVersion) VersionIsPositive() conform.ID[partition.Hash] {
 	return c.Check("version-is-positive")
 }
 
+// Smoke returns the identity of the check that Version returns without a
+// panic for derived inputs.
+func (c hashVersion) Smoke() conform.ID[partition.Hash] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Version returns the
+// same value for the same inputs.
+func (c hashVersion) Deterministic() conform.ID[partition.Hash] {
+	return c.Check("deterministic")
+}
+
 // HashSuite returns the checks of Hash, and the calls and the budgets of
 // its callables.
 func HashSuite() conform.Suite[partition.Hash] {
 	return conform.Suite[partition.Hash]{
 		Declaration: "Hash",
+		Package:     "go.thesmos.sh/sharder/partition",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[partition.Hash]{
+			{
+				ID:          HashChecks.Sum64.Smoke(),
+				Statement:   "Sum64 returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *HashHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Sum64([]byte{1})
+						return nil
+					})
+				},
+				Defect: hashSum64Panics,
+			},
+			{
+				ID:          HashChecks.Sum64.Smoke().Generated(),
+				Statement:   "Sum64 returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *HashHandle, c *prop.Case) {
+					drawnKey := c.Draw(prop.Of[[]byte](), "key")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Sum64(drawnKey)
+						return nil
+					})
+				},
+				Defect: hashSum64Panics,
+			},
+			{
+				ID:          HashChecks.Sum64.Deterministic(),
+				Statement:   "Sum64 returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[partition.Hash]{HashChecks.Sum64.Smoke()},
+				Apply: func(h *HashHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (uint64, error) {
+						r0 := h.Subject().Sum64([]byte{1})
+						return r0, nil
+					})
+				},
+				Defect: hashSum64Drifts,
+			},
+			{
+				ID:          HashChecks.Sum64.Deterministic().Generated(),
+				Statement:   "Sum64 returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[partition.Hash]{HashChecks.Sum64.Smoke().Generated()},
+				Property: func(h *HashHandle, c *prop.Case) {
+					drawnKey := c.Draw(prop.Of[[]byte](), "key")
+					probe.RepeatAgrees(h, func(ctx context.Context) (uint64, error) {
+						r0 := h.Subject().Sum64(drawnKey)
+						return r0, nil
+					})
+				},
+				Defect: hashSum64Drifts,
+			},
+			{
+				ID:          HashChecks.Version.Smoke(),
+				Statement:   "Version returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *HashHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Version()
+						return nil
+					})
+				},
+				Defect: hashVersionPanics,
+			},
+			{
+				ID:          HashChecks.Version.Deterministic(),
+				Statement:   "Version returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[partition.Hash]{HashChecks.Version.Smoke()},
+				Apply: func(h *HashHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (uint32, error) {
+						r0 := h.Subject().Version()
+						return r0, nil
+					})
+				},
+				Defect: hashVersionDrifts,
+			},
 			{
 				ID:        HashChecks.Sum64.Sum64IsDeterministic(),
 				Statement: "Sum64 returns the same hash for the same key",
@@ -521,4 +933,82 @@ func newHashOver(_ *HashHandle, spend func()) partition.Hash {
 	return hashOver{spend: spend}
 }
 
-// dokimi:provenance sha256:3c862b6364ef179f16fb9ca962f882476bf4d84f9427b93d2c20cdffe8aed80f
+// hashSum64PanicsDefect is the planted defect of a Hash whose Sum64
+// panics.
+type hashSum64PanicsDefect struct {
+	hashOverEmbedded
+}
+
+// Sum64 is the override of the planted defect.
+func (*hashSum64PanicsDefect) Sum64(p0 []byte) (r0 uint64) {
+	panic("the planted defect of a Hash whose Sum64 panics")
+}
+
+// hashSum64Panics returns the planted defect of a Hash whose Sum64 panics
+// over a fresh subject.
+func hashSum64Panics(h *HashHandle) partition.Hash {
+	return &hashSum64PanicsDefect{hashOverEmbedded: h.Fresh()}
+}
+
+// hashSum64DriftsDefect is the planted defect of a Hash whose Sum64
+// returns another value on the repeat.
+type hashSum64DriftsDefect struct {
+	hashOverEmbedded
+	calls int
+}
+
+// Sum64 is the override of the planted defect.
+func (d *hashSum64DriftsDefect) Sum64(p0 []byte) (r0 uint64) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = uint64(7)
+	}
+	return r0
+}
+
+// hashSum64Drifts returns the planted defect of a Hash whose Sum64 returns
+// another value on the repeat over a fresh subject.
+func hashSum64Drifts(h *HashHandle) partition.Hash {
+	return &hashSum64DriftsDefect{hashOverEmbedded: h.Fresh()}
+}
+
+// hashVersionPanicsDefect is the planted defect of a Hash whose Version
+// panics.
+type hashVersionPanicsDefect struct {
+	hashOverEmbedded
+}
+
+// Version is the override of the planted defect.
+func (*hashVersionPanicsDefect) Version() (r0 uint32) {
+	panic("the planted defect of a Hash whose Version panics")
+}
+
+// hashVersionPanics returns the planted defect of a Hash whose Version
+// panics over a fresh subject.
+func hashVersionPanics(h *HashHandle) partition.Hash {
+	return &hashVersionPanicsDefect{hashOverEmbedded: h.Fresh()}
+}
+
+// hashVersionDriftsDefect is the planted defect of a Hash whose Version
+// returns another value on the repeat.
+type hashVersionDriftsDefect struct {
+	hashOverEmbedded
+	calls int
+}
+
+// Version is the override of the planted defect.
+func (d *hashVersionDriftsDefect) Version() (r0 uint32) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = uint32(7)
+	}
+	return r0
+}
+
+// hashVersionDrifts returns the planted defect of a Hash whose Version
+// returns another value on the repeat over a fresh subject.
+func hashVersionDrifts(h *HashHandle) partition.Hash {
+	return &hashVersionDriftsDefect{hashOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:404673a27fb6d75438ba36366551fb47fdb1cbe4bd0a32406363b8e36d6e4f0c

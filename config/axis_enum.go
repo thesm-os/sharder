@@ -139,4 +139,9 @@ func (v *Axis) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// dokimi:provenance sha256:49c5ad6fa980782fd3f1544244f3d16f396fd3f06d6b1ef87319068d46b6d98b
+// StrictKanon marks Axis as a kanon.Strict type. UnmarshalText accepts
+// only the texts that MarshalText writes. A canonical decode of kanon
+// therefore does not encode a decoded Axis again.
+func (Axis) StrictKanon() {}
+
+// dokimi:provenance sha256:78fb58176b6949816d9379922024ddf066448f258fa287a2f81bd0346f4a8560

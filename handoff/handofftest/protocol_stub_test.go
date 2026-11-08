@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/stub"
 	"go.thesmos.sh/sharder/handoff"
 	"go.thesmos.sh/sharder/handoff/handofftest"
@@ -69,13 +68,15 @@ func protocolStubScriptPins() (handoff.Script, error) {
 	return want0, want1
 }
 
-// protocolStubNameSubject returns the subject of [stub.Behaviour] for
-// Name. The subject calls a new double that reports to tb.
+// protocolStubNameSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Name. The subject calls a new double that
+// reports to tb.
 func protocolStubNameSubject(tb assert.TB) stub.Subject[handofftest.ProtocolNameCall, handofftest.ProtocolNameReturn] {
 	tb.Helper()
 	s := handofftest.NewProtocolStub(tb)
 	return stub.Subject[handofftest.ProtocolNameCall, handofftest.ProtocolNameReturn]{
-		Stub: s.OnName.MethodStub,
+		Stub:  s.OnName.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = protocolStubName(tb, s)
 		},
@@ -83,9 +84,14 @@ func protocolStubNameSubject(tb assert.TB) stub.Subject[handofftest.ProtocolName
 			got0 := protocolStubName(tb, s)
 			return handofftest.ProtocolNameReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() handofftest.ProtocolNameReturn {
+			want0 := protocolStubNamePins()
+			s.OnName.Returns(want0)
+			return handofftest.ProtocolNameReturn{Result: want0}
+		},
+		Override: func(seen func(handofftest.ProtocolNameCall)) {
 			s.OnName.Func(func() shard.StrategyName {
-				mark()
+				seen(handofftest.ProtocolNameCall{})
 				var z0 shard.StrategyName
 				return z0
 			})
@@ -93,15 +99,17 @@ func protocolStubNameSubject(tb assert.TB) stub.Subject[handofftest.ProtocolName
 	}
 }
 
-// protocolStubVersionSubject returns the subject of [stub.Behaviour] for
-// Version. The subject calls a new double that reports to tb.
+// protocolStubVersionSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Version. The subject calls a new double that
+// reports to tb.
 func protocolStubVersionSubject(
 	tb assert.TB,
 ) stub.Subject[handofftest.ProtocolVersionCall, handofftest.ProtocolVersionReturn] {
 	tb.Helper()
 	s := handofftest.NewProtocolStub(tb)
 	return stub.Subject[handofftest.ProtocolVersionCall, handofftest.ProtocolVersionReturn]{
-		Stub: s.OnVersion.MethodStub,
+		Stub:  s.OnVersion.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = protocolStubVersion(tb, s)
 		},
@@ -109,9 +117,14 @@ func protocolStubVersionSubject(
 			got0 := protocolStubVersion(tb, s)
 			return handofftest.ProtocolVersionReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() handofftest.ProtocolVersionReturn {
+			want0 := protocolStubVersionPins()
+			s.OnVersion.Returns(want0)
+			return handofftest.ProtocolVersionReturn{Result: want0}
+		},
+		Override: func(seen func(handofftest.ProtocolVersionCall)) {
 			s.OnVersion.Func(func() uint32 {
-				mark()
+				seen(handofftest.ProtocolVersionCall{})
 				var z0 uint32
 				return z0
 			})
@@ -119,25 +132,37 @@ func protocolStubVersionSubject(
 	}
 }
 
-// protocolStubScriptSubject returns the subject of [stub.Behaviour] for
-// Script. The subject calls a new double that reports to tb.
+// protocolStubScriptSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Script. The subject calls a new double that
+// reports to tb.
 func protocolStubScriptSubject(
 	tb assert.TB,
 ) stub.Subject[handofftest.ProtocolScriptCall, handofftest.ProtocolScriptReturn] {
 	tb.Helper()
 	s := handofftest.NewProtocolStub(tb)
 	return stub.Subject[handofftest.ProtocolScriptCall, handofftest.ProtocolScriptReturn]{
-		Stub: s.OnScript.MethodStub,
+		Stub:  s.OnScript.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = protocolStubScript(tb, s)
+		},
+		Arguments: func(tb assert.TB, c handofftest.ProtocolScriptCall) {
+			tb.Helper()
+			a0 := protocolStubScriptArgs(tb)
+			assert.Equal(tb, c.T, a0, "the call records T")
 		},
 		Result: func() handofftest.ProtocolScriptReturn {
 			got0, got1 := protocolStubScript(tb, s)
 			return handofftest.ProtocolScriptReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnScript.Func(func(_ handoff.Transfer) (handoff.Script, error) {
-				mark()
+		Returns: func() handofftest.ProtocolScriptReturn {
+			want0, want1 := protocolStubScriptPins()
+			s.OnScript.Returns(want0, want1)
+			return handofftest.ProtocolScriptReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(handofftest.ProtocolScriptCall)) {
+			s.OnScript.Func(func(p0 handoff.Transfer) (handoff.Script, error) {
+				seen(handofftest.ProtocolScriptCall{T: p0})
 				var z0 handoff.Script
 				var z1 error
 				return z0, z1
@@ -163,7 +188,6 @@ func protocolStubInstanceOf(tb assert.TB, s *handofftest.ProtocolStub) protocolS
 		Call: func() {
 			_ = protocolStubName(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -175,135 +199,34 @@ func TestProtocolStub(t *testing.T) {
 	t.Run("Name", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Name", protocolStubNameSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			var seen []handofftest.ProtocolNameCall
-			s.OnName.OnRecord(func(c handofftest.ProtocolNameCall) { seen = append(seen, c) })
-			_ = protocolStubName(t, s)
-			_ = protocolStubName(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Name")
-		})
 	})
 
 	t.Run("Version", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Version", protocolStubVersionSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			var seen []handofftest.ProtocolVersionCall
-			s.OnVersion.OnRecord(func(c handofftest.ProtocolVersionCall) { seen = append(seen, c) })
-			_ = protocolStubVersion(t, s)
-			_ = protocolStubVersion(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Version")
-		})
 	})
 
 	t.Run("Script", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Script", protocolStubScriptSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			_, _ = protocolStubScript(t, s)
-			got := s.OnScript.AssertCalledOnce(t, "Script records the call")
-			a0 := protocolStubScriptArgs(t)
-			assert.Equal(t, got.T, a0, "the call records T")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			var seen []handofftest.ProtocolScriptCall
-			s.OnScript.OnRecord(func(c handofftest.ProtocolScriptCall) { seen = append(seen, c) })
-			_, _ = protocolStubScript(t, s)
-			_, _ = protocolStubScript(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Script")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) protocolStubInstance {
-			return protocolStubInstanceOf(tb, handofftest.NewProtocolStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Name", func(t *testing.T) {
+		t.Run("Name", func(t *testing.T) {
 			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			_ = protocolStubName(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnName.CallCount(), 0, "ResetCalls clears the calls of Name")
+			stub.ResetBehaviour(t, "Name", protocolStubNameSubject)
 		})
 
-		t.Run("keeps the results of Returns of Name", func(t *testing.T) {
+		t.Run("Version", func(t *testing.T) {
 			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			want0 := protocolStubNamePins()
-			s.OnName.Returns(want0)
-			s.ResetCalls()
-			got0 := protocolStubName(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Name")
+			stub.ResetBehaviour(t, "Version", protocolStubVersionSubject)
 		})
 
-		t.Run("clears the recorded calls of Version", func(t *testing.T) {
+		t.Run("Script", func(t *testing.T) {
 			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			_ = protocolStubVersion(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnVersion.CallCount(), 0, "ResetCalls clears the calls of Version")
-		})
-
-		t.Run("keeps the results of Returns of Version", func(t *testing.T) {
-			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			want0 := protocolStubVersionPins()
-			s.OnVersion.Returns(want0)
-			s.ResetCalls()
-			got0 := protocolStubVersion(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Version")
-		})
-
-		t.Run("clears the recorded calls of Script", func(t *testing.T) {
-			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			_, _ = protocolStubScript(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnScript.CallCount(), 0, "ResetCalls clears the calls of Script")
-		})
-
-		t.Run("keeps the results of Returns of Script", func(t *testing.T) {
-			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			want0, want1 := protocolStubScriptPins()
-			s.OnScript.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := protocolStubScript(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Script")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Script")
-		})
-	})
-
-	t.Run("NewProtocolStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) protocolStubInstance {
-			return protocolStubInstanceOf(tb, handofftest.NewProtocolStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewProtocolStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Script with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Script-failing")
-			s := handofftest.NewProtocolStubFailing(t, want)
-			_, r1 := protocolStubScript(t, s)
-			assert.ErrorIs(t, r1, want, "Script fails with the error of NewProtocolStubFailing")
+			stub.ResetBehaviour(t, "Script", protocolStubScriptSubject)
 		})
 	})
 
@@ -455,115 +378,4 @@ func TestProtocolStub(t *testing.T) {
 	})
 }
 
-// TestProtocolNameStub checks the methods of ProtocolNameStub, which
-// configures Name.
-func TestProtocolNameStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Name", func(t *testing.T) {
-			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			want0 := protocolStubNamePins()
-			s.OnName.Returns(want0)
-			got0 := protocolStubName(t, s)
-			assert.Equal(t, got0, want0, "Name returns the Result that Returns sets")
-		})
-
-		t.Run("configures Name for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := handofftest.NewProtocolStub(r)
-			s.OnName.Strict()
-			var want0 shard.StrategyName
-			s.OnName.Returns(want0)
-			_ = protocolStubName(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Name")
-		})
-	})
-}
-
-// TestProtocolVersionStub checks the methods of ProtocolVersionStub, which
-// configures Version.
-func TestProtocolVersionStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Version", func(t *testing.T) {
-			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			want0 := protocolStubVersionPins()
-			s.OnVersion.Returns(want0)
-			got0 := protocolStubVersion(t, s)
-			assert.Equal(t, got0, want0, "Version returns the Result that Returns sets")
-		})
-
-		t.Run("configures Version for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := handofftest.NewProtocolStub(r)
-			s.OnVersion.Strict()
-			var want0 uint32
-			s.OnVersion.Returns(want0)
-			_ = protocolStubVersion(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Version")
-		})
-	})
-}
-
-// TestProtocolScriptStub checks the methods of ProtocolScriptStub, which
-// configures Script.
-func TestProtocolScriptStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Script", func(t *testing.T) {
-			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			want0, want1 := protocolStubScriptPins()
-			s.OnScript.Returns(want0, want1)
-			got0, got1 := protocolStubScript(t, s)
-			expect.Equal(t, got0, want0, "Script returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Script returns the error that Returns sets")
-		})
-
-		t.Run("configures Script for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := handofftest.NewProtocolStub(r)
-			s.OnScript.Strict()
-			var want0 handoff.Script
-			var want1 error
-			s.OnScript.Returns(want0, want1)
-			_, _ = protocolStubScript(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Script")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Script to the function", func(t *testing.T) {
-			t.Parallel()
-			s := handofftest.NewProtocolStub(t)
-			var got0 handoff.Transfer
-			s.OnScript.Func(func(p0 handoff.Transfer) (handoff.Script, error) {
-				got0 = p0
-				var z0 handoff.Script
-				var z1 error
-				return z0, z1
-			})
-			_, _ = protocolStubScript(t, s)
-			a0 := protocolStubScriptArgs(t)
-			assert.Equal(t, got0, a0, "the function receives T")
-		})
-	})
-}
-
-// dokimi:provenance sha256:d3ee2faf5239dabed7baa38b8cd61d7776dfa9805870378bc2545e76278112a4
+// dokimi:provenance sha256:1d71c31e83a179a7bd1db05580b8193de8515bbb2a4d32058a429bd8eb6394c0

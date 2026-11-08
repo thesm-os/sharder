@@ -43,25 +43,38 @@ func acquirerStubAcquirePins() error {
 	return want0
 }
 
-// acquirerStubAcquireSubject returns the subject of [stub.Behaviour] for
-// Acquire. The subject calls a new double that reports to tb.
+// acquirerStubAcquireSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Acquire. The subject calls a new double that
+// reports to tb.
 func acquirerStubAcquireSubject(
 	tb assert.TB,
 ) stub.Subject[fencetest.AcquirerAcquireCall, fencetest.AcquirerAcquireReturn] {
 	tb.Helper()
 	s := fencetest.NewAcquirerStub(tb)
 	return stub.Subject[fencetest.AcquirerAcquireCall, fencetest.AcquirerAcquireReturn]{
-		Stub: s.OnAcquire.MethodStub,
+		Stub:  s.OnAcquire.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = acquirerStubAcquire(tb, s)
+		},
+		Arguments: func(tb assert.TB, c fencetest.AcquirerAcquireCall) {
+			tb.Helper()
+			a0, a1 := acquirerStubAcquireArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.T, a1, "the call records T")
 		},
 		Result: func() fencetest.AcquirerAcquireReturn {
 			got0 := acquirerStubAcquire(tb, s)
 			return fencetest.AcquirerAcquireReturn{Err: got0}
 		},
-		Override: func(mark func()) {
-			s.OnAcquire.Func(func(_ context.Context, _ fence.Token) error {
-				mark()
+		Returns: func() fencetest.AcquirerAcquireReturn {
+			want0 := acquirerStubAcquirePins()
+			s.OnAcquire.Returns(want0)
+			return fencetest.AcquirerAcquireReturn{Err: want0}
+		},
+		Override: func(seen func(fencetest.AcquirerAcquireCall)) {
+			s.OnAcquire.Func(func(p0 context.Context, p1 fence.Token) error {
+				seen(fencetest.AcquirerAcquireCall{Ctx: p0, T: p1})
 				var z0 error
 				return z0
 			})
@@ -86,7 +99,6 @@ func acquirerStubInstanceOf(tb assert.TB, s *fencetest.AcquirerStub) acquirerStu
 		Call: func() {
 			_ = acquirerStubAcquire(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -98,69 +110,14 @@ func TestAcquirerStub(t *testing.T) {
 	t.Run("Acquire", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Acquire", acquirerStubAcquireSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := fencetest.NewAcquirerStub(t)
-			_ = acquirerStubAcquire(t, s)
-			got := s.OnAcquire.AssertCalledOnce(t, "Acquire records the call")
-			a0, a1 := acquirerStubAcquireArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.T, a1, "the call records T")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := fencetest.NewAcquirerStub(t)
-			var seen []fencetest.AcquirerAcquireCall
-			s.OnAcquire.OnRecord(func(c fencetest.AcquirerAcquireCall) { seen = append(seen, c) })
-			_ = acquirerStubAcquire(t, s)
-			_ = acquirerStubAcquire(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Acquire")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) acquirerStubInstance {
-			return acquirerStubInstanceOf(tb, fencetest.NewAcquirerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Acquire", func(t *testing.T) {
+		t.Run("Acquire", func(t *testing.T) {
 			t.Parallel()
-			s := fencetest.NewAcquirerStub(t)
-			_ = acquirerStubAcquire(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnAcquire.CallCount(), 0, "ResetCalls clears the calls of Acquire")
-		})
-
-		t.Run("keeps the results of Returns of Acquire", func(t *testing.T) {
-			t.Parallel()
-			s := fencetest.NewAcquirerStub(t)
-			want0 := acquirerStubAcquirePins()
-			s.OnAcquire.Returns(want0)
-			s.ResetCalls()
-			got0 := acquirerStubAcquire(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of Acquire")
-		})
-	})
-
-	t.Run("NewAcquirerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) acquirerStubInstance {
-			return acquirerStubInstanceOf(tb, fencetest.NewAcquirerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewAcquirerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Acquire with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Acquire-failing")
-			s := fencetest.NewAcquirerStubFailing(t, want)
-			r0 := acquirerStubAcquire(t, s)
-			assert.ErrorIs(t, r0, want, "Acquire fails with the error of NewAcquirerStubFailing")
+			stub.ResetBehaviour(t, "Acquire", acquirerStubAcquireSubject)
 		})
 	})
 
@@ -265,49 +222,26 @@ func TestAcquirerStub(t *testing.T) {
 func TestAcquirerAcquireStub(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Returns", func(t *testing.T) {
+	t.Run("FaultDeadlineExceeded", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("sets the results of each call of Acquire", func(t *testing.T) {
+		t.Run("fails the next call of Acquire with DeadlineExceeded", func(t *testing.T) {
 			t.Parallel()
 			s := fencetest.NewAcquirerStub(t)
-			want0 := acquirerStubAcquirePins()
-			s.OnAcquire.Returns(want0)
-			got0 := acquirerStubAcquire(t, s)
-			assert.ErrorIs(t, got0, want0, "Acquire returns the error that Returns sets")
+			s.OnAcquire.FaultDeadlineExceeded()
+			r0 := acquirerStubAcquire(t, s)
+			assert.ErrorIs(t, r0, context.DeadlineExceeded, "the next call of Acquire fails with DeadlineExceeded")
 		})
 
-		t.Run("configures Acquire for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := fencetest.NewAcquirerStub(r)
-			s.OnAcquire.Strict()
-			var want0 error
-			s.OnAcquire.Returns(want0)
-			_ = acquirerStubAcquire(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Acquire")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Acquire to the function", func(t *testing.T) {
+		t.Run("spares the call after the failed call", func(t *testing.T) {
 			t.Parallel()
 			s := fencetest.NewAcquirerStub(t)
-			var got0 context.Context
-			var got1 fence.Token
-			s.OnAcquire.Func(func(p0 context.Context, p1 fence.Token) error {
-				got0, got1 = p0, p1
-				var z0 error
-				return z0
-			})
+			s.OnAcquire.FaultDeadlineExceeded()
 			_ = acquirerStubAcquire(t, s)
-			a0, a1 := acquirerStubAcquireArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives T")
+			r0 := acquirerStubAcquire(t, s)
+			assert.NoError(t, r0, "the call of Acquire after the failed call succeeds")
 		})
 	})
 }
 
-// dokimi:provenance sha256:9e45fc17d5ad48f5c0e62eda4a498312fe65db98191ea314ae94590dc7eed6d7
+// dokimi:provenance sha256:94dbf68b4f110e2e969cd7db2d60e64000e8e8bfefd3fb98bb3d602e4939bc24

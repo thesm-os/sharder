@@ -17,7 +17,14 @@ import (
 func TestPartitionerConformsToPartitioner(t *testing.T) {
 	t.Parallel()
 
-	partitiontest.RunPartitionerSuite(t, newPartitioner)
+	partitiontest.RunPartitionerSuite(
+		t,
+		newPartitioner,
+		conform.Excuse(
+			partitiontest.PartitionerChecks.Initial.ZeroOnError(),
+			"Initial returns one span of the range for every range, and no error",
+		),
+	)
 }
 
 // TestPartitionerConformsToPartitionerAllocs applies the allocation
@@ -33,6 +40,10 @@ func TestPartitionerConformsToPartitionerAllocs(t *testing.T) {
 				Allocs: new(uint64(0)),
 			},
 		),
+		conform.Excuse(
+			partitiontest.PartitionerChecks.Initial.ZeroOnError(),
+			"Initial returns one span of the range for every range, and no error",
+		),
 	)
 }
 
@@ -45,6 +56,10 @@ func BenchmarkPartitionerConformsToPartitioner(b *testing.B) {
 			conform.Budget{
 				Allocs: new(uint64(0)),
 			},
+		),
+		conform.Excuse(
+			partitiontest.PartitionerChecks.Initial.ZeroOnError(),
+			"Initial returns one span of the range for every range, and no error",
 		),
 	}
 	b.Run("Position", func(b *testing.B) {
@@ -77,6 +92,10 @@ func FuzzPartitionerConformsToPartitionerPosition(f *testing.F) {
 		f,
 		partitiontest.PartitionerChecks.Position.Callable,
 		func(*partitiontest.PartitionerHandle) singleton.Partitioner { return newPartitioner() },
+		conform.Excuse(
+			partitiontest.PartitionerChecks.Initial.ZeroOnError(),
+			"Initial returns one span of the range for every range, and no error",
+		),
 	)
 }
 
@@ -87,6 +106,10 @@ func FuzzPartitionerConformsToPartitionerMapping(f *testing.F) {
 		f,
 		partitiontest.PartitionerChecks.Mapping.Callable,
 		func(*partitiontest.PartitionerHandle) singleton.Partitioner { return newPartitioner() },
+		conform.Excuse(
+			partitiontest.PartitionerChecks.Initial.ZeroOnError(),
+			"Initial returns one span of the range for every range, and no error",
+		),
 	)
 }
 
@@ -97,7 +120,11 @@ func FuzzPartitionerConformsToPartitionerInitial(f *testing.F) {
 		f,
 		partitiontest.PartitionerChecks.Initial.Callable,
 		func(*partitiontest.PartitionerHandle) singleton.Partitioner { return newPartitioner() },
+		conform.Excuse(
+			partitiontest.PartitionerChecks.Initial.ZeroOnError(),
+			"Initial returns one span of the range for every range, and no error",
+		),
 	)
 }
 
-// dokimi:provenance sha256:229b780fe553dc3c261282ab373aa88aa6665ec55742a1e061d08731595c1880
+// dokimi:provenance sha256:42c086f623b99117eef61c732c3bbf5b0e354bebfabcfc7cf683790a94fc2f8d

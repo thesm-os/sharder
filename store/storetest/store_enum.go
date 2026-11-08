@@ -88,4 +88,9 @@ func (v *Loss) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// dokimi:provenance sha256:654633a4e7ffbc3fa04a9c0e74e3d78425d3b14196eb022384ab7ec28b9c0f8a
+// StrictKanon marks Loss as a kanon.Strict type. UnmarshalText accepts
+// only the texts that MarshalText writes. A canonical decode of kanon
+// therefore does not encode a decoded Loss again.
+func (Loss) StrictKanon() {}
+
+// dokimi:provenance sha256:3bf02df39da8ce1246cb8c6eb089fab604d4e7bde9be5c35f8d0bc274f9b695d

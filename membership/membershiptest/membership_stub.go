@@ -13,6 +13,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/stub"
 	"go.thesmos.sh/core/epoch"
+	"go.thesmos.sh/core/version"
 	"go.thesmos.sh/sharder/membership"
 	"go.thesmos.sh/sharder/ownership"
 	"go.thesmos.sh/sharder/shard"
@@ -236,21 +237,6 @@ func NewSessionStub(tb assert.TB, opts ...SessionStubOption) *SessionStub {
 	return s
 }
 
-// NewSessionStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewSessionStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...SessionStubOption) *SessionStub {
-	return NewSessionStub(tb, append([]SessionStubOption{
-		SessionStubWithClock(clk),
-		SessionStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewSessionStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewSessionStubFailing(tb assert.TB, err error, opts ...SessionStubOption) *SessionStub {
-	return NewSessionStub(tb, append([]SessionStubOption{SessionStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *SessionStub) ResetCalls() {
@@ -386,6 +372,13 @@ func (s *MembershipJoinStub) Func(
 	fn func(context.Context, shard.Scope, shard.NamespaceIncarnation, *shard.Node, ownership.Lease) (membership.Session, error),
 ) *MembershipJoinStub {
 	s.fn = fn
+	return s
+}
+
+// FaultOutcomeUnknown makes the next call of Join fail with
+// ErrOutcomeUnknown. The calls after it succeed.
+func (s *MembershipJoinStub) FaultOutcomeUnknown() *MembershipJoinStub {
+	s.FaultsOnce(version.ErrOutcomeUnknown)
 	return s
 }
 
@@ -561,26 +554,6 @@ func NewMembershipStub(tb assert.TB, opts ...MembershipStubOption) *MembershipSt
 	return s
 }
 
-// NewMembershipStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewMembershipStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...MembershipStubOption,
-) *MembershipStub {
-	return NewMembershipStub(tb, append([]MembershipStubOption{
-		MembershipStubWithClock(clk),
-		MembershipStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewMembershipStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewMembershipStubFailing(tb assert.TB, err error, opts ...MembershipStubOption) *MembershipStub {
-	return NewMembershipStub(tb, append([]MembershipStubOption{MembershipStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *MembershipStub) ResetCalls() {
@@ -663,4 +636,4 @@ func (s0 *MembershipStub) Watch(
 	return r.Result
 }
 
-// dokimi:provenance sha256:3c413c0933e5bc3e59e4d6d7482de4ab61bfb524e689ad9b9bc17021548858f8
+// dokimi:provenance sha256:27e4d73f5f63274b9d95494bb60493f505b2a4c619be94d4ebd5d8eea919bba9

@@ -11,6 +11,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/id"
@@ -101,6 +103,18 @@ func (c storeOutcome) ReceiptsEndWithTheirIncarnation() conform.ID[store.Store] 
 	return c.Check("receipts-end-with-their-incarnation")
 }
 
+// Smoke returns the identity of the check that Outcome returns without a
+// panic for derived inputs.
+func (c storeOutcome) Smoke() conform.ID[store.Store] {
+	return c.Check("smoke")
+}
+
+// Cancel returns the identity of the check that Outcome returns an error
+// for a cancelled context.
+func (c storeOutcome) Cancel() conform.ID[store.Store] {
+	return c.Check("cancel")
+}
+
 // storeCampaign is the name of Store.Campaign, with the identities of its
 // checks.
 type storeCampaign struct {
@@ -137,10 +151,28 @@ func (c storeCampaign) TermsExceedTheWatermark() conform.ID[store.Store] {
 	return c.Check("terms-exceed-the-watermark")
 }
 
+// Cancel returns the identity of the check that Campaign returns an error
+// for a cancelled context.
+func (c storeCampaign) Cancel() conform.ID[store.Store] {
+	return c.Check("cancel")
+}
+
 // storeLimits is the name of Store.Limits, with the identities of its
 // checks.
 type storeLimits struct {
 	conform.Callable[store.Store]
+}
+
+// Smoke returns the identity of the check that Limits returns without a
+// panic for derived inputs.
+func (c storeLimits) Smoke() conform.ID[store.Store] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Limits returns the
+// same value for the same inputs.
+func (c storeLimits) Deterministic() conform.ID[store.Store] {
+	return c.Check("deterministic")
 }
 
 // storeFits is the name of Store.Fits, with the identities of its checks.
@@ -155,6 +187,12 @@ func (c storeFits) FitsMatchesCommit() conform.ID[store.Store] {
 	return c.Check("fits-matches-commit")
 }
 
+// Smoke returns the identity of the check that Fits returns without a
+// panic for derived inputs.
+func (c storeFits) Smoke() conform.ID[store.Store] {
+	return c.Check("smoke")
+}
+
 // storeClose is the name of Store.Close, with the identities of its
 // checks.
 type storeClose struct {
@@ -167,6 +205,12 @@ func (c storeClose) CloseEndsWatchesAndTerms() conform.ID[store.Store] {
 	return c.Check("close-ends-watches-and-terms")
 }
 
+// Smoke returns the identity of the check that Close returns without a
+// panic for derived inputs.
+func (c storeClose) Smoke() conform.ID[store.Store] {
+	return c.Check("smoke")
+}
+
 // storeHead is the name of Store.Head, with the identities of its checks.
 type storeHead struct {
 	conform.Callable[store.Store]
@@ -177,6 +221,24 @@ type storeHead struct {
 // of its namespace has commits.
 func (c storeHead) HeadsStartAtZero() conform.ID[store.Store] {
 	return c.Check("heads-start-at-zero")
+}
+
+// Smoke returns the identity of the check that Head returns without a
+// panic for derived inputs.
+func (c storeHead) Smoke() conform.ID[store.Store] {
+	return c.Check("smoke")
+}
+
+// Cancel returns the identity of the check that Head returns an error for
+// a cancelled context.
+func (c storeHead) Cancel() conform.ID[store.Store] {
+	return c.Check("cancel")
+}
+
+// ZeroOnError returns the identity of the check that Head returns the zero
+// value beside an error.
+func (c storeHead) ZeroOnError() conform.ID[store.Store] {
+	return c.Check("zero-on-error")
 }
 
 // storeRead is the name of Store.Read, with the identities of its checks.
@@ -308,7 +370,274 @@ func (c storeWatch) WatchesYieldEachGenerationOnce() conform.ID[store.Store] {
 func StoreSuite() conform.Suite[store.Store] {
 	return conform.Suite[store.Store]{
 		Declaration: "Store",
+		Package:     "go.thesmos.sh/sharder/store",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[store.Store]{
+			{
+				ID:          StoreChecks.Outcome.Smoke(),
+				Statement:   "Outcome returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StoreHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, _, err := h.Subject().
+							Outcome(ctx, shard.Scope{Namespace: shard.Namespace("Namespace-a")}, store.CommitID{Term: epoch.Epoch(42)})
+						return err
+					})
+				},
+				Defect: storeOutcomePanics,
+			},
+			{
+				ID:          StoreChecks.Outcome.Smoke().Generated(),
+				Statement:   "Outcome returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnS := c.Draw(prop.Of[shard.Scope](), "s")
+					drawnID := c.Draw(prop.Of[store.CommitID](), "id")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, _, err := h.Subject().Outcome(ctx, drawnS, drawnID)
+						return err
+					})
+				},
+				Defect: storeOutcomePanics,
+			},
+			{
+				ID:          StoreChecks.Outcome.Cancel(),
+				Statement:   "Outcome returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *StoreHandle) {
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, _, err := h.Subject().
+							Outcome(ctx, shard.Scope{Namespace: shard.Namespace("Namespace-a")}, store.CommitID{Term: epoch.Epoch(42)})
+						return err
+					})
+				},
+				Defect: storeOutcomeIgnoresCancel,
+			},
+			{
+				ID:          StoreChecks.Outcome.Cancel().Generated(),
+				Statement:   "Outcome returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnS := c.Draw(prop.Of[shard.Scope](), "s")
+					drawnID := c.Draw(prop.Of[store.CommitID](), "id")
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, _, err := h.Subject().Outcome(ctx, drawnS, drawnID)
+						return err
+					})
+				},
+				Defect: storeOutcomeIgnoresCancel,
+			},
+			{
+				ID:          StoreChecks.Campaign.Cancel(),
+				Statement:   "Campaign returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *StoreHandle) {
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().Campaign(ctx, shard.Scope{Namespace: shard.Namespace("Namespace-a")})
+						return err
+					})
+				},
+				Defect: storeCampaignIgnoresCancel,
+			},
+			{
+				ID:          StoreChecks.Campaign.Cancel().Generated(),
+				Statement:   "Campaign returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnS := c.Draw(prop.Of[shard.Scope](), "s")
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().Campaign(ctx, drawnS)
+						return err
+					})
+				},
+				Defect: storeCampaignIgnoresCancel,
+			},
+			{
+				ID:          StoreChecks.Limits.Smoke(),
+				Statement:   "Limits returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StoreHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Limits(shard.Scope{Namespace: shard.Namespace("Namespace-a")})
+						return nil
+					})
+				},
+				Defect: storeLimitsPanics,
+			},
+			{
+				ID:          StoreChecks.Limits.Smoke().Generated(),
+				Statement:   "Limits returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnS := c.Draw(prop.Of[shard.Scope](), "s")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Limits(drawnS)
+						return nil
+					})
+				},
+				Defect: storeLimitsPanics,
+			},
+			{
+				ID:          StoreChecks.Limits.Deterministic(),
+				Statement:   "Limits returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[store.Store]{StoreChecks.Limits.Smoke()},
+				Apply: func(h *StoreHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (store.Limits, error) {
+						r0 := h.Subject().Limits(shard.Scope{Namespace: shard.Namespace("Namespace-a")})
+						return r0, nil
+					})
+				},
+				Defect: storeLimitsDrifts,
+			},
+			{
+				ID:          StoreChecks.Limits.Deterministic().Generated(),
+				Statement:   "Limits returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[store.Store]{StoreChecks.Limits.Smoke().Generated()},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnS := c.Draw(prop.Of[shard.Scope](), "s")
+					probe.RepeatAgrees(h, func(ctx context.Context) (store.Limits, error) {
+						r0 := h.Subject().Limits(drawnS)
+						return r0, nil
+					})
+				},
+				Defect: storeLimitsDrifts,
+			},
+			{
+				ID:          StoreChecks.Fits.Smoke(),
+				Statement:   "Fits returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StoreHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						return h.Subject().
+							Fits(shard.Scope{Namespace: shard.Namespace("Namespace-a")}, &store.Mutation{Cell: &shard.Cell{ID: shard.CellID("ID-a")}})
+					})
+				},
+				Defect: storeFitsPanics,
+			},
+			{
+				ID:          StoreChecks.Fits.Smoke().Generated(),
+				Statement:   "Fits returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnS := c.Draw(prop.Of[shard.Scope](), "s")
+					drawnM := c.Draw(prop.Of[store.Mutation](), "m")
+					probe.Survives(h, func(ctx context.Context) error {
+						return h.Subject().Fits(drawnS, &drawnM)
+					})
+				},
+				Defect: storeFitsPanics,
+			},
+			{
+				ID:          StoreChecks.Close.Smoke(),
+				Statement:   "Close returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StoreHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						return h.Subject().Close()
+					})
+				},
+				Defect: storeClosePanics,
+			},
+			{
+				ID:          StoreChecks.Head.Smoke(),
+				Statement:   "Head returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StoreHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Head(ctx, shard.Scope{Namespace: shard.Namespace("Namespace-a")})
+						return err
+					})
+				},
+				Defect: storeHeadPanics,
+			},
+			{
+				ID:          StoreChecks.Head.Smoke().Generated(),
+				Statement:   "Head returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnS := c.Draw(prop.Of[shard.Scope](), "s")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Head(ctx, drawnS)
+						return err
+					})
+				},
+				Defect: storeHeadPanics,
+			},
+			{
+				ID:          StoreChecks.Head.Cancel(),
+				Statement:   "Head returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *StoreHandle) {
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().Head(ctx, shard.Scope{Namespace: shard.Namespace("Namespace-a")})
+						return err
+					})
+				},
+				Defect: storeHeadIgnoresCancel,
+			},
+			{
+				ID:          StoreChecks.Head.Cancel().Generated(),
+				Statement:   "Head returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnS := c.Draw(prop.Of[shard.Scope](), "s")
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().Head(ctx, drawnS)
+						return err
+					})
+				},
+				Defect: storeHeadIgnoresCancel,
+			},
+			{
+				ID:          StoreChecks.Head.ZeroOnError(),
+				Statement:   "Head returns the zero value beside an error",
+				Claim:       spec.ZeroOnError,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *StoreHandle) {
+					probe.ZeroBesideError(h, func(ctx context.Context) (store.Head, error) {
+						return h.Subject().Head(ctx, shard.Scope{Namespace: shard.Namespace("Namespace-a")})
+					}, store.Head{})
+				},
+				Defect: storeHeadValueBeside,
+			},
+			{
+				ID:          StoreChecks.Head.ZeroOnError().Generated(),
+				Statement:   "Head returns the zero value beside an error",
+				Claim:       spec.ZeroOnError,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnS := c.Draw(prop.Of[shard.Scope](), "s")
+					probe.ZeroBesideError(h, func(ctx context.Context) (store.Head, error) {
+						return h.Subject().Head(ctx, drawnS)
+					}, store.Head{})
+				},
+				Defect: storeHeadValueBeside,
+			},
 			{
 				ID:        StoreChecks.Writer.CommitsRefuseUnencodableMutations(),
 				Statement: "Commit returns the error of the encoding of a mutation that does not encode, and leaves the scope unchanged",
@@ -490,6 +819,56 @@ func StoreSuite() conform.Suite[store.Store] {
 				Statement: "Watch yields each later generation once, in order, with its whole mutation",
 				Property:  WatchesYieldEachGenerationOnce,
 				Defect:    yieldsHistoryWithoutSpecs,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Store.Writer",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Writer",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.ZeroOnError,
+				Callable: "Store.Campaign",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Campaign",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.Cancel,
+				Callable: "Store.Read",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter inc of Read",
+				Remedy:   "author a sample of the parameter inc with the directive sample",
+			},
+			{
+				Claim:    spec.Cancel,
+				Callable: "Store.Watch",
+				Gate:     spec.Failure,
+				Why:      "Watch cannot fail",
+				Remedy:   "give Watch an error result",
+			},
+		},
+		Unclaimed: []conform.Unclaimed{
+			{
+				Classification: "mixin:waits",
+				Callable:       "Store.Campaign",
+				Stance:         spec.Silent,
+				Note:           "The mixin documents that the callable can wait for another call.",
+			},
+			{
+				Classification: "shape:composite-writer",
+				Callable:       "Store.Fits",
+				Stance:         spec.Silent,
+				Note:           "A write is an input of the other checks, and its result is an error alone.",
+			},
+			{
+				Classification: "shape:closer",
+				Callable:       "Store.Close",
+				Stance:         spec.Silent,
+				Note:           "A close returns nothing that a check could compare.",
 			},
 		},
 		Calls: []conform.Call[store.Store]{
@@ -868,4 +1247,203 @@ func newStoreOver(_ *StoreHandle, spend func()) store.Store {
 	return storeOver{spend: spend}
 }
 
-// dokimi:provenance sha256:2a590cf79f0af586e6a180e7209ad5e0dd8293a260eddc8a5a5b7890f887a89e
+// storeOutcomePanicsDefect is the planted defect of a Store whose Outcome
+// panics.
+type storeOutcomePanicsDefect struct {
+	storeOverEmbedded
+}
+
+// Outcome is the override of the planted defect.
+func (*storeOutcomePanicsDefect) Outcome(
+	p0 context.Context,
+	p1 shard.Scope,
+	p2 store.CommitID,
+) (r0 store.Receipt, r1 bool, r2 error) {
+	panic("the planted defect of a Store whose Outcome panics")
+}
+
+// storeOutcomePanics returns the planted defect of a Store whose Outcome
+// panics over a fresh subject.
+func storeOutcomePanics(h *StoreHandle) store.Store {
+	return &storeOutcomePanicsDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeOutcomeIgnoresCancelDefect is the planted defect of a Store whose
+// Outcome ignores the context.
+type storeOutcomeIgnoresCancelDefect struct {
+	storeOverEmbedded
+}
+
+// Outcome is the override of the planted defect.
+func (d *storeOutcomeIgnoresCancelDefect) Outcome(
+	p0 context.Context,
+	p1 shard.Scope,
+	p2 store.CommitID,
+) (r0 store.Receipt, r1 bool, r2 error) {
+	if p0.Err() != nil {
+		return r0, r1, r2
+	}
+	return d.storeOverEmbedded.Outcome(p0, p1, p2)
+}
+
+// storeOutcomeIgnoresCancel returns the planted defect of a Store whose
+// Outcome ignores the context over a fresh subject.
+func storeOutcomeIgnoresCancel(h *StoreHandle) store.Store {
+	return &storeOutcomeIgnoresCancelDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeCampaignIgnoresCancelDefect is the planted defect of a Store whose
+// Campaign ignores the context.
+type storeCampaignIgnoresCancelDefect struct {
+	storeOverEmbedded
+}
+
+// Campaign is the override of the planted defect.
+func (d *storeCampaignIgnoresCancelDefect) Campaign(
+	p0 context.Context,
+	p1 shard.Scope,
+) (r0 store.Leadership, r1 error) {
+	if p0.Err() != nil {
+		return r0, r1
+	}
+	return d.storeOverEmbedded.Campaign(p0, p1)
+}
+
+// storeCampaignIgnoresCancel returns the planted defect of a Store whose
+// Campaign ignores the context over a fresh subject.
+func storeCampaignIgnoresCancel(h *StoreHandle) store.Store {
+	return &storeCampaignIgnoresCancelDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeLimitsPanicsDefect is the planted defect of a Store whose Limits
+// panics.
+type storeLimitsPanicsDefect struct {
+	storeOverEmbedded
+}
+
+// Limits is the override of the planted defect.
+func (*storeLimitsPanicsDefect) Limits(p0 shard.Scope) (r0 store.Limits) {
+	panic("the planted defect of a Store whose Limits panics")
+}
+
+// storeLimitsPanics returns the planted defect of a Store whose Limits
+// panics over a fresh subject.
+func storeLimitsPanics(h *StoreHandle) store.Store {
+	return &storeLimitsPanicsDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeLimitsDriftsDefect is the planted defect of a Store whose Limits
+// returns another value on the repeat.
+type storeLimitsDriftsDefect struct {
+	storeOverEmbedded
+	calls int
+}
+
+// Limits is the override of the planted defect.
+func (d *storeLimitsDriftsDefect) Limits(p0 shard.Scope) (r0 store.Limits) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = store.Limits{MaxPlacements: 7}
+	}
+	return r0
+}
+
+// storeLimitsDrifts returns the planted defect of a Store whose Limits
+// returns another value on the repeat over a fresh subject.
+func storeLimitsDrifts(h *StoreHandle) store.Store {
+	return &storeLimitsDriftsDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeFitsPanicsDefect is the planted defect of a Store whose Fits
+// panics.
+type storeFitsPanicsDefect struct {
+	storeOverEmbedded
+}
+
+// Fits is the override of the planted defect.
+func (*storeFitsPanicsDefect) Fits(p0 shard.Scope, p1 *store.Mutation) (r0 error) {
+	panic("the planted defect of a Store whose Fits panics")
+}
+
+// storeFitsPanics returns the planted defect of a Store whose Fits panics
+// over a fresh subject.
+func storeFitsPanics(h *StoreHandle) store.Store {
+	return &storeFitsPanicsDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeClosePanicsDefect is the planted defect of a Store whose Close
+// panics.
+type storeClosePanicsDefect struct {
+	storeOverEmbedded
+}
+
+// Close is the override of the planted defect.
+func (*storeClosePanicsDefect) Close() (r0 error) {
+	panic("the planted defect of a Store whose Close panics")
+}
+
+// storeClosePanics returns the planted defect of a Store whose Close
+// panics over a fresh subject.
+func storeClosePanics(h *StoreHandle) store.Store {
+	return &storeClosePanicsDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeHeadPanicsDefect is the planted defect of a Store whose Head
+// panics.
+type storeHeadPanicsDefect struct {
+	storeOverEmbedded
+}
+
+// Head is the override of the planted defect.
+func (*storeHeadPanicsDefect) Head(p0 context.Context, p1 shard.Scope) (r0 store.Head, r1 error) {
+	panic("the planted defect of a Store whose Head panics")
+}
+
+// storeHeadPanics returns the planted defect of a Store whose Head panics
+// over a fresh subject.
+func storeHeadPanics(h *StoreHandle) store.Store {
+	return &storeHeadPanicsDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeHeadIgnoresCancelDefect is the planted defect of a Store whose Head
+// ignores the context.
+type storeHeadIgnoresCancelDefect struct {
+	storeOverEmbedded
+}
+
+// Head is the override of the planted defect.
+func (d *storeHeadIgnoresCancelDefect) Head(p0 context.Context, p1 shard.Scope) (r0 store.Head, r1 error) {
+	if p0.Err() != nil {
+		return r0, r1
+	}
+	return d.storeOverEmbedded.Head(p0, p1)
+}
+
+// storeHeadIgnoresCancel returns the planted defect of a Store whose Head
+// ignores the context over a fresh subject.
+func storeHeadIgnoresCancel(h *StoreHandle) store.Store {
+	return &storeHeadIgnoresCancelDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeHeadValueBesideDefect is the planted defect of a Store whose Head
+// returns a value beside an error.
+type storeHeadValueBesideDefect struct {
+	storeOverEmbedded
+}
+
+// Head is the override of the planted defect.
+func (d *storeHeadValueBesideDefect) Head(p0 context.Context, p1 shard.Scope) (r0 store.Head, r1 error) {
+	r0, r1 = d.storeOverEmbedded.Head(p0, p1)
+	if r1 != nil {
+		r0 = store.Head{Generation: epoch.Epoch(7)}
+	}
+	return r0, r1
+}
+
+// storeHeadValueBeside returns the planted defect of a Store whose Head
+// returns a value beside an error over a fresh subject.
+func storeHeadValueBeside(h *StoreHandle) store.Store {
+	return &storeHeadValueBesideDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:36ce2cd3a43c7764464e5e4ddc780453d08d353a01d63859dd6112a6617bfdaf

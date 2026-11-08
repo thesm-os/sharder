@@ -148,21 +148,6 @@ func NewOpenerStub(tb assert.TB, opts ...OpenerStubOption) *OpenerStub {
 	return s
 }
 
-// NewOpenerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewOpenerStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...OpenerStubOption) *OpenerStub {
-	return NewOpenerStub(tb, append([]OpenerStubOption{
-		OpenerStubWithClock(clk),
-		OpenerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewOpenerStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewOpenerStubFailing(tb assert.TB, err error, opts ...OpenerStubOption) *OpenerStub {
-	return NewOpenerStub(tb, append([]OpenerStubOption{OpenerStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *OpenerStub) ResetCalls() {
@@ -198,4 +183,4 @@ func (s *OpenerStub) Open(ctx context.Context, req *replica.OpenRequest) (replic
 	return r.Result, r.Err
 }
 
-// dokimi:provenance sha256:4f877b25e1572110c02508520911d0134feed6092fdeaa7eb062e9297e44925b
+// dokimi:provenance sha256:985dac909038813adc60f389c9a090ce7e441d61db52f623f2b5b6c139c5b401

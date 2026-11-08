@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/tag"
 	"go.thesmos.sh/sharder/partition"
 	"go.thesmos.sh/sharder/placement"
@@ -139,6 +141,12 @@ type stateShards struct {
 	conform.Callable[StateMethods]
 }
 
+// Smoke returns the identity of the check that Shards returns without a
+// panic for derived inputs.
+func (c stateShards) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
 // AllocationBudget returns the identity of the check
 // State.Shards/allocation-budget.
 func (c stateShards) AllocationBudget() conform.ID[StateMethods] {
@@ -175,6 +183,18 @@ type stateReplicasAt struct {
 	conform.Callable[StateMethods]
 }
 
+// Smoke returns the identity of the check that ReplicasAt returns without
+// a panic for derived inputs.
+func (c stateReplicasAt) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that ReplicasAt returns
+// the same value for the same inputs.
+func (c stateReplicasAt) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
+}
+
 // AllocationBudget returns the identity of the check
 // State.ReplicasAt/allocation-budget.
 func (c stateReplicasAt) AllocationBudget() conform.ID[StateMethods] {
@@ -197,6 +217,18 @@ func (c stateInitial) AllocationBudget() conform.ID[StateMethods] {
 // its checks.
 type stateInitialAt struct {
 	conform.Callable[StateMethods]
+}
+
+// Smoke returns the identity of the check that InitialAt returns without a
+// panic for derived inputs.
+func (c stateInitialAt) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that InitialAt returns
+// the same value for the same inputs.
+func (c stateInitialAt) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
 }
 
 // AllocationBudget returns the identity of the check
@@ -235,6 +267,18 @@ type stateDesired struct {
 	conform.Callable[StateMethods]
 }
 
+// Smoke returns the identity of the check that Desired returns without a
+// panic for derived inputs.
+func (c stateDesired) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Desired returns the
+// same value for the same inputs.
+func (c stateDesired) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
+}
+
 // AllocationBudget returns the identity of the check
 // State.Desired/allocation-budget.
 func (c stateDesired) AllocationBudget() conform.ID[StateMethods] {
@@ -244,6 +288,18 @@ func (c stateDesired) AllocationBudget() conform.ID[StateMethods] {
 // stateMax is the name of State.Max, with the identities of its checks.
 type stateMax struct {
 	conform.Callable[StateMethods]
+}
+
+// Smoke returns the identity of the check that Max returns without a panic
+// for derived inputs.
+func (c stateMax) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Max returns the
+// same value for the same inputs.
+func (c stateMax) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
 }
 
 // AllocationBudget returns the identity of the check
@@ -258,6 +314,18 @@ type stateNodes struct {
 	conform.Callable[StateMethods]
 }
 
+// Smoke returns the identity of the check that Nodes returns without a
+// panic for derived inputs.
+func (c stateNodes) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Nodes returns the
+// same value for the same inputs.
+func (c stateNodes) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
+}
+
 // AllocationBudget returns the identity of the check
 // State.Nodes/allocation-budget.
 func (c stateNodes) AllocationBudget() conform.ID[StateMethods] {
@@ -267,6 +335,18 @@ func (c stateNodes) AllocationBudget() conform.ID[StateMethods] {
 // stateNode is the name of State.Node, with the identities of its checks.
 type stateNode struct {
 	conform.Callable[StateMethods]
+}
+
+// Smoke returns the identity of the check that Node returns without a
+// panic for derived inputs.
+func (c stateNode) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// ZeroOnMiss returns the identity of the check that Node returns the zero
+// value beside a false presence flag.
+func (c stateNode) ZeroOnMiss() conform.ID[StateMethods] {
+	return c.Check("zero-on-miss")
 }
 
 // AllocationBudget returns the identity of the check
@@ -281,6 +361,18 @@ type stateDraining struct {
 	conform.Callable[StateMethods]
 }
 
+// Smoke returns the identity of the check that Draining returns without a
+// panic for derived inputs.
+func (c stateDraining) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Draining returns
+// the same value for the same inputs.
+func (c stateDraining) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
+}
+
 // AllocationBudget returns the identity of the check
 // State.Draining/allocation-budget.
 func (c stateDraining) AllocationBudget() conform.ID[StateMethods] {
@@ -291,6 +383,12 @@ func (c stateDraining) AllocationBudget() conform.ID[StateMethods] {
 // checks.
 type stateOnNode struct {
 	conform.Callable[StateMethods]
+}
+
+// Smoke returns the identity of the check that OnNode returns without a
+// panic for derived inputs.
+func (c stateOnNode) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
 }
 
 // AllocationBudget returns the identity of the check
@@ -305,6 +403,18 @@ type stateRoleCount struct {
 	conform.Callable[StateMethods]
 }
 
+// Smoke returns the identity of the check that RoleCount returns without a
+// panic for derived inputs.
+func (c stateRoleCount) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that RoleCount returns
+// the same value for the same inputs.
+func (c stateRoleCount) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
+}
+
 // AllocationBudget returns the identity of the check
 // State.RoleCount/allocation-budget.
 func (c stateRoleCount) AllocationBudget() conform.ID[StateMethods] {
@@ -315,6 +425,18 @@ func (c stateRoleCount) AllocationBudget() conform.ID[StateMethods] {
 // its checks.
 type stateRoleTotal struct {
 	conform.Callable[StateMethods]
+}
+
+// Smoke returns the identity of the check that RoleTotal returns without a
+// panic for derived inputs.
+func (c stateRoleTotal) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that RoleTotal returns
+// the same value for the same inputs.
+func (c stateRoleTotal) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
 }
 
 // AllocationBudget returns the identity of the check
@@ -329,6 +451,18 @@ type stateNodeLoad struct {
 	conform.Callable[StateMethods]
 }
 
+// Smoke returns the identity of the check that NodeLoad returns without a
+// panic for derived inputs.
+func (c stateNodeLoad) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that NodeLoad returns
+// the same value for the same inputs.
+func (c stateNodeLoad) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
+}
+
 // AllocationBudget returns the identity of the check
 // State.NodeLoad/allocation-budget.
 func (c stateNodeLoad) AllocationBudget() conform.ID[StateMethods] {
@@ -339,6 +473,18 @@ func (c stateNodeLoad) AllocationBudget() conform.ID[StateMethods] {
 // checks.
 type statePeakLoad struct {
 	conform.Callable[StateMethods]
+}
+
+// Smoke returns the identity of the check that PeakLoad returns without a
+// panic for derived inputs.
+func (c statePeakLoad) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that PeakLoad returns
+// the same value for the same inputs.
+func (c statePeakLoad) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
 }
 
 // AllocationBudget returns the identity of the check
@@ -365,6 +511,18 @@ type statePeakCount struct {
 	conform.Callable[StateMethods]
 }
 
+// Smoke returns the identity of the check that PeakCount returns without a
+// panic for derived inputs.
+func (c statePeakCount) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that PeakCount returns
+// the same value for the same inputs.
+func (c statePeakCount) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
+}
+
 // AllocationBudget returns the identity of the check
 // State.PeakCount/allocation-budget.
 func (c statePeakCount) AllocationBudget() conform.ID[StateMethods] {
@@ -375,6 +533,18 @@ func (c statePeakCount) AllocationBudget() conform.ID[StateMethods] {
 // identities of its checks.
 type statePeakRoleCount struct {
 	conform.Callable[StateMethods]
+}
+
+// Smoke returns the identity of the check that PeakRoleCount returns
+// without a panic for derived inputs.
+func (c statePeakRoleCount) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that PeakRoleCount
+// returns the same value for the same inputs.
+func (c statePeakRoleCount) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
 }
 
 // AllocationBudget returns the identity of the check
@@ -389,6 +559,18 @@ type stateMetrics struct {
 	conform.Callable[StateMethods]
 }
 
+// Smoke returns the identity of the check that Metrics returns without a
+// panic for derived inputs.
+func (c stateMetrics) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Metrics returns the
+// same value for the same inputs.
+func (c stateMetrics) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
+}
+
 // AllocationBudget returns the identity of the check
 // State.Metrics/allocation-budget.
 func (c stateMetrics) AllocationBudget() conform.ID[StateMethods] {
@@ -399,6 +581,12 @@ func (c stateMetrics) AllocationBudget() conform.ID[StateMethods] {
 // checks.
 type stateCapacity struct {
 	conform.Callable[StateMethods]
+}
+
+// Smoke returns the identity of the check that Capacity returns without a
+// panic for derived inputs.
+func (c stateCapacity) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
 }
 
 // AllocationBudget returns the identity of the check
@@ -413,6 +601,12 @@ type stateUtilisation struct {
 	conform.Callable[StateMethods]
 }
 
+// Smoke returns the identity of the check that Utilisation returns without
+// a panic for derived inputs.
+func (c stateUtilisation) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
 // AllocationBudget returns the identity of the check
 // State.Utilisation/allocation-budget.
 func (c stateUtilisation) AllocationBudget() conform.ID[StateMethods] {
@@ -423,6 +617,12 @@ func (c stateUtilisation) AllocationBudget() conform.ID[StateMethods] {
 // identities of its checks.
 type stateUtilisationSum struct {
 	conform.Callable[StateMethods]
+}
+
+// Smoke returns the identity of the check that UtilisationSum returns
+// without a panic for derived inputs.
+func (c stateUtilisationSum) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
 }
 
 // AllocationBudget returns the identity of the check
@@ -437,6 +637,18 @@ type stateTotalLoad struct {
 	conform.Callable[StateMethods]
 }
 
+// Smoke returns the identity of the check that TotalLoad returns without a
+// panic for derived inputs.
+func (c stateTotalLoad) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that TotalLoad returns
+// the same value for the same inputs.
+func (c stateTotalLoad) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
+}
+
 // AllocationBudget returns the identity of the check
 // State.TotalLoad/allocation-budget.
 func (c stateTotalLoad) AllocationBudget() conform.ID[StateMethods] {
@@ -447,6 +659,18 @@ func (c stateTotalLoad) AllocationBudget() conform.ID[StateMethods] {
 // checks.
 type stateLabelled struct {
 	conform.Callable[StateMethods]
+}
+
+// Smoke returns the identity of the check that Labelled returns without a
+// panic for derived inputs.
+func (c stateLabelled) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Labelled returns
+// the same value for the same inputs.
+func (c stateLabelled) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
 }
 
 // AllocationBudget returns the identity of the check
@@ -461,6 +685,18 @@ type stateLabelledNodes struct {
 	conform.Callable[StateMethods]
 }
 
+// Smoke returns the identity of the check that LabelledNodes returns
+// without a panic for derived inputs.
+func (c stateLabelledNodes) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that LabelledNodes
+// returns the same value for the same inputs.
+func (c stateLabelledNodes) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
+}
+
 // AllocationBudget returns the identity of the check
 // State.LabelledNodes/allocation-budget.
 func (c stateLabelledNodes) AllocationBudget() conform.ID[StateMethods] {
@@ -473,6 +709,18 @@ type stateMoved struct {
 	conform.Callable[StateMethods]
 }
 
+// Smoke returns the identity of the check that Moved returns without a
+// panic for derived inputs.
+func (c stateMoved) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Moved returns the
+// same value for the same inputs.
+func (c stateMoved) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
+}
+
 // AllocationBudget returns the identity of the check
 // State.Moved/allocation-budget.
 func (c stateMoved) AllocationBudget() conform.ID[StateMethods] {
@@ -483,6 +731,18 @@ func (c stateMoved) AllocationBudget() conform.ID[StateMethods] {
 // its checks.
 type stateMovedNode struct {
 	conform.Callable[StateMethods]
+}
+
+// Smoke returns the identity of the check that MovedNode returns without a
+// panic for derived inputs.
+func (c stateMovedNode) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that MovedNode returns
+// the same value for the same inputs.
+func (c stateMovedNode) Deterministic() conform.ID[StateMethods] {
+	return c.Check("deterministic")
 }
 
 // AllocationBudget returns the identity of the check
@@ -516,18 +776,1182 @@ func (c stateApply) RepeatedMovesDoNotAllocate() conform.ID[StateMethods] {
 	return c.Check("repeated-moves-do-not-allocate")
 }
 
+// Smoke returns the identity of the check that Apply returns without a
+// panic for derived inputs.
+func (c stateApply) Smoke() conform.ID[StateMethods] {
+	return c.Check("smoke")
+}
+
 // StateSuite returns the checks of State, and the calls and the budgets of
 // its callables.
 func StateSuite() conform.Suite[StateMethods] {
 	return conform.Suite[StateMethods]{
 		Declaration: "State",
+		Package:     "go.thesmos.sh/sharder/placement",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[StateMethods]{
+			{
+				ID:          StateChecks.Shards.Smoke(),
+				Statement:   "Shards returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Shards()
+						return nil
+					})
+				},
+				Defect: stateShardsPanics,
+			},
+			{
+				ID:          StateChecks.ReplicasAt.Smoke(),
+				Statement:   "ReplicasAt returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().ReplicasAt(int(0))
+						return nil
+					})
+				},
+				Defect: stateReplicasAtPanics,
+			},
+			{
+				ID:          StateChecks.ReplicasAt.Deterministic(),
+				Statement:   "ReplicasAt returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.ReplicasAt.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) ([]shard.Replica, error) {
+						r0 := h.Subject().ReplicasAt(int(0))
+						return r0, nil
+					})
+				},
+				Defect: stateReplicasAtDrifts,
+			},
+			{
+				ID:          StateChecks.InitialAt.Smoke(),
+				Statement:   "InitialAt returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().InitialAt(int(0))
+						return nil
+					})
+				},
+				Defect: stateInitialAtPanics,
+			},
+			{
+				ID:          StateChecks.InitialAt.Deterministic(),
+				Statement:   "InitialAt returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.InitialAt.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) ([]shard.Replica, error) {
+						r0 := h.Subject().InitialAt(int(0))
+						return r0, nil
+					})
+				},
+				Defect: stateInitialAtDrifts,
+			},
+			{
+				ID:          StateChecks.Desired.Smoke(),
+				Statement:   "Desired returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Desired()
+						return nil
+					})
+				},
+				Defect: stateDesiredPanics,
+			},
+			{
+				ID:          StateChecks.Desired.Deterministic(),
+				Statement:   "Desired returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.Desired.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().Desired()
+						return r0, nil
+					})
+				},
+				Defect: stateDesiredDrifts,
+			},
+			{
+				ID:          StateChecks.Max.Smoke(),
+				Statement:   "Max returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Max(shard.Role(0))
+						return nil
+					})
+				},
+				Defect: stateMaxPanics,
+			},
+			{
+				ID:          StateChecks.Max.Smoke().Generated(),
+				Statement:   "Max returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnR := c.Draw(prop.Of[shard.Role](), "r")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Max(drawnR)
+						return nil
+					})
+				},
+				Defect: stateMaxPanics,
+			},
+			{
+				ID:          StateChecks.Max.Deterministic(),
+				Statement:   "Max returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.Max.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().Max(shard.Role(0))
+						return r0, nil
+					})
+				},
+				Defect: stateMaxDrifts,
+			},
+			{
+				ID:          StateChecks.Max.Deterministic().Generated(),
+				Statement:   "Max returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[StateMethods]{StateChecks.Max.Smoke().Generated()},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnR := c.Draw(prop.Of[shard.Role](), "r")
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().Max(drawnR)
+						return r0, nil
+					})
+				},
+				Defect: stateMaxDrifts,
+			},
+			{
+				ID:          StateChecks.Nodes.Smoke(),
+				Statement:   "Nodes returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Nodes()
+						return nil
+					})
+				},
+				Defect: stateNodesPanics,
+			},
+			{
+				ID:          StateChecks.Nodes.Deterministic(),
+				Statement:   "Nodes returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.Nodes.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) ([]shard.NodeID, error) {
+						r0 := h.Subject().Nodes()
+						return r0, nil
+					})
+				},
+				Defect: stateNodesDrifts,
+			},
+			{
+				ID:          StateChecks.Node.Smoke(),
+				Statement:   "Node returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Node(shard.NodeID("n-a"))
+						return nil
+					})
+				},
+				Defect: stateNodePanics,
+			},
+			{
+				ID:          StateChecks.Node.Smoke().Generated(),
+				Statement:   "Node returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Node(drawnN)
+						return nil
+					})
+				},
+				Defect: stateNodePanics,
+			},
+			{
+				ID:          StateChecks.Node.ZeroOnMiss(),
+				Statement:   "Node returns the zero value beside a false presence flag",
+				Claim:       spec.ZeroOnMiss,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *StateHandle) {
+					probe.ZeroBesideFalse(h, func(ctx context.Context) (shard.Node, bool) {
+						return h.Subject().Node(shard.NodeID("n-a"))
+					}, shard.Node{})
+				},
+				Defect: stateNodeValueBesideAFalseFlag,
+			},
+			{
+				ID:          StateChecks.Node.ZeroOnMiss().Generated(),
+				Statement:   "Node returns the zero value beside a false presence flag",
+				Claim:       spec.ZeroOnMiss,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.ZeroBesideFalse(h, func(ctx context.Context) (shard.Node, bool) {
+						return h.Subject().Node(drawnN)
+					}, shard.Node{})
+				},
+				Defect: stateNodeValueBesideAFalseFlag,
+			},
+			{
+				ID:          StateChecks.Draining.Smoke(),
+				Statement:   "Draining returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Draining(shard.NodeID("n-a"))
+						return nil
+					})
+				},
+				Defect: stateDrainingPanics,
+			},
+			{
+				ID:          StateChecks.Draining.Smoke().Generated(),
+				Statement:   "Draining returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Draining(drawnN)
+						return nil
+					})
+				},
+				Defect: stateDrainingPanics,
+			},
+			{
+				ID:          StateChecks.Draining.Deterministic(),
+				Statement:   "Draining returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.Draining.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Draining(shard.NodeID("n-a"))
+						return r0, nil
+					})
+				},
+				Defect: stateDrainingDrifts,
+			},
+			{
+				ID:          StateChecks.Draining.Deterministic().Generated(),
+				Statement:   "Draining returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[StateMethods]{StateChecks.Draining.Smoke().Generated()},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Draining(drawnN)
+						return r0, nil
+					})
+				},
+				Defect: stateDrainingDrifts,
+			},
+			{
+				ID:          StateChecks.OnNode.Smoke(),
+				Statement:   "OnNode returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().OnNode(shard.NodeID("n-a"))
+						return nil
+					})
+				},
+				Defect: stateOnNodePanics,
+			},
+			{
+				ID:          StateChecks.OnNode.Smoke().Generated(),
+				Statement:   "OnNode returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().OnNode(drawnN)
+						return nil
+					})
+				},
+				Defect: stateOnNodePanics,
+			},
+			{
+				ID:          StateChecks.RoleCount.Smoke(),
+				Statement:   "RoleCount returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().RoleCount(shard.NodeID("n-a"), shard.Role(0))
+						return nil
+					})
+				},
+				Defect: stateRoleCountPanics,
+			},
+			{
+				ID:          StateChecks.RoleCount.Smoke().Generated(),
+				Statement:   "RoleCount returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					drawnR := c.Draw(prop.Of[shard.Role](), "r")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().RoleCount(drawnN, drawnR)
+						return nil
+					})
+				},
+				Defect: stateRoleCountPanics,
+			},
+			{
+				ID:          StateChecks.RoleCount.Deterministic(),
+				Statement:   "RoleCount returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.RoleCount.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().RoleCount(shard.NodeID("n-a"), shard.Role(0))
+						return r0, nil
+					})
+				},
+				Defect: stateRoleCountDrifts,
+			},
+			{
+				ID:          StateChecks.RoleCount.Deterministic().Generated(),
+				Statement:   "RoleCount returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[StateMethods]{StateChecks.RoleCount.Smoke().Generated()},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					drawnR := c.Draw(prop.Of[shard.Role](), "r")
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().RoleCount(drawnN, drawnR)
+						return r0, nil
+					})
+				},
+				Defect: stateRoleCountDrifts,
+			},
+			{
+				ID:          StateChecks.RoleTotal.Smoke(),
+				Statement:   "RoleTotal returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().RoleTotal(shard.Role(0))
+						return nil
+					})
+				},
+				Defect: stateRoleTotalPanics,
+			},
+			{
+				ID:          StateChecks.RoleTotal.Smoke().Generated(),
+				Statement:   "RoleTotal returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnR := c.Draw(prop.Of[shard.Role](), "r")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().RoleTotal(drawnR)
+						return nil
+					})
+				},
+				Defect: stateRoleTotalPanics,
+			},
+			{
+				ID:          StateChecks.RoleTotal.Deterministic(),
+				Statement:   "RoleTotal returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.RoleTotal.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().RoleTotal(shard.Role(0))
+						return r0, nil
+					})
+				},
+				Defect: stateRoleTotalDrifts,
+			},
+			{
+				ID:          StateChecks.RoleTotal.Deterministic().Generated(),
+				Statement:   "RoleTotal returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[StateMethods]{StateChecks.RoleTotal.Smoke().Generated()},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnR := c.Draw(prop.Of[shard.Role](), "r")
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().RoleTotal(drawnR)
+						return r0, nil
+					})
+				},
+				Defect: stateRoleTotalDrifts,
+			},
+			{
+				ID:          StateChecks.NodeLoad.Smoke(),
+				Statement:   "NodeLoad returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().NodeLoad(shard.NodeID("n-a"))
+						return nil
+					})
+				},
+				Defect: stateNodeLoadPanics,
+			},
+			{
+				ID:          StateChecks.NodeLoad.Smoke().Generated(),
+				Statement:   "NodeLoad returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().NodeLoad(drawnN)
+						return nil
+					})
+				},
+				Defect: stateNodeLoadPanics,
+			},
+			{
+				ID:          StateChecks.NodeLoad.Deterministic(),
+				Statement:   "NodeLoad returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.NodeLoad.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (shard.Load, error) {
+						r0 := h.Subject().NodeLoad(shard.NodeID("n-a"))
+						return r0, nil
+					})
+				},
+				Defect: stateNodeLoadDrifts,
+			},
+			{
+				ID:          StateChecks.NodeLoad.Deterministic().Generated(),
+				Statement:   "NodeLoad returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[StateMethods]{StateChecks.NodeLoad.Smoke().Generated()},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.RepeatAgrees(h, func(ctx context.Context) (shard.Load, error) {
+						r0 := h.Subject().NodeLoad(drawnN)
+						return r0, nil
+					})
+				},
+				Defect: stateNodeLoadDrifts,
+			},
+			{
+				ID:          StateChecks.PeakLoad.Smoke(),
+				Statement:   "PeakLoad returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().PeakLoad(shard.NodeID("n-a"))
+						return nil
+					})
+				},
+				Defect: statePeakLoadPanics,
+			},
+			{
+				ID:          StateChecks.PeakLoad.Smoke().Generated(),
+				Statement:   "PeakLoad returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().PeakLoad(drawnN)
+						return nil
+					})
+				},
+				Defect: statePeakLoadPanics,
+			},
+			{
+				ID:          StateChecks.PeakLoad.Deterministic(),
+				Statement:   "PeakLoad returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.PeakLoad.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (shard.Load, error) {
+						r0 := h.Subject().PeakLoad(shard.NodeID("n-a"))
+						return r0, nil
+					})
+				},
+				Defect: statePeakLoadDrifts,
+			},
+			{
+				ID:          StateChecks.PeakLoad.Deterministic().Generated(),
+				Statement:   "PeakLoad returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[StateMethods]{StateChecks.PeakLoad.Smoke().Generated()},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.RepeatAgrees(h, func(ctx context.Context) (shard.Load, error) {
+						r0 := h.Subject().PeakLoad(drawnN)
+						return r0, nil
+					})
+				},
+				Defect: statePeakLoadDrifts,
+			},
+			{
+				ID:          StateChecks.PeakCount.Smoke(),
+				Statement:   "PeakCount returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().PeakCount(shard.NodeID("n-a"))
+						return nil
+					})
+				},
+				Defect: statePeakCountPanics,
+			},
+			{
+				ID:          StateChecks.PeakCount.Smoke().Generated(),
+				Statement:   "PeakCount returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().PeakCount(drawnN)
+						return nil
+					})
+				},
+				Defect: statePeakCountPanics,
+			},
+			{
+				ID:          StateChecks.PeakCount.Deterministic(),
+				Statement:   "PeakCount returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.PeakCount.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().PeakCount(shard.NodeID("n-a"))
+						return r0, nil
+					})
+				},
+				Defect: statePeakCountDrifts,
+			},
+			{
+				ID:          StateChecks.PeakCount.Deterministic().Generated(),
+				Statement:   "PeakCount returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[StateMethods]{StateChecks.PeakCount.Smoke().Generated()},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().PeakCount(drawnN)
+						return r0, nil
+					})
+				},
+				Defect: statePeakCountDrifts,
+			},
+			{
+				ID:          StateChecks.PeakRoleCount.Smoke(),
+				Statement:   "PeakRoleCount returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().PeakRoleCount(shard.NodeID("n-a"), shard.Role(0))
+						return nil
+					})
+				},
+				Defect: statePeakRoleCountPanics,
+			},
+			{
+				ID:          StateChecks.PeakRoleCount.Smoke().Generated(),
+				Statement:   "PeakRoleCount returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					drawnR := c.Draw(prop.Of[shard.Role](), "r")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().PeakRoleCount(drawnN, drawnR)
+						return nil
+					})
+				},
+				Defect: statePeakRoleCountPanics,
+			},
+			{
+				ID:          StateChecks.PeakRoleCount.Deterministic(),
+				Statement:   "PeakRoleCount returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.PeakRoleCount.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().PeakRoleCount(shard.NodeID("n-a"), shard.Role(0))
+						return r0, nil
+					})
+				},
+				Defect: statePeakRoleCountDrifts,
+			},
+			{
+				ID:          StateChecks.PeakRoleCount.Deterministic().Generated(),
+				Statement:   "PeakRoleCount returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[StateMethods]{StateChecks.PeakRoleCount.Smoke().Generated()},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					drawnR := c.Draw(prop.Of[shard.Role](), "r")
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().PeakRoleCount(drawnN, drawnR)
+						return r0, nil
+					})
+				},
+				Defect: statePeakRoleCountDrifts,
+			},
+			{
+				ID:          StateChecks.Metrics.Smoke(),
+				Statement:   "Metrics returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Metrics()
+						return nil
+					})
+				},
+				Defect: stateMetricsPanics,
+			},
+			{
+				ID:          StateChecks.Metrics.Deterministic(),
+				Statement:   "Metrics returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.Metrics.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) ([]placement.Metric, error) {
+						r0 := h.Subject().Metrics()
+						return r0, nil
+					})
+				},
+				Defect: stateMetricsDrifts,
+			},
+			{
+				ID:          StateChecks.Capacity.Smoke(),
+				Statement:   "Capacity returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Capacity(shard.NodeID("n-a"), string("metric-a"))
+						return nil
+					})
+				},
+				Defect: stateCapacityPanics,
+			},
+			{
+				ID:          StateChecks.Capacity.Smoke().Generated(),
+				Statement:   "Capacity returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					drawnMetric := c.Draw(prop.Of[string](), "metric")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Capacity(drawnN, drawnMetric)
+						return nil
+					})
+				},
+				Defect: stateCapacityPanics,
+			},
+			{
+				ID:          StateChecks.Utilisation.Smoke(),
+				Statement:   "Utilisation returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Utilisation(shard.NodeID("n-a"), string("metric-a"))
+						return nil
+					})
+				},
+				Defect: stateUtilisationPanics,
+			},
+			{
+				ID:          StateChecks.Utilisation.Smoke().Generated(),
+				Statement:   "Utilisation returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					drawnMetric := c.Draw(prop.Of[string](), "metric")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Utilisation(drawnN, drawnMetric)
+						return nil
+					})
+				},
+				Defect: stateUtilisationPanics,
+			},
+			{
+				ID:          StateChecks.UtilisationSum.Smoke(),
+				Statement:   "UtilisationSum returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().UtilisationSum(string("metric-a"))
+						return nil
+					})
+				},
+				Defect: stateUtilisationSumPanics,
+			},
+			{
+				ID:          StateChecks.UtilisationSum.Smoke().Generated(),
+				Statement:   "UtilisationSum returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnMetric := c.Draw(prop.Of[string](), "metric")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().UtilisationSum(drawnMetric)
+						return nil
+					})
+				},
+				Defect: stateUtilisationSumPanics,
+			},
+			{
+				ID:          StateChecks.TotalLoad.Smoke(),
+				Statement:   "TotalLoad returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().TotalLoad(string("metric-a"))
+						return nil
+					})
+				},
+				Defect: stateTotalLoadPanics,
+			},
+			{
+				ID:          StateChecks.TotalLoad.Smoke().Generated(),
+				Statement:   "TotalLoad returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnMetric := c.Draw(prop.Of[string](), "metric")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().TotalLoad(drawnMetric)
+						return nil
+					})
+				},
+				Defect: stateTotalLoadPanics,
+			},
+			{
+				ID:          StateChecks.TotalLoad.Deterministic(),
+				Statement:   "TotalLoad returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.TotalLoad.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (float64, error) {
+						r0 := h.Subject().TotalLoad(string("metric-a"))
+						return r0, nil
+					})
+				},
+				Defect: stateTotalLoadDrifts,
+			},
+			{
+				ID:          StateChecks.TotalLoad.Deterministic().Generated(),
+				Statement:   "TotalLoad returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[StateMethods]{StateChecks.TotalLoad.Smoke().Generated()},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnMetric := c.Draw(prop.Of[string](), "metric")
+					probe.RepeatAgrees(h, func(ctx context.Context) (float64, error) {
+						r0 := h.Subject().TotalLoad(drawnMetric)
+						return r0, nil
+					})
+				},
+				Defect: stateTotalLoadDrifts,
+			},
+			{
+				ID:          StateChecks.Labelled.Smoke(),
+				Statement:   "Labelled returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Labelled(tag.Tag{Key: "Key-a"}, shard.NodeID("n-a"))
+						return nil
+					})
+				},
+				Defect: stateLabelledPanics,
+			},
+			{
+				ID:          StateChecks.Labelled.Smoke().Generated(),
+				Statement:   "Labelled returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnT := c.Draw(prop.Of[tag.Tag](), "t")
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Labelled(drawnT, drawnN)
+						return nil
+					})
+				},
+				Defect: stateLabelledPanics,
+			},
+			{
+				ID:          StateChecks.Labelled.Deterministic(),
+				Statement:   "Labelled returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.Labelled.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().Labelled(tag.Tag{Key: "Key-a"}, shard.NodeID("n-a"))
+						return r0, nil
+					})
+				},
+				Defect: stateLabelledDrifts,
+			},
+			{
+				ID:          StateChecks.Labelled.Deterministic().Generated(),
+				Statement:   "Labelled returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[StateMethods]{StateChecks.Labelled.Smoke().Generated()},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnT := c.Draw(prop.Of[tag.Tag](), "t")
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().Labelled(drawnT, drawnN)
+						return r0, nil
+					})
+				},
+				Defect: stateLabelledDrifts,
+			},
+			{
+				ID:          StateChecks.LabelledNodes.Smoke(),
+				Statement:   "LabelledNodes returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().LabelledNodes(tag.Tag{Key: "Key-a"})
+						return nil
+					})
+				},
+				Defect: stateLabelledNodesPanics,
+			},
+			{
+				ID:          StateChecks.LabelledNodes.Smoke().Generated(),
+				Statement:   "LabelledNodes returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnT := c.Draw(prop.Of[tag.Tag](), "t")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().LabelledNodes(drawnT)
+						return nil
+					})
+				},
+				Defect: stateLabelledNodesPanics,
+			},
+			{
+				ID:          StateChecks.LabelledNodes.Deterministic(),
+				Statement:   "LabelledNodes returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.LabelledNodes.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().LabelledNodes(tag.Tag{Key: "Key-a"})
+						return r0, nil
+					})
+				},
+				Defect: stateLabelledNodesDrifts,
+			},
+			{
+				ID:          StateChecks.LabelledNodes.Deterministic().Generated(),
+				Statement:   "LabelledNodes returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[StateMethods]{StateChecks.LabelledNodes.Smoke().Generated()},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnT := c.Draw(prop.Of[tag.Tag](), "t")
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().LabelledNodes(drawnT)
+						return r0, nil
+					})
+				},
+				Defect: stateLabelledNodesDrifts,
+			},
+			{
+				ID:          StateChecks.Moved.Smoke(),
+				Statement:   "Moved returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Moved()
+						return nil
+					})
+				},
+				Defect: stateMovedPanics,
+			},
+			{
+				ID:          StateChecks.Moved.Deterministic(),
+				Statement:   "Moved returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.Moved.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().Moved()
+						return r0, nil
+					})
+				},
+				Defect: stateMovedDrifts,
+			},
+			{
+				ID:          StateChecks.MovedNode.Smoke(),
+				Statement:   "MovedNode returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().MovedNode(shard.NodeID("n-a"))
+						return nil
+					})
+				},
+				Defect: stateMovedNodePanics,
+			},
+			{
+				ID:          StateChecks.MovedNode.Smoke().Generated(),
+				Statement:   "MovedNode returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().MovedNode(drawnN)
+						return nil
+					})
+				},
+				Defect: stateMovedNodePanics,
+			},
+			{
+				ID:          StateChecks.MovedNode.Deterministic(),
+				Statement:   "MovedNode returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[StateMethods]{StateChecks.MovedNode.Smoke()},
+				Apply: func(h *StateHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().MovedNode(shard.NodeID("n-a"))
+						return r0, nil
+					})
+				},
+				Defect: stateMovedNodeDrifts,
+			},
+			{
+				ID:          StateChecks.MovedNode.Deterministic().Generated(),
+				Statement:   "MovedNode returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[StateMethods]{StateChecks.MovedNode.Smoke().Generated()},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnN := c.Draw(prop.Of[shard.NodeID](), "n")
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().MovedNode(drawnN)
+						return r0, nil
+					})
+				},
+				Defect: stateMovedNodeDrifts,
+			},
+			{
+				ID:          StateChecks.Apply.Smoke(),
+				Statement:   "Apply returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StateHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						return h.Subject().Apply(placement.Move{From: shard.NodeID("From-a")})
+					})
+				},
+				Defect: stateApplyPanics,
+			},
+			{
+				ID:          StateChecks.Apply.Smoke().Generated(),
+				Statement:   "Apply returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StateHandle, c *prop.Case) {
+					drawnM := c.Draw(prop.Of[placement.Move](), "m")
+					probe.Survives(h, func(ctx context.Context) error {
+						return h.Subject().Apply(drawnM)
+					})
+				},
+				Defect: stateApplyPanics,
+			},
 			{
 				ID:        StateChecks.Apply.RepeatedMovesDoNotAllocate(),
 				Statement: "Apply does not allocate for a relocation of a replica and the relocation back, once both moves ran",
 				Apply:     RepeatedMovesDoNotAllocate,
 				Defect:    copiesReplicas,
 				Counted:   true,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "State.Shards",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Shards",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.ZeroOnMiss,
+				Callable: "State.Shard",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Shard",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "State.Replicas",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter id of Replicas",
+				Remedy:   "author a sample of the parameter id with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "State.Initial",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter id of Initial",
+				Remedy:   "author a sample of the parameter id with the directive sample",
+			},
+			{
+				Claim:    spec.ZeroOnMiss,
+				Callable: "State.InFlight",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter id of InFlight",
+				Remedy:   "author a sample of the parameter id with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "State.ShardLoad",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter id of ShardLoad",
+				Remedy:   "author a sample of the parameter id with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "State.OnNode",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of OnNode",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "State.PeakCounts",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter id of PeakCounts",
+				Remedy:   "author a sample of the parameter id with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "State.MovedShard",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter id of MovedShard",
+				Remedy:   "author a sample of the parameter id with the directive sample",
+			},
+		},
+		Unclaimed: []conform.Unclaimed{
+			{
+				Classification: "shape:writer",
+				Callable:       "State.Apply",
+				Stance:         spec.Silent,
+				Note:           "A write is an input of the other checks, and its result is an error alone.",
 			},
 		},
 		Calls: []conform.Call[StateMethods]{
@@ -1385,4 +2809,846 @@ func newStateOver(_ *StateHandle, spend func()) StateMethods {
 	return stateOver{spend: spend}
 }
 
-// dokimi:provenance sha256:272b471754e2261479e91a1fadda9c9633bc01d545eb8eabd94cf4e82f88ec05
+// stateShardsPanicsDefect is the planted defect of a State whose Shards
+// panics.
+type stateShardsPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// Shards is the override of the planted defect.
+func (*stateShardsPanicsDefect) Shards() (r0 []shard.ID) {
+	panic("the planted defect of a State whose Shards panics")
+}
+
+// stateShardsPanics returns the planted defect of a State whose Shards
+// panics over a fresh subject.
+func stateShardsPanics(h *StateHandle) StateMethods {
+	return &stateShardsPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateReplicasAtPanicsDefect is the planted defect of a State whose
+// ReplicasAt panics.
+type stateReplicasAtPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// ReplicasAt is the override of the planted defect.
+func (*stateReplicasAtPanicsDefect) ReplicasAt(p0 int) (r0 []shard.Replica) {
+	panic("the planted defect of a State whose ReplicasAt panics")
+}
+
+// stateReplicasAtPanics returns the planted defect of a State whose
+// ReplicasAt panics over a fresh subject.
+func stateReplicasAtPanics(h *StateHandle) StateMethods {
+	return &stateReplicasAtPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateReplicasAtDriftsDefect is the planted defect of a State whose
+// ReplicasAt returns another value on the repeat.
+type stateReplicasAtDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// ReplicasAt is the override of the planted defect.
+func (d *stateReplicasAtDriftsDefect) ReplicasAt(p0 int) (r0 []shard.Replica) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = []shard.Replica{{Node: shard.NodeID("Node-b")}}
+	}
+	return r0
+}
+
+// stateReplicasAtDrifts returns the planted defect of a State whose
+// ReplicasAt returns another value on the repeat over a fresh subject.
+func stateReplicasAtDrifts(h *StateHandle) StateMethods {
+	return &stateReplicasAtDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateInitialAtPanicsDefect is the planted defect of a State whose
+// InitialAt panics.
+type stateInitialAtPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// InitialAt is the override of the planted defect.
+func (*stateInitialAtPanicsDefect) InitialAt(p0 int) (r0 []shard.Replica) {
+	panic("the planted defect of a State whose InitialAt panics")
+}
+
+// stateInitialAtPanics returns the planted defect of a State whose
+// InitialAt panics over a fresh subject.
+func stateInitialAtPanics(h *StateHandle) StateMethods {
+	return &stateInitialAtPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateInitialAtDriftsDefect is the planted defect of a State whose
+// InitialAt returns another value on the repeat.
+type stateInitialAtDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// InitialAt is the override of the planted defect.
+func (d *stateInitialAtDriftsDefect) InitialAt(p0 int) (r0 []shard.Replica) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = []shard.Replica{{Node: shard.NodeID("Node-b")}}
+	}
+	return r0
+}
+
+// stateInitialAtDrifts returns the planted defect of a State whose
+// InitialAt returns another value on the repeat over a fresh subject.
+func stateInitialAtDrifts(h *StateHandle) StateMethods {
+	return &stateInitialAtDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateDesiredPanicsDefect is the planted defect of a State whose Desired
+// panics.
+type stateDesiredPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// Desired is the override of the planted defect.
+func (*stateDesiredPanicsDefect) Desired() (r0 int) {
+	panic("the planted defect of a State whose Desired panics")
+}
+
+// stateDesiredPanics returns the planted defect of a State whose Desired
+// panics over a fresh subject.
+func stateDesiredPanics(h *StateHandle) StateMethods {
+	return &stateDesiredPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateDesiredDriftsDefect is the planted defect of a State whose Desired
+// returns another value on the repeat.
+type stateDesiredDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// Desired is the override of the planted defect.
+func (d *stateDesiredDriftsDefect) Desired() (r0 int) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = int(7)
+	}
+	return r0
+}
+
+// stateDesiredDrifts returns the planted defect of a State whose Desired
+// returns another value on the repeat over a fresh subject.
+func stateDesiredDrifts(h *StateHandle) StateMethods {
+	return &stateDesiredDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateMaxPanicsDefect is the planted defect of a State whose Max panics.
+type stateMaxPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// Max is the override of the planted defect.
+func (*stateMaxPanicsDefect) Max(p0 shard.Role) (r0 int) {
+	panic("the planted defect of a State whose Max panics")
+}
+
+// stateMaxPanics returns the planted defect of a State whose Max panics
+// over a fresh subject.
+func stateMaxPanics(h *StateHandle) StateMethods {
+	return &stateMaxPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateMaxDriftsDefect is the planted defect of a State whose Max returns
+// another value on the repeat.
+type stateMaxDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// Max is the override of the planted defect.
+func (d *stateMaxDriftsDefect) Max(p0 shard.Role) (r0 int) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = int(7)
+	}
+	return r0
+}
+
+// stateMaxDrifts returns the planted defect of a State whose Max returns
+// another value on the repeat over a fresh subject.
+func stateMaxDrifts(h *StateHandle) StateMethods {
+	return &stateMaxDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateNodesPanicsDefect is the planted defect of a State whose Nodes
+// panics.
+type stateNodesPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// Nodes is the override of the planted defect.
+func (*stateNodesPanicsDefect) Nodes() (r0 []shard.NodeID) {
+	panic("the planted defect of a State whose Nodes panics")
+}
+
+// stateNodesPanics returns the planted defect of a State whose Nodes
+// panics over a fresh subject.
+func stateNodesPanics(h *StateHandle) StateMethods {
+	return &stateNodesPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateNodesDriftsDefect is the planted defect of a State whose Nodes
+// returns another value on the repeat.
+type stateNodesDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// Nodes is the override of the planted defect.
+func (d *stateNodesDriftsDefect) Nodes() (r0 []shard.NodeID) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = []shard.NodeID{shard.NodeID("sample-b")}
+	}
+	return r0
+}
+
+// stateNodesDrifts returns the planted defect of a State whose Nodes
+// returns another value on the repeat over a fresh subject.
+func stateNodesDrifts(h *StateHandle) StateMethods {
+	return &stateNodesDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateNodePanicsDefect is the planted defect of a State whose Node
+// panics.
+type stateNodePanicsDefect struct {
+	stateOverEmbedded
+}
+
+// Node is the override of the planted defect.
+func (*stateNodePanicsDefect) Node(p0 shard.NodeID) (r0 shard.Node, r1 bool) {
+	panic("the planted defect of a State whose Node panics")
+}
+
+// stateNodePanics returns the planted defect of a State whose Node panics
+// over a fresh subject.
+func stateNodePanics(h *StateHandle) StateMethods {
+	return &stateNodePanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateNodeValueBesideAFalseFlagDefect is the planted defect of a State
+// whose Node returns a value beside a false presence flag.
+type stateNodeValueBesideAFalseFlagDefect struct {
+	stateOverEmbedded
+}
+
+// Node is the override of the planted defect.
+func (d *stateNodeValueBesideAFalseFlagDefect) Node(p0 shard.NodeID) (r0 shard.Node, r1 bool) {
+	r0, r1 = d.stateOverEmbedded.Node(p0)
+	if !r1 {
+		r0 = shard.Node{ID: shard.NodeID("ID-b")}
+	}
+	return r0, r1
+}
+
+// stateNodeValueBesideAFalseFlag returns the planted defect of a State
+// whose Node returns a value beside a false presence flag over a fresh
+// subject.
+func stateNodeValueBesideAFalseFlag(h *StateHandle) StateMethods {
+	return &stateNodeValueBesideAFalseFlagDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateDrainingPanicsDefect is the planted defect of a State whose
+// Draining panics.
+type stateDrainingPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// Draining is the override of the planted defect.
+func (*stateDrainingPanicsDefect) Draining(p0 shard.NodeID) (r0 bool) {
+	panic("the planted defect of a State whose Draining panics")
+}
+
+// stateDrainingPanics returns the planted defect of a State whose Draining
+// panics over a fresh subject.
+func stateDrainingPanics(h *StateHandle) StateMethods {
+	return &stateDrainingPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateDrainingDriftsDefect is the planted defect of a State whose
+// Draining returns another value on the repeat.
+type stateDrainingDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// Draining is the override of the planted defect.
+func (d *stateDrainingDriftsDefect) Draining(p0 shard.NodeID) (r0 bool) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = bool(true)
+	}
+	return r0
+}
+
+// stateDrainingDrifts returns the planted defect of a State whose Draining
+// returns another value on the repeat over a fresh subject.
+func stateDrainingDrifts(h *StateHandle) StateMethods {
+	return &stateDrainingDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateOnNodePanicsDefect is the planted defect of a State whose OnNode
+// panics.
+type stateOnNodePanicsDefect struct {
+	stateOverEmbedded
+}
+
+// OnNode is the override of the planted defect.
+func (*stateOnNodePanicsDefect) OnNode(p0 shard.NodeID) (r0 []shard.ID) {
+	panic("the planted defect of a State whose OnNode panics")
+}
+
+// stateOnNodePanics returns the planted defect of a State whose OnNode
+// panics over a fresh subject.
+func stateOnNodePanics(h *StateHandle) StateMethods {
+	return &stateOnNodePanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateRoleCountPanicsDefect is the planted defect of a State whose
+// RoleCount panics.
+type stateRoleCountPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// RoleCount is the override of the planted defect.
+func (*stateRoleCountPanicsDefect) RoleCount(p0 shard.NodeID, p1 shard.Role) (r0 int) {
+	panic("the planted defect of a State whose RoleCount panics")
+}
+
+// stateRoleCountPanics returns the planted defect of a State whose
+// RoleCount panics over a fresh subject.
+func stateRoleCountPanics(h *StateHandle) StateMethods {
+	return &stateRoleCountPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateRoleCountDriftsDefect is the planted defect of a State whose
+// RoleCount returns another value on the repeat.
+type stateRoleCountDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// RoleCount is the override of the planted defect.
+func (d *stateRoleCountDriftsDefect) RoleCount(p0 shard.NodeID, p1 shard.Role) (r0 int) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = int(7)
+	}
+	return r0
+}
+
+// stateRoleCountDrifts returns the planted defect of a State whose
+// RoleCount returns another value on the repeat over a fresh subject.
+func stateRoleCountDrifts(h *StateHandle) StateMethods {
+	return &stateRoleCountDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateRoleTotalPanicsDefect is the planted defect of a State whose
+// RoleTotal panics.
+type stateRoleTotalPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// RoleTotal is the override of the planted defect.
+func (*stateRoleTotalPanicsDefect) RoleTotal(p0 shard.Role) (r0 int) {
+	panic("the planted defect of a State whose RoleTotal panics")
+}
+
+// stateRoleTotalPanics returns the planted defect of a State whose
+// RoleTotal panics over a fresh subject.
+func stateRoleTotalPanics(h *StateHandle) StateMethods {
+	return &stateRoleTotalPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateRoleTotalDriftsDefect is the planted defect of a State whose
+// RoleTotal returns another value on the repeat.
+type stateRoleTotalDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// RoleTotal is the override of the planted defect.
+func (d *stateRoleTotalDriftsDefect) RoleTotal(p0 shard.Role) (r0 int) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = int(7)
+	}
+	return r0
+}
+
+// stateRoleTotalDrifts returns the planted defect of a State whose
+// RoleTotal returns another value on the repeat over a fresh subject.
+func stateRoleTotalDrifts(h *StateHandle) StateMethods {
+	return &stateRoleTotalDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateNodeLoadPanicsDefect is the planted defect of a State whose
+// NodeLoad panics.
+type stateNodeLoadPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// NodeLoad is the override of the planted defect.
+func (*stateNodeLoadPanicsDefect) NodeLoad(p0 shard.NodeID) (r0 shard.Load) {
+	panic("the planted defect of a State whose NodeLoad panics")
+}
+
+// stateNodeLoadPanics returns the planted defect of a State whose NodeLoad
+// panics over a fresh subject.
+func stateNodeLoadPanics(h *StateHandle) StateMethods {
+	return &stateNodeLoadPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateNodeLoadDriftsDefect is the planted defect of a State whose
+// NodeLoad returns another value on the repeat.
+type stateNodeLoadDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// NodeLoad is the override of the planted defect.
+func (d *stateNodeLoadDriftsDefect) NodeLoad(p0 shard.NodeID) (r0 shard.Load) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = shard.Load{"sample-b": 1.5}
+	}
+	return r0
+}
+
+// stateNodeLoadDrifts returns the planted defect of a State whose NodeLoad
+// returns another value on the repeat over a fresh subject.
+func stateNodeLoadDrifts(h *StateHandle) StateMethods {
+	return &stateNodeLoadDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// statePeakLoadPanicsDefect is the planted defect of a State whose
+// PeakLoad panics.
+type statePeakLoadPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// PeakLoad is the override of the planted defect.
+func (*statePeakLoadPanicsDefect) PeakLoad(p0 shard.NodeID) (r0 shard.Load) {
+	panic("the planted defect of a State whose PeakLoad panics")
+}
+
+// statePeakLoadPanics returns the planted defect of a State whose PeakLoad
+// panics over a fresh subject.
+func statePeakLoadPanics(h *StateHandle) StateMethods {
+	return &statePeakLoadPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// statePeakLoadDriftsDefect is the planted defect of a State whose
+// PeakLoad returns another value on the repeat.
+type statePeakLoadDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// PeakLoad is the override of the planted defect.
+func (d *statePeakLoadDriftsDefect) PeakLoad(p0 shard.NodeID) (r0 shard.Load) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = shard.Load{"sample-b": 1.5}
+	}
+	return r0
+}
+
+// statePeakLoadDrifts returns the planted defect of a State whose PeakLoad
+// returns another value on the repeat over a fresh subject.
+func statePeakLoadDrifts(h *StateHandle) StateMethods {
+	return &statePeakLoadDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// statePeakCountPanicsDefect is the planted defect of a State whose
+// PeakCount panics.
+type statePeakCountPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// PeakCount is the override of the planted defect.
+func (*statePeakCountPanicsDefect) PeakCount(p0 shard.NodeID) (r0 int) {
+	panic("the planted defect of a State whose PeakCount panics")
+}
+
+// statePeakCountPanics returns the planted defect of a State whose
+// PeakCount panics over a fresh subject.
+func statePeakCountPanics(h *StateHandle) StateMethods {
+	return &statePeakCountPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// statePeakCountDriftsDefect is the planted defect of a State whose
+// PeakCount returns another value on the repeat.
+type statePeakCountDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// PeakCount is the override of the planted defect.
+func (d *statePeakCountDriftsDefect) PeakCount(p0 shard.NodeID) (r0 int) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = int(7)
+	}
+	return r0
+}
+
+// statePeakCountDrifts returns the planted defect of a State whose
+// PeakCount returns another value on the repeat over a fresh subject.
+func statePeakCountDrifts(h *StateHandle) StateMethods {
+	return &statePeakCountDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// statePeakRoleCountPanicsDefect is the planted defect of a State whose
+// PeakRoleCount panics.
+type statePeakRoleCountPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// PeakRoleCount is the override of the planted defect.
+func (*statePeakRoleCountPanicsDefect) PeakRoleCount(p0 shard.NodeID, p1 shard.Role) (r0 int) {
+	panic("the planted defect of a State whose PeakRoleCount panics")
+}
+
+// statePeakRoleCountPanics returns the planted defect of a State whose
+// PeakRoleCount panics over a fresh subject.
+func statePeakRoleCountPanics(h *StateHandle) StateMethods {
+	return &statePeakRoleCountPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// statePeakRoleCountDriftsDefect is the planted defect of a State whose
+// PeakRoleCount returns another value on the repeat.
+type statePeakRoleCountDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// PeakRoleCount is the override of the planted defect.
+func (d *statePeakRoleCountDriftsDefect) PeakRoleCount(p0 shard.NodeID, p1 shard.Role) (r0 int) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = int(7)
+	}
+	return r0
+}
+
+// statePeakRoleCountDrifts returns the planted defect of a State whose
+// PeakRoleCount returns another value on the repeat over a fresh subject.
+func statePeakRoleCountDrifts(h *StateHandle) StateMethods {
+	return &statePeakRoleCountDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateMetricsPanicsDefect is the planted defect of a State whose Metrics
+// panics.
+type stateMetricsPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// Metrics is the override of the planted defect.
+func (*stateMetricsPanicsDefect) Metrics() (r0 []placement.Metric) {
+	panic("the planted defect of a State whose Metrics panics")
+}
+
+// stateMetricsPanics returns the planted defect of a State whose Metrics
+// panics over a fresh subject.
+func stateMetricsPanics(h *StateHandle) StateMethods {
+	return &stateMetricsPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateMetricsDriftsDefect is the planted defect of a State whose Metrics
+// returns another value on the repeat.
+type stateMetricsDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// Metrics is the override of the planted defect.
+func (d *stateMetricsDriftsDefect) Metrics() (r0 []placement.Metric) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = []placement.Metric{{Name: "Name-b"}}
+	}
+	return r0
+}
+
+// stateMetricsDrifts returns the planted defect of a State whose Metrics
+// returns another value on the repeat over a fresh subject.
+func stateMetricsDrifts(h *StateHandle) StateMethods {
+	return &stateMetricsDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateCapacityPanicsDefect is the planted defect of a State whose
+// Capacity panics.
+type stateCapacityPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// Capacity is the override of the planted defect.
+func (*stateCapacityPanicsDefect) Capacity(p0 shard.NodeID, p1 string) (r0 float64, r1 bool) {
+	panic("the planted defect of a State whose Capacity panics")
+}
+
+// stateCapacityPanics returns the planted defect of a State whose Capacity
+// panics over a fresh subject.
+func stateCapacityPanics(h *StateHandle) StateMethods {
+	return &stateCapacityPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateUtilisationPanicsDefect is the planted defect of a State whose
+// Utilisation panics.
+type stateUtilisationPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// Utilisation is the override of the planted defect.
+func (*stateUtilisationPanicsDefect) Utilisation(p0 shard.NodeID, p1 string) (r0 float64, r1 bool) {
+	panic("the planted defect of a State whose Utilisation panics")
+}
+
+// stateUtilisationPanics returns the planted defect of a State whose
+// Utilisation panics over a fresh subject.
+func stateUtilisationPanics(h *StateHandle) StateMethods {
+	return &stateUtilisationPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateUtilisationSumPanicsDefect is the planted defect of a State whose
+// UtilisationSum panics.
+type stateUtilisationSumPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// UtilisationSum is the override of the planted defect.
+func (*stateUtilisationSumPanicsDefect) UtilisationSum(p0 string) (r0 float64, r1 int) {
+	panic("the planted defect of a State whose UtilisationSum panics")
+}
+
+// stateUtilisationSumPanics returns the planted defect of a State whose
+// UtilisationSum panics over a fresh subject.
+func stateUtilisationSumPanics(h *StateHandle) StateMethods {
+	return &stateUtilisationSumPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateTotalLoadPanicsDefect is the planted defect of a State whose
+// TotalLoad panics.
+type stateTotalLoadPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// TotalLoad is the override of the planted defect.
+func (*stateTotalLoadPanicsDefect) TotalLoad(p0 string) (r0 float64) {
+	panic("the planted defect of a State whose TotalLoad panics")
+}
+
+// stateTotalLoadPanics returns the planted defect of a State whose
+// TotalLoad panics over a fresh subject.
+func stateTotalLoadPanics(h *StateHandle) StateMethods {
+	return &stateTotalLoadPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateTotalLoadDriftsDefect is the planted defect of a State whose
+// TotalLoad returns another value on the repeat.
+type stateTotalLoadDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// TotalLoad is the override of the planted defect.
+func (d *stateTotalLoadDriftsDefect) TotalLoad(p0 string) (r0 float64) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = float64(2.5)
+	}
+	return r0
+}
+
+// stateTotalLoadDrifts returns the planted defect of a State whose
+// TotalLoad returns another value on the repeat over a fresh subject.
+func stateTotalLoadDrifts(h *StateHandle) StateMethods {
+	return &stateTotalLoadDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateLabelledPanicsDefect is the planted defect of a State whose
+// Labelled panics.
+type stateLabelledPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// Labelled is the override of the planted defect.
+func (*stateLabelledPanicsDefect) Labelled(p0 tag.Tag, p1 shard.NodeID) (r0 int) {
+	panic("the planted defect of a State whose Labelled panics")
+}
+
+// stateLabelledPanics returns the planted defect of a State whose Labelled
+// panics over a fresh subject.
+func stateLabelledPanics(h *StateHandle) StateMethods {
+	return &stateLabelledPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateLabelledDriftsDefect is the planted defect of a State whose
+// Labelled returns another value on the repeat.
+type stateLabelledDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// Labelled is the override of the planted defect.
+func (d *stateLabelledDriftsDefect) Labelled(p0 tag.Tag, p1 shard.NodeID) (r0 int) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = int(7)
+	}
+	return r0
+}
+
+// stateLabelledDrifts returns the planted defect of a State whose Labelled
+// returns another value on the repeat over a fresh subject.
+func stateLabelledDrifts(h *StateHandle) StateMethods {
+	return &stateLabelledDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateLabelledNodesPanicsDefect is the planted defect of a State whose
+// LabelledNodes panics.
+type stateLabelledNodesPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// LabelledNodes is the override of the planted defect.
+func (*stateLabelledNodesPanicsDefect) LabelledNodes(p0 tag.Tag) (r0 int) {
+	panic("the planted defect of a State whose LabelledNodes panics")
+}
+
+// stateLabelledNodesPanics returns the planted defect of a State whose
+// LabelledNodes panics over a fresh subject.
+func stateLabelledNodesPanics(h *StateHandle) StateMethods {
+	return &stateLabelledNodesPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateLabelledNodesDriftsDefect is the planted defect of a State whose
+// LabelledNodes returns another value on the repeat.
+type stateLabelledNodesDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// LabelledNodes is the override of the planted defect.
+func (d *stateLabelledNodesDriftsDefect) LabelledNodes(p0 tag.Tag) (r0 int) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = int(7)
+	}
+	return r0
+}
+
+// stateLabelledNodesDrifts returns the planted defect of a State whose
+// LabelledNodes returns another value on the repeat over a fresh subject.
+func stateLabelledNodesDrifts(h *StateHandle) StateMethods {
+	return &stateLabelledNodesDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateMovedPanicsDefect is the planted defect of a State whose Moved
+// panics.
+type stateMovedPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// Moved is the override of the planted defect.
+func (*stateMovedPanicsDefect) Moved() (r0 int) {
+	panic("the planted defect of a State whose Moved panics")
+}
+
+// stateMovedPanics returns the planted defect of a State whose Moved
+// panics over a fresh subject.
+func stateMovedPanics(h *StateHandle) StateMethods {
+	return &stateMovedPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateMovedDriftsDefect is the planted defect of a State whose Moved
+// returns another value on the repeat.
+type stateMovedDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// Moved is the override of the planted defect.
+func (d *stateMovedDriftsDefect) Moved() (r0 int) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = int(7)
+	}
+	return r0
+}
+
+// stateMovedDrifts returns the planted defect of a State whose Moved
+// returns another value on the repeat over a fresh subject.
+func stateMovedDrifts(h *StateHandle) StateMethods {
+	return &stateMovedDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateMovedNodePanicsDefect is the planted defect of a State whose
+// MovedNode panics.
+type stateMovedNodePanicsDefect struct {
+	stateOverEmbedded
+}
+
+// MovedNode is the override of the planted defect.
+func (*stateMovedNodePanicsDefect) MovedNode(p0 shard.NodeID) (r0 int) {
+	panic("the planted defect of a State whose MovedNode panics")
+}
+
+// stateMovedNodePanics returns the planted defect of a State whose
+// MovedNode panics over a fresh subject.
+func stateMovedNodePanics(h *StateHandle) StateMethods {
+	return &stateMovedNodePanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateMovedNodeDriftsDefect is the planted defect of a State whose
+// MovedNode returns another value on the repeat.
+type stateMovedNodeDriftsDefect struct {
+	stateOverEmbedded
+	calls int
+}
+
+// MovedNode is the override of the planted defect.
+func (d *stateMovedNodeDriftsDefect) MovedNode(p0 shard.NodeID) (r0 int) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = int(7)
+	}
+	return r0
+}
+
+// stateMovedNodeDrifts returns the planted defect of a State whose
+// MovedNode returns another value on the repeat over a fresh subject.
+func stateMovedNodeDrifts(h *StateHandle) StateMethods {
+	return &stateMovedNodeDriftsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// stateApplyPanicsDefect is the planted defect of a State whose Apply
+// panics.
+type stateApplyPanicsDefect struct {
+	stateOverEmbedded
+}
+
+// Apply is the override of the planted defect.
+func (*stateApplyPanicsDefect) Apply(p0 placement.Move) (r0 error) {
+	panic("the planted defect of a State whose Apply panics")
+}
+
+// stateApplyPanics returns the planted defect of a State whose Apply
+// panics over a fresh subject.
+func stateApplyPanics(h *StateHandle) StateMethods {
+	return &stateApplyPanicsDefect{stateOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:830689899d115cfe39497b6d0b85a5a1525c1db7ee8081dd426a0be6a1fb0743

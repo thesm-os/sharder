@@ -29,15 +29,17 @@ func providerStubProvidesPins() []config.Capability {
 	return want0
 }
 
-// providerStubProvidesSubject returns the subject of [stub.Behaviour] for
-// Provides. The subject calls a new double that reports to tb.
+// providerStubProvidesSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Provides. The subject calls a new double that
+// reports to tb.
 func providerStubProvidesSubject(
 	tb assert.TB,
 ) stub.Subject[configtest.ProviderProvidesCall, configtest.ProviderProvidesReturn] {
 	tb.Helper()
 	s := configtest.NewProviderStub(tb)
 	return stub.Subject[configtest.ProviderProvidesCall, configtest.ProviderProvidesReturn]{
-		Stub: s.OnProvides.MethodStub,
+		Stub:  s.OnProvides.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = providerStubProvides(tb, s)
 		},
@@ -45,9 +47,14 @@ func providerStubProvidesSubject(
 			got0 := providerStubProvides(tb, s)
 			return configtest.ProviderProvidesReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() configtest.ProviderProvidesReturn {
+			want0 := providerStubProvidesPins()
+			s.OnProvides.Returns(want0)
+			return configtest.ProviderProvidesReturn{Result: want0}
+		},
+		Override: func(seen func(configtest.ProviderProvidesCall)) {
 			s.OnProvides.Func(func() []config.Capability {
-				mark()
+				seen(configtest.ProviderProvidesCall{})
 				var z0 []config.Capability
 				return z0
 			})
@@ -68,7 +75,6 @@ func providerStubInstanceOf(tb assert.TB, s *configtest.ProviderStub) providerSt
 		Call: func() {
 			_ = providerStubProvides(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -80,47 +86,14 @@ func TestProviderStub(t *testing.T) {
 	t.Run("Provides", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Provides", providerStubProvidesSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewProviderStub(t)
-			var seen []configtest.ProviderProvidesCall
-			s.OnProvides.OnRecord(func(c configtest.ProviderProvidesCall) { seen = append(seen, c) })
-			_ = providerStubProvides(t, s)
-			_ = providerStubProvides(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Provides")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) providerStubInstance {
-			return providerStubInstanceOf(tb, configtest.NewProviderStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Provides", func(t *testing.T) {
+		t.Run("Provides", func(t *testing.T) {
 			t.Parallel()
-			s := configtest.NewProviderStub(t)
-			_ = providerStubProvides(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnProvides.CallCount(), 0, "ResetCalls clears the calls of Provides")
-		})
-
-		t.Run("keeps the results of Returns of Provides", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewProviderStub(t)
-			want0 := providerStubProvidesPins()
-			s.OnProvides.Returns(want0)
-			s.ResetCalls()
-			got0 := providerStubProvides(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Provides")
-		})
-	})
-
-	t.Run("NewProviderStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) providerStubInstance {
-			return providerStubInstanceOf(tb, configtest.NewProviderStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "Provides", providerStubProvidesSubject)
 		})
 	})
 
@@ -198,34 +171,4 @@ func TestProviderStub(t *testing.T) {
 	})
 }
 
-// TestProviderProvidesStub checks the methods of ProviderProvidesStub,
-// which configures Provides.
-func TestProviderProvidesStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Provides", func(t *testing.T) {
-			t.Parallel()
-			s := configtest.NewProviderStub(t)
-			want0 := providerStubProvidesPins()
-			s.OnProvides.Returns(want0)
-			got0 := providerStubProvides(t, s)
-			assert.Equal(t, got0, want0, "Provides returns the Result that Returns sets")
-		})
-
-		t.Run("configures Provides for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := configtest.NewProviderStub(r)
-			s.OnProvides.Strict()
-			var want0 []config.Capability
-			s.OnProvides.Returns(want0)
-			_ = providerStubProvides(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Provides")
-		})
-	})
-}
-
-// dokimi:provenance sha256:aaa006fb3c583b30c7692d1f53c398a3a08e22db9977a57d2214575c72946dee
+// dokimi:provenance sha256:3fa144bcae0e741f1f2c5fe964d1e7a39f6a60410eff83d9b42547b95c6f7c1d

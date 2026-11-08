@@ -1569,21 +1569,6 @@ func NewStateStub(tb assert.TB, opts ...StateStubOption) *StateStub {
 	return s
 }
 
-// NewStateStubDelayed returns a double whose methods sleep d on clk before
-// they return. It applies opts after the clock and the latency.
-func NewStateStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...StateStubOption) *StateStub {
-	return NewStateStub(tb, append([]StateStubOption{
-		StateStubWithClock(clk),
-		StateStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewStateStubFailing returns a double on which each call of a method that
-// can fail fails with err. It applies opts after the failure.
-func NewStateStubFailing(tb assert.TB, err error, opts ...StateStubOption) *StateStub {
-	return NewStateStub(tb, append([]StateStubOption{StateStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *StateStub) ResetCalls() {
@@ -2465,4 +2450,4 @@ func (s *StateStub) Apply(m placement.Move) error {
 	return r.Err
 }
 
-// dokimi:provenance sha256:f8213b0cecb9e15265e17b1f346eb1396aaac2f17a74a829f000a5c313ee9982
+// dokimi:provenance sha256:8965ad251dcd0b241e95f1b7adebd3ac9053760aece084e37b650269dd9dc5cf

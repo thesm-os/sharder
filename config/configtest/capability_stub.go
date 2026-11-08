@@ -137,15 +137,6 @@ func NewProviderStub(tb assert.TB, opts ...ProviderStubOption) *ProviderStub {
 	return s
 }
 
-// NewProviderStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewProviderStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...ProviderStubOption) *ProviderStub {
-	return NewProviderStub(tb, append([]ProviderStubOption{
-		ProviderStubWithClock(clk),
-		ProviderStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *ProviderStub) ResetCalls() {
@@ -179,4 +170,4 @@ func (s *ProviderStub) Provides() []config.Capability {
 	return r.Result
 }
 
-// dokimi:provenance sha256:842628b0572e1adfc8a8e4a10a83413d488ff80e92ec890a9d414a0056080b33
+// dokimi:provenance sha256:bb7d54e2edd7d5578fd0675bec6524e6ca317b72e68e14f5bead896f4d7472aa

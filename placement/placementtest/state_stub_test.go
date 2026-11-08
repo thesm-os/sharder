@@ -716,13 +716,15 @@ func stateStubApplyPins() error {
 	return want0
 }
 
-// stateStubShardsSubject returns the subject of [stub.Behaviour] for
-// Shards. The subject calls a new double that reports to tb.
+// stateStubShardsSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Shards. The subject calls a new double that
+// reports to tb.
 func stateStubShardsSubject(tb assert.TB) stub.Subject[placementtest.StateShardsCall, placementtest.StateShardsReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateShardsCall, placementtest.StateShardsReturn]{
-		Stub: s.ShardsStub.MethodStub,
+		Stub:  s.ShardsStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubShards(tb, s)
 		},
@@ -730,9 +732,9 @@ func stateStubShardsSubject(tb assert.TB) stub.Subject[placementtest.StateShards
 			got0 := stateStubShards(tb, s)
 			return placementtest.StateShardsReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(placementtest.StateShardsCall)) {
 			s.ShardsStub.Func(func() []shard.ID {
-				mark()
+				seen(placementtest.StateShardsCall{})
 				var z0 []shard.ID
 				return z0
 			})
@@ -740,23 +742,35 @@ func stateStubShardsSubject(tb assert.TB) stub.Subject[placementtest.StateShards
 	}
 }
 
-// stateStubShardSubject returns the subject of [stub.Behaviour] for Shard.
-// The subject calls a new double that reports to tb.
+// stateStubShardSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Shard. The subject calls a new double that
+// reports to tb.
 func stateStubShardSubject(tb assert.TB) stub.Subject[placementtest.StateShardCall, placementtest.StateShardReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateShardCall, placementtest.StateShardReturn]{
-		Stub: s.ShardStub.MethodStub,
+		Stub:  s.ShardStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = stateStubShard(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateShardCall) {
+			tb.Helper()
+			a0 := stateStubShardArgs(tb)
+			assert.Equal(tb, c.ID, a0, "the call records ID")
 		},
 		Result: func() placementtest.StateShardReturn {
 			got0, got1 := stateStubShard(tb, s)
 			return placementtest.StateShardReturn{Result0: got0, Result1: got1}
 		},
-		Override: func(mark func()) {
-			s.ShardStub.Func(func(_ shard.ID) (partition.Shard, bool) {
-				mark()
+		Returns: func() placementtest.StateShardReturn {
+			want0, want1 := stateStubShardPins()
+			s.ShardStub.Returns(want0, want1)
+			return placementtest.StateShardReturn{Result0: want0, Result1: want1}
+		},
+		Override: func(seen func(placementtest.StateShardCall)) {
+			s.ShardStub.Func(func(p0 shard.ID) (partition.Shard, bool) {
+				seen(placementtest.StateShardCall{ID: p0})
 				var z0 partition.Shard
 				var z1 bool
 				return z0, z1
@@ -765,25 +779,37 @@ func stateStubShardSubject(tb assert.TB) stub.Subject[placementtest.StateShardCa
 	}
 }
 
-// stateStubReplicasSubject returns the subject of [stub.Behaviour] for
-// Replicas. The subject calls a new double that reports to tb.
+// stateStubReplicasSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Replicas. The subject calls a new double that
+// reports to tb.
 func stateStubReplicasSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateReplicasCall, placementtest.StateReplicasReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateReplicasCall, placementtest.StateReplicasReturn]{
-		Stub: s.ReplicasStub.MethodStub,
+		Stub:  s.ReplicasStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubReplicas(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateReplicasCall) {
+			tb.Helper()
+			a0 := stateStubReplicasArgs(tb)
+			assert.Equal(tb, c.ID, a0, "the call records ID")
 		},
 		Result: func() placementtest.StateReplicasReturn {
 			got0 := stateStubReplicas(tb, s)
 			return placementtest.StateReplicasReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.ReplicasStub.Func(func(_ shard.ID) []shard.Replica {
-				mark()
+		Returns: func() placementtest.StateReplicasReturn {
+			want0 := stateStubReplicasPins()
+			s.ReplicasStub.Returns(want0)
+			return placementtest.StateReplicasReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateReplicasCall)) {
+			s.ReplicasStub.Func(func(p0 shard.ID) []shard.Replica {
+				seen(placementtest.StateReplicasCall{ID: p0})
 				var z0 []shard.Replica
 				return z0
 			})
@@ -791,25 +817,37 @@ func stateStubReplicasSubject(
 	}
 }
 
-// stateStubReplicasAtSubject returns the subject of [stub.Behaviour] for
-// ReplicasAt. The subject calls a new double that reports to tb.
+// stateStubReplicasAtSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for ReplicasAt. The subject calls a new double
+// that reports to tb.
 func stateStubReplicasAtSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateReplicasAtCall, placementtest.StateReplicasAtReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateReplicasAtCall, placementtest.StateReplicasAtReturn]{
-		Stub: s.ReplicasAtStub.MethodStub,
+		Stub:  s.ReplicasAtStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubReplicasAt(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateReplicasAtCall) {
+			tb.Helper()
+			a0 := stateStubReplicasAtArgs(tb)
+			assert.Equal(tb, c.I, a0, "the call records I")
 		},
 		Result: func() placementtest.StateReplicasAtReturn {
 			got0 := stateStubReplicasAt(tb, s)
 			return placementtest.StateReplicasAtReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.ReplicasAtStub.Func(func(_ int) []shard.Replica {
-				mark()
+		Returns: func() placementtest.StateReplicasAtReturn {
+			want0 := stateStubReplicasAtPins()
+			s.ReplicasAtStub.Returns(want0)
+			return placementtest.StateReplicasAtReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateReplicasAtCall)) {
+			s.ReplicasAtStub.Func(func(p0 int) []shard.Replica {
+				seen(placementtest.StateReplicasAtCall{I: p0})
 				var z0 []shard.Replica
 				return z0
 			})
@@ -817,25 +855,37 @@ func stateStubReplicasAtSubject(
 	}
 }
 
-// stateStubInitialSubject returns the subject of [stub.Behaviour] for
-// Initial. The subject calls a new double that reports to tb.
+// stateStubInitialSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Initial. The subject calls a new double that
+// reports to tb.
 func stateStubInitialSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateInitialCall, placementtest.StateInitialReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateInitialCall, placementtest.StateInitialReturn]{
-		Stub: s.InitialStub.MethodStub,
+		Stub:  s.InitialStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubInitial(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateInitialCall) {
+			tb.Helper()
+			a0 := stateStubInitialArgs(tb)
+			assert.Equal(tb, c.ID, a0, "the call records ID")
 		},
 		Result: func() placementtest.StateInitialReturn {
 			got0 := stateStubInitial(tb, s)
 			return placementtest.StateInitialReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.InitialStub.Func(func(_ shard.ID) []shard.Replica {
-				mark()
+		Returns: func() placementtest.StateInitialReturn {
+			want0 := stateStubInitialPins()
+			s.InitialStub.Returns(want0)
+			return placementtest.StateInitialReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateInitialCall)) {
+			s.InitialStub.Func(func(p0 shard.ID) []shard.Replica {
+				seen(placementtest.StateInitialCall{ID: p0})
 				var z0 []shard.Replica
 				return z0
 			})
@@ -843,25 +893,37 @@ func stateStubInitialSubject(
 	}
 }
 
-// stateStubInitialAtSubject returns the subject of [stub.Behaviour] for
-// InitialAt. The subject calls a new double that reports to tb.
+// stateStubInitialAtSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for InitialAt. The subject calls a new double that
+// reports to tb.
 func stateStubInitialAtSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateInitialAtCall, placementtest.StateInitialAtReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateInitialAtCall, placementtest.StateInitialAtReturn]{
-		Stub: s.InitialAtStub.MethodStub,
+		Stub:  s.InitialAtStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubInitialAt(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateInitialAtCall) {
+			tb.Helper()
+			a0 := stateStubInitialAtArgs(tb)
+			assert.Equal(tb, c.I, a0, "the call records I")
 		},
 		Result: func() placementtest.StateInitialAtReturn {
 			got0 := stateStubInitialAt(tb, s)
 			return placementtest.StateInitialAtReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.InitialAtStub.Func(func(_ int) []shard.Replica {
-				mark()
+		Returns: func() placementtest.StateInitialAtReturn {
+			want0 := stateStubInitialAtPins()
+			s.InitialAtStub.Returns(want0)
+			return placementtest.StateInitialAtReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateInitialAtCall)) {
+			s.InitialAtStub.Func(func(p0 int) []shard.Replica {
+				seen(placementtest.StateInitialAtCall{I: p0})
 				var z0 []shard.Replica
 				return z0
 			})
@@ -869,25 +931,37 @@ func stateStubInitialAtSubject(
 	}
 }
 
-// stateStubInFlightSubject returns the subject of [stub.Behaviour] for
-// InFlight. The subject calls a new double that reports to tb.
+// stateStubInFlightSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for InFlight. The subject calls a new double that
+// reports to tb.
 func stateStubInFlightSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateInFlightCall, placementtest.StateInFlightReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateInFlightCall, placementtest.StateInFlightReturn]{
-		Stub: s.InFlightStub.MethodStub,
+		Stub:  s.InFlightStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = stateStubInFlight(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateInFlightCall) {
+			tb.Helper()
+			a0 := stateStubInFlightArgs(tb)
+			assert.Equal(tb, c.ID, a0, "the call records ID")
 		},
 		Result: func() placementtest.StateInFlightReturn {
 			got0, got1 := stateStubInFlight(tb, s)
 			return placementtest.StateInFlightReturn{Result0: got0, Result1: got1}
 		},
-		Override: func(mark func()) {
-			s.InFlightStub.Func(func(_ shard.ID) (placement.InFlight, bool) {
-				mark()
+		Returns: func() placementtest.StateInFlightReturn {
+			want0, want1 := stateStubInFlightPins()
+			s.InFlightStub.Returns(want0, want1)
+			return placementtest.StateInFlightReturn{Result0: want0, Result1: want1}
+		},
+		Override: func(seen func(placementtest.StateInFlightCall)) {
+			s.InFlightStub.Func(func(p0 shard.ID) (placement.InFlight, bool) {
+				seen(placementtest.StateInFlightCall{ID: p0})
 				var z0 placement.InFlight
 				var z1 bool
 				return z0, z1
@@ -896,25 +970,37 @@ func stateStubInFlightSubject(
 	}
 }
 
-// stateStubShardLoadSubject returns the subject of [stub.Behaviour] for
-// ShardLoad. The subject calls a new double that reports to tb.
+// stateStubShardLoadSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for ShardLoad. The subject calls a new double that
+// reports to tb.
 func stateStubShardLoadSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateShardLoadCall, placementtest.StateShardLoadReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateShardLoadCall, placementtest.StateShardLoadReturn]{
-		Stub: s.ShardLoadStub.MethodStub,
+		Stub:  s.ShardLoadStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubShardLoad(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateShardLoadCall) {
+			tb.Helper()
+			a0 := stateStubShardLoadArgs(tb)
+			assert.Equal(tb, c.ID, a0, "the call records ID")
 		},
 		Result: func() placementtest.StateShardLoadReturn {
 			got0 := stateStubShardLoad(tb, s)
 			return placementtest.StateShardLoadReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.ShardLoadStub.Func(func(_ shard.ID) shard.Load {
-				mark()
+		Returns: func() placementtest.StateShardLoadReturn {
+			want0 := stateStubShardLoadPins()
+			s.ShardLoadStub.Returns(want0)
+			return placementtest.StateShardLoadReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateShardLoadCall)) {
+			s.ShardLoadStub.Func(func(p0 shard.ID) shard.Load {
+				seen(placementtest.StateShardLoadCall{ID: p0})
 				var z0 shard.Load
 				return z0
 			})
@@ -922,15 +1008,17 @@ func stateStubShardLoadSubject(
 	}
 }
 
-// stateStubDesiredSubject returns the subject of [stub.Behaviour] for
-// Desired. The subject calls a new double that reports to tb.
+// stateStubDesiredSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Desired. The subject calls a new double that
+// reports to tb.
 func stateStubDesiredSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateDesiredCall, placementtest.StateDesiredReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateDesiredCall, placementtest.StateDesiredReturn]{
-		Stub: s.DesiredStub.MethodStub,
+		Stub:  s.DesiredStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubDesired(tb, s)
 		},
@@ -938,9 +1026,14 @@ func stateStubDesiredSubject(
 			got0 := stateStubDesired(tb, s)
 			return placementtest.StateDesiredReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() placementtest.StateDesiredReturn {
+			want0 := stateStubDesiredPins()
+			s.DesiredStub.Returns(want0)
+			return placementtest.StateDesiredReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateDesiredCall)) {
 			s.DesiredStub.Func(func() int {
-				mark()
+				seen(placementtest.StateDesiredCall{})
 				var z0 int
 				return z0
 			})
@@ -948,23 +1041,35 @@ func stateStubDesiredSubject(
 	}
 }
 
-// stateStubMaxSubject returns the subject of [stub.Behaviour] for Max. The
-// subject calls a new double that reports to tb.
+// stateStubMaxSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Max. The subject calls a new double that
+// reports to tb.
 func stateStubMaxSubject(tb assert.TB) stub.Subject[placementtest.StateMaxCall, placementtest.StateMaxReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateMaxCall, placementtest.StateMaxReturn]{
-		Stub: s.MaxStub.MethodStub,
+		Stub:  s.MaxStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubMax(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateMaxCall) {
+			tb.Helper()
+			a0 := stateStubMaxArgs(tb)
+			assert.Equal(tb, c.R, a0, "the call records R")
 		},
 		Result: func() placementtest.StateMaxReturn {
 			got0 := stateStubMax(tb, s)
 			return placementtest.StateMaxReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.MaxStub.Func(func(_ shard.Role) int {
-				mark()
+		Returns: func() placementtest.StateMaxReturn {
+			want0 := stateStubMaxPins()
+			s.MaxStub.Returns(want0)
+			return placementtest.StateMaxReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateMaxCall)) {
+			s.MaxStub.Func(func(p0 shard.Role) int {
+				seen(placementtest.StateMaxCall{R: p0})
 				var z0 int
 				return z0
 			})
@@ -972,13 +1077,15 @@ func stateStubMaxSubject(tb assert.TB) stub.Subject[placementtest.StateMaxCall, 
 	}
 }
 
-// stateStubNodesSubject returns the subject of [stub.Behaviour] for Nodes.
-// The subject calls a new double that reports to tb.
+// stateStubNodesSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Nodes. The subject calls a new double that
+// reports to tb.
 func stateStubNodesSubject(tb assert.TB) stub.Subject[placementtest.StateNodesCall, placementtest.StateNodesReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateNodesCall, placementtest.StateNodesReturn]{
-		Stub: s.NodesStub.MethodStub,
+		Stub:  s.NodesStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubNodes(tb, s)
 		},
@@ -986,9 +1093,14 @@ func stateStubNodesSubject(tb assert.TB) stub.Subject[placementtest.StateNodesCa
 			got0 := stateStubNodes(tb, s)
 			return placementtest.StateNodesReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() placementtest.StateNodesReturn {
+			want0 := stateStubNodesPins()
+			s.NodesStub.Returns(want0)
+			return placementtest.StateNodesReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateNodesCall)) {
 			s.NodesStub.Func(func() []shard.NodeID {
-				mark()
+				seen(placementtest.StateNodesCall{})
 				var z0 []shard.NodeID
 				return z0
 			})
@@ -996,23 +1108,35 @@ func stateStubNodesSubject(tb assert.TB) stub.Subject[placementtest.StateNodesCa
 	}
 }
 
-// stateStubNodeSubject returns the subject of [stub.Behaviour] for Node.
-// The subject calls a new double that reports to tb.
+// stateStubNodeSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Node. The subject calls a new double that
+// reports to tb.
 func stateStubNodeSubject(tb assert.TB) stub.Subject[placementtest.StateNodeCall, placementtest.StateNodeReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateNodeCall, placementtest.StateNodeReturn]{
-		Stub: s.NodeStub.MethodStub,
+		Stub:  s.NodeStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = stateStubNode(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateNodeCall) {
+			tb.Helper()
+			a0 := stateStubNodeArgs(tb)
+			assert.Equal(tb, c.N, a0, "the call records N")
 		},
 		Result: func() placementtest.StateNodeReturn {
 			got0, got1 := stateStubNode(tb, s)
 			return placementtest.StateNodeReturn{Result0: got0, Result1: got1}
 		},
-		Override: func(mark func()) {
-			s.NodeStub.Func(func(_ shard.NodeID) (shard.Node, bool) {
-				mark()
+		Returns: func() placementtest.StateNodeReturn {
+			want0, want1 := stateStubNodePins()
+			s.NodeStub.Returns(want0, want1)
+			return placementtest.StateNodeReturn{Result0: want0, Result1: want1}
+		},
+		Override: func(seen func(placementtest.StateNodeCall)) {
+			s.NodeStub.Func(func(p0 shard.NodeID) (shard.Node, bool) {
+				seen(placementtest.StateNodeCall{N: p0})
 				var z0 shard.Node
 				var z1 bool
 				return z0, z1
@@ -1021,25 +1145,37 @@ func stateStubNodeSubject(tb assert.TB) stub.Subject[placementtest.StateNodeCall
 	}
 }
 
-// stateStubDrainingSubject returns the subject of [stub.Behaviour] for
-// Draining. The subject calls a new double that reports to tb.
+// stateStubDrainingSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Draining. The subject calls a new double that
+// reports to tb.
 func stateStubDrainingSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateDrainingCall, placementtest.StateDrainingReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateDrainingCall, placementtest.StateDrainingReturn]{
-		Stub: s.DrainingStub.MethodStub,
+		Stub:  s.DrainingStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubDraining(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateDrainingCall) {
+			tb.Helper()
+			a0 := stateStubDrainingArgs(tb)
+			assert.Equal(tb, c.N, a0, "the call records N")
 		},
 		Result: func() placementtest.StateDrainingReturn {
 			got0 := stateStubDraining(tb, s)
 			return placementtest.StateDrainingReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.DrainingStub.Func(func(_ shard.NodeID) bool {
-				mark()
+		Returns: func() placementtest.StateDrainingReturn {
+			want0 := stateStubDrainingPins()
+			s.DrainingStub.Returns(want0)
+			return placementtest.StateDrainingReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateDrainingCall)) {
+			s.DrainingStub.Func(func(p0 shard.NodeID) bool {
+				seen(placementtest.StateDrainingCall{N: p0})
 				var z0 bool
 				return z0
 			})
@@ -1047,23 +1183,30 @@ func stateStubDrainingSubject(
 	}
 }
 
-// stateStubOnNodeSubject returns the subject of [stub.Behaviour] for
-// OnNode. The subject calls a new double that reports to tb.
+// stateStubOnNodeSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for OnNode. The subject calls a new double that
+// reports to tb.
 func stateStubOnNodeSubject(tb assert.TB) stub.Subject[placementtest.StateOnNodeCall, placementtest.StateOnNodeReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateOnNodeCall, placementtest.StateOnNodeReturn]{
-		Stub: s.OnNodeStub.MethodStub,
+		Stub:  s.OnNodeStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubOnNode(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateOnNodeCall) {
+			tb.Helper()
+			a0 := stateStubOnNodeArgs(tb)
+			assert.Equal(tb, c.N, a0, "the call records N")
 		},
 		Result: func() placementtest.StateOnNodeReturn {
 			got0 := stateStubOnNode(tb, s)
 			return placementtest.StateOnNodeReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnNodeStub.Func(func(_ shard.NodeID) []shard.ID {
-				mark()
+		Override: func(seen func(placementtest.StateOnNodeCall)) {
+			s.OnNodeStub.Func(func(p0 shard.NodeID) []shard.ID {
+				seen(placementtest.StateOnNodeCall{N: p0})
 				var z0 []shard.ID
 				return z0
 			})
@@ -1071,25 +1214,38 @@ func stateStubOnNodeSubject(tb assert.TB) stub.Subject[placementtest.StateOnNode
 	}
 }
 
-// stateStubRoleCountSubject returns the subject of [stub.Behaviour] for
-// RoleCount. The subject calls a new double that reports to tb.
+// stateStubRoleCountSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for RoleCount. The subject calls a new double that
+// reports to tb.
 func stateStubRoleCountSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateRoleCountCall, placementtest.StateRoleCountReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateRoleCountCall, placementtest.StateRoleCountReturn]{
-		Stub: s.RoleCountStub.MethodStub,
+		Stub:  s.RoleCountStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubRoleCount(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateRoleCountCall) {
+			tb.Helper()
+			a0, a1 := stateStubRoleCountArgs(tb)
+			expect.Equal(tb, c.N, a0, "the call records N")
+			expect.Equal(tb, c.R, a1, "the call records R")
 		},
 		Result: func() placementtest.StateRoleCountReturn {
 			got0 := stateStubRoleCount(tb, s)
 			return placementtest.StateRoleCountReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.RoleCountStub.Func(func(_ shard.NodeID, _ shard.Role) int {
-				mark()
+		Returns: func() placementtest.StateRoleCountReturn {
+			want0 := stateStubRoleCountPins()
+			s.RoleCountStub.Returns(want0)
+			return placementtest.StateRoleCountReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateRoleCountCall)) {
+			s.RoleCountStub.Func(func(p0 shard.NodeID, p1 shard.Role) int {
+				seen(placementtest.StateRoleCountCall{N: p0, R: p1})
 				var z0 int
 				return z0
 			})
@@ -1097,25 +1253,37 @@ func stateStubRoleCountSubject(
 	}
 }
 
-// stateStubRoleTotalSubject returns the subject of [stub.Behaviour] for
-// RoleTotal. The subject calls a new double that reports to tb.
+// stateStubRoleTotalSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for RoleTotal. The subject calls a new double that
+// reports to tb.
 func stateStubRoleTotalSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateRoleTotalCall, placementtest.StateRoleTotalReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateRoleTotalCall, placementtest.StateRoleTotalReturn]{
-		Stub: s.RoleTotalStub.MethodStub,
+		Stub:  s.RoleTotalStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubRoleTotal(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateRoleTotalCall) {
+			tb.Helper()
+			a0 := stateStubRoleTotalArgs(tb)
+			assert.Equal(tb, c.R, a0, "the call records R")
 		},
 		Result: func() placementtest.StateRoleTotalReturn {
 			got0 := stateStubRoleTotal(tb, s)
 			return placementtest.StateRoleTotalReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.RoleTotalStub.Func(func(_ shard.Role) int {
-				mark()
+		Returns: func() placementtest.StateRoleTotalReturn {
+			want0 := stateStubRoleTotalPins()
+			s.RoleTotalStub.Returns(want0)
+			return placementtest.StateRoleTotalReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateRoleTotalCall)) {
+			s.RoleTotalStub.Func(func(p0 shard.Role) int {
+				seen(placementtest.StateRoleTotalCall{R: p0})
 				var z0 int
 				return z0
 			})
@@ -1123,25 +1291,37 @@ func stateStubRoleTotalSubject(
 	}
 }
 
-// stateStubNodeLoadSubject returns the subject of [stub.Behaviour] for
-// NodeLoad. The subject calls a new double that reports to tb.
+// stateStubNodeLoadSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for NodeLoad. The subject calls a new double that
+// reports to tb.
 func stateStubNodeLoadSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateNodeLoadCall, placementtest.StateNodeLoadReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateNodeLoadCall, placementtest.StateNodeLoadReturn]{
-		Stub: s.NodeLoadStub.MethodStub,
+		Stub:  s.NodeLoadStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubNodeLoad(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateNodeLoadCall) {
+			tb.Helper()
+			a0 := stateStubNodeLoadArgs(tb)
+			assert.Equal(tb, c.N, a0, "the call records N")
 		},
 		Result: func() placementtest.StateNodeLoadReturn {
 			got0 := stateStubNodeLoad(tb, s)
 			return placementtest.StateNodeLoadReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.NodeLoadStub.Func(func(_ shard.NodeID) shard.Load {
-				mark()
+		Returns: func() placementtest.StateNodeLoadReturn {
+			want0 := stateStubNodeLoadPins()
+			s.NodeLoadStub.Returns(want0)
+			return placementtest.StateNodeLoadReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateNodeLoadCall)) {
+			s.NodeLoadStub.Func(func(p0 shard.NodeID) shard.Load {
+				seen(placementtest.StateNodeLoadCall{N: p0})
 				var z0 shard.Load
 				return z0
 			})
@@ -1149,25 +1329,37 @@ func stateStubNodeLoadSubject(
 	}
 }
 
-// stateStubPeakLoadSubject returns the subject of [stub.Behaviour] for
-// PeakLoad. The subject calls a new double that reports to tb.
+// stateStubPeakLoadSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for PeakLoad. The subject calls a new double that
+// reports to tb.
 func stateStubPeakLoadSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StatePeakLoadCall, placementtest.StatePeakLoadReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StatePeakLoadCall, placementtest.StatePeakLoadReturn]{
-		Stub: s.PeakLoadStub.MethodStub,
+		Stub:  s.PeakLoadStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubPeakLoad(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StatePeakLoadCall) {
+			tb.Helper()
+			a0 := stateStubPeakLoadArgs(tb)
+			assert.Equal(tb, c.N, a0, "the call records N")
 		},
 		Result: func() placementtest.StatePeakLoadReturn {
 			got0 := stateStubPeakLoad(tb, s)
 			return placementtest.StatePeakLoadReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.PeakLoadStub.Func(func(_ shard.NodeID) shard.Load {
-				mark()
+		Returns: func() placementtest.StatePeakLoadReturn {
+			want0 := stateStubPeakLoadPins()
+			s.PeakLoadStub.Returns(want0)
+			return placementtest.StatePeakLoadReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StatePeakLoadCall)) {
+			s.PeakLoadStub.Func(func(p0 shard.NodeID) shard.Load {
+				seen(placementtest.StatePeakLoadCall{N: p0})
 				var z0 shard.Load
 				return z0
 			})
@@ -1175,25 +1367,38 @@ func stateStubPeakLoadSubject(
 	}
 }
 
-// stateStubPeakCountsSubject returns the subject of [stub.Behaviour] for
-// PeakCounts. The subject calls a new double that reports to tb.
+// stateStubPeakCountsSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for PeakCounts. The subject calls a new double
+// that reports to tb.
 func stateStubPeakCountsSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StatePeakCountsCall, placementtest.StatePeakCountsReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StatePeakCountsCall, placementtest.StatePeakCountsReturn]{
-		Stub: s.PeakCountsStub.MethodStub,
+		Stub:  s.PeakCountsStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubPeakCounts(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StatePeakCountsCall) {
+			tb.Helper()
+			a0, a1 := stateStubPeakCountsArgs(tb)
+			expect.Equal(tb, c.N, a0, "the call records N")
+			expect.Equal(tb, c.ID, a1, "the call records ID")
 		},
 		Result: func() placementtest.StatePeakCountsReturn {
 			got0 := stateStubPeakCounts(tb, s)
 			return placementtest.StatePeakCountsReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.PeakCountsStub.Func(func(_ shard.NodeID, _ shard.ID) bool {
-				mark()
+		Returns: func() placementtest.StatePeakCountsReturn {
+			want0 := stateStubPeakCountsPins()
+			s.PeakCountsStub.Returns(want0)
+			return placementtest.StatePeakCountsReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StatePeakCountsCall)) {
+			s.PeakCountsStub.Func(func(p0 shard.NodeID, p1 shard.ID) bool {
+				seen(placementtest.StatePeakCountsCall{N: p0, ID: p1})
 				var z0 bool
 				return z0
 			})
@@ -1201,25 +1406,37 @@ func stateStubPeakCountsSubject(
 	}
 }
 
-// stateStubPeakCountSubject returns the subject of [stub.Behaviour] for
-// PeakCount. The subject calls a new double that reports to tb.
+// stateStubPeakCountSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for PeakCount. The subject calls a new double that
+// reports to tb.
 func stateStubPeakCountSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StatePeakCountCall, placementtest.StatePeakCountReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StatePeakCountCall, placementtest.StatePeakCountReturn]{
-		Stub: s.PeakCountStub.MethodStub,
+		Stub:  s.PeakCountStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubPeakCount(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StatePeakCountCall) {
+			tb.Helper()
+			a0 := stateStubPeakCountArgs(tb)
+			assert.Equal(tb, c.N, a0, "the call records N")
 		},
 		Result: func() placementtest.StatePeakCountReturn {
 			got0 := stateStubPeakCount(tb, s)
 			return placementtest.StatePeakCountReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.PeakCountStub.Func(func(_ shard.NodeID) int {
-				mark()
+		Returns: func() placementtest.StatePeakCountReturn {
+			want0 := stateStubPeakCountPins()
+			s.PeakCountStub.Returns(want0)
+			return placementtest.StatePeakCountReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StatePeakCountCall)) {
+			s.PeakCountStub.Func(func(p0 shard.NodeID) int {
+				seen(placementtest.StatePeakCountCall{N: p0})
 				var z0 int
 				return z0
 			})
@@ -1228,24 +1445,37 @@ func stateStubPeakCountSubject(
 }
 
 // stateStubPeakRoleCountSubject returns the subject of [stub.Behaviour]
-// for PeakRoleCount. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for PeakRoleCount. The subject calls a new
+// double that reports to tb.
 func stateStubPeakRoleCountSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StatePeakRoleCountCall, placementtest.StatePeakRoleCountReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StatePeakRoleCountCall, placementtest.StatePeakRoleCountReturn]{
-		Stub: s.PeakRoleCountStub.MethodStub,
+		Stub:  s.PeakRoleCountStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubPeakRoleCount(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StatePeakRoleCountCall) {
+			tb.Helper()
+			a0, a1 := stateStubPeakRoleCountArgs(tb)
+			expect.Equal(tb, c.N, a0, "the call records N")
+			expect.Equal(tb, c.R, a1, "the call records R")
 		},
 		Result: func() placementtest.StatePeakRoleCountReturn {
 			got0 := stateStubPeakRoleCount(tb, s)
 			return placementtest.StatePeakRoleCountReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.PeakRoleCountStub.Func(func(_ shard.NodeID, _ shard.Role) int {
-				mark()
+		Returns: func() placementtest.StatePeakRoleCountReturn {
+			want0 := stateStubPeakRoleCountPins()
+			s.PeakRoleCountStub.Returns(want0)
+			return placementtest.StatePeakRoleCountReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StatePeakRoleCountCall)) {
+			s.PeakRoleCountStub.Func(func(p0 shard.NodeID, p1 shard.Role) int {
+				seen(placementtest.StatePeakRoleCountCall{N: p0, R: p1})
 				var z0 int
 				return z0
 			})
@@ -1253,15 +1483,17 @@ func stateStubPeakRoleCountSubject(
 	}
 }
 
-// stateStubMetricsSubject returns the subject of [stub.Behaviour] for
-// Metrics. The subject calls a new double that reports to tb.
+// stateStubMetricsSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Metrics. The subject calls a new double that
+// reports to tb.
 func stateStubMetricsSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateMetricsCall, placementtest.StateMetricsReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateMetricsCall, placementtest.StateMetricsReturn]{
-		Stub: s.MetricsStub.MethodStub,
+		Stub:  s.MetricsStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubMetrics(tb, s)
 		},
@@ -1269,9 +1501,14 @@ func stateStubMetricsSubject(
 			got0 := stateStubMetrics(tb, s)
 			return placementtest.StateMetricsReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() placementtest.StateMetricsReturn {
+			want0 := stateStubMetricsPins()
+			s.MetricsStub.Returns(want0)
+			return placementtest.StateMetricsReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateMetricsCall)) {
 			s.MetricsStub.Func(func() []placement.Metric {
-				mark()
+				seen(placementtest.StateMetricsCall{})
 				var z0 []placement.Metric
 				return z0
 			})
@@ -1279,25 +1516,38 @@ func stateStubMetricsSubject(
 	}
 }
 
-// stateStubCapacitySubject returns the subject of [stub.Behaviour] for
-// Capacity. The subject calls a new double that reports to tb.
+// stateStubCapacitySubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Capacity. The subject calls a new double that
+// reports to tb.
 func stateStubCapacitySubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateCapacityCall, placementtest.StateCapacityReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateCapacityCall, placementtest.StateCapacityReturn]{
-		Stub: s.CapacityStub.MethodStub,
+		Stub:  s.CapacityStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = stateStubCapacity(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateCapacityCall) {
+			tb.Helper()
+			a0, a1 := stateStubCapacityArgs(tb)
+			expect.Equal(tb, c.N, a0, "the call records N")
+			expect.Equal(tb, c.Metric, a1, "the call records Metric")
 		},
 		Result: func() placementtest.StateCapacityReturn {
 			got0, got1 := stateStubCapacity(tb, s)
 			return placementtest.StateCapacityReturn{Result0: got0, Result1: got1}
 		},
-		Override: func(mark func()) {
-			s.CapacityStub.Func(func(_ shard.NodeID, _ string) (float64, bool) {
-				mark()
+		Returns: func() placementtest.StateCapacityReturn {
+			want0, want1 := stateStubCapacityPins()
+			s.CapacityStub.Returns(want0, want1)
+			return placementtest.StateCapacityReturn{Result0: want0, Result1: want1}
+		},
+		Override: func(seen func(placementtest.StateCapacityCall)) {
+			s.CapacityStub.Func(func(p0 shard.NodeID, p1 string) (float64, bool) {
+				seen(placementtest.StateCapacityCall{N: p0, Metric: p1})
 				var z0 float64
 				var z1 bool
 				return z0, z1
@@ -1306,25 +1556,38 @@ func stateStubCapacitySubject(
 	}
 }
 
-// stateStubUtilisationSubject returns the subject of [stub.Behaviour] for
-// Utilisation. The subject calls a new double that reports to tb.
+// stateStubUtilisationSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Utilisation. The subject calls a new double
+// that reports to tb.
 func stateStubUtilisationSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateUtilisationCall, placementtest.StateUtilisationReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateUtilisationCall, placementtest.StateUtilisationReturn]{
-		Stub: s.UtilisationStub.MethodStub,
+		Stub:  s.UtilisationStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = stateStubUtilisation(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateUtilisationCall) {
+			tb.Helper()
+			a0, a1 := stateStubUtilisationArgs(tb)
+			expect.Equal(tb, c.N, a0, "the call records N")
+			expect.Equal(tb, c.Metric, a1, "the call records Metric")
 		},
 		Result: func() placementtest.StateUtilisationReturn {
 			got0, got1 := stateStubUtilisation(tb, s)
 			return placementtest.StateUtilisationReturn{Result0: got0, Result1: got1}
 		},
-		Override: func(mark func()) {
-			s.UtilisationStub.Func(func(_ shard.NodeID, _ string) (float64, bool) {
-				mark()
+		Returns: func() placementtest.StateUtilisationReturn {
+			want0, want1 := stateStubUtilisationPins()
+			s.UtilisationStub.Returns(want0, want1)
+			return placementtest.StateUtilisationReturn{Result0: want0, Result1: want1}
+		},
+		Override: func(seen func(placementtest.StateUtilisationCall)) {
+			s.UtilisationStub.Func(func(p0 shard.NodeID, p1 string) (float64, bool) {
+				seen(placementtest.StateUtilisationCall{N: p0, Metric: p1})
 				var z0 float64
 				var z1 bool
 				return z0, z1
@@ -1334,24 +1597,36 @@ func stateStubUtilisationSubject(
 }
 
 // stateStubUtilisationSumSubject returns the subject of [stub.Behaviour]
-// for UtilisationSum. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for UtilisationSum. The subject calls a new
+// double that reports to tb.
 func stateStubUtilisationSumSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateUtilisationSumCall, placementtest.StateUtilisationSumReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateUtilisationSumCall, placementtest.StateUtilisationSumReturn]{
-		Stub: s.UtilisationSumStub.MethodStub,
+		Stub:  s.UtilisationSumStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = stateStubUtilisationSum(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateUtilisationSumCall) {
+			tb.Helper()
+			a0 := stateStubUtilisationSumArgs(tb)
+			assert.Equal(tb, c.Metric, a0, "the call records Metric")
 		},
 		Result: func() placementtest.StateUtilisationSumReturn {
 			got0, got1 := stateStubUtilisationSum(tb, s)
 			return placementtest.StateUtilisationSumReturn{Result0: got0, Result1: got1}
 		},
-		Override: func(mark func()) {
-			s.UtilisationSumStub.Func(func(_ string) (float64, int) {
-				mark()
+		Returns: func() placementtest.StateUtilisationSumReturn {
+			want0, want1 := stateStubUtilisationSumPins()
+			s.UtilisationSumStub.Returns(want0, want1)
+			return placementtest.StateUtilisationSumReturn{Result0: want0, Result1: want1}
+		},
+		Override: func(seen func(placementtest.StateUtilisationSumCall)) {
+			s.UtilisationSumStub.Func(func(p0 string) (float64, int) {
+				seen(placementtest.StateUtilisationSumCall{Metric: p0})
 				var z0 float64
 				var z1 int
 				return z0, z1
@@ -1360,25 +1635,37 @@ func stateStubUtilisationSumSubject(
 	}
 }
 
-// stateStubTotalLoadSubject returns the subject of [stub.Behaviour] for
-// TotalLoad. The subject calls a new double that reports to tb.
+// stateStubTotalLoadSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for TotalLoad. The subject calls a new double that
+// reports to tb.
 func stateStubTotalLoadSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateTotalLoadCall, placementtest.StateTotalLoadReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateTotalLoadCall, placementtest.StateTotalLoadReturn]{
-		Stub: s.TotalLoadStub.MethodStub,
+		Stub:  s.TotalLoadStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubTotalLoad(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateTotalLoadCall) {
+			tb.Helper()
+			a0 := stateStubTotalLoadArgs(tb)
+			assert.Equal(tb, c.Metric, a0, "the call records Metric")
 		},
 		Result: func() placementtest.StateTotalLoadReturn {
 			got0 := stateStubTotalLoad(tb, s)
 			return placementtest.StateTotalLoadReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.TotalLoadStub.Func(func(_ string) float64 {
-				mark()
+		Returns: func() placementtest.StateTotalLoadReturn {
+			want0 := stateStubTotalLoadPins()
+			s.TotalLoadStub.Returns(want0)
+			return placementtest.StateTotalLoadReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateTotalLoadCall)) {
+			s.TotalLoadStub.Func(func(p0 string) float64 {
+				seen(placementtest.StateTotalLoadCall{Metric: p0})
 				var z0 float64
 				return z0
 			})
@@ -1386,25 +1673,38 @@ func stateStubTotalLoadSubject(
 	}
 }
 
-// stateStubLabelledSubject returns the subject of [stub.Behaviour] for
-// Labelled. The subject calls a new double that reports to tb.
+// stateStubLabelledSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Labelled. The subject calls a new double that
+// reports to tb.
 func stateStubLabelledSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateLabelledCall, placementtest.StateLabelledReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateLabelledCall, placementtest.StateLabelledReturn]{
-		Stub: s.LabelledStub.MethodStub,
+		Stub:  s.LabelledStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubLabelled(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateLabelledCall) {
+			tb.Helper()
+			a0, a1 := stateStubLabelledArgs(tb)
+			expect.Equal(tb, c.T, a0, "the call records T")
+			expect.Equal(tb, c.N, a1, "the call records N")
 		},
 		Result: func() placementtest.StateLabelledReturn {
 			got0 := stateStubLabelled(tb, s)
 			return placementtest.StateLabelledReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.LabelledStub.Func(func(_ tag.Tag, _ shard.NodeID) int {
-				mark()
+		Returns: func() placementtest.StateLabelledReturn {
+			want0 := stateStubLabelledPins()
+			s.LabelledStub.Returns(want0)
+			return placementtest.StateLabelledReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateLabelledCall)) {
+			s.LabelledStub.Func(func(p0 tag.Tag, p1 shard.NodeID) int {
+				seen(placementtest.StateLabelledCall{T: p0, N: p1})
 				var z0 int
 				return z0
 			})
@@ -1413,24 +1713,36 @@ func stateStubLabelledSubject(
 }
 
 // stateStubLabelledNodesSubject returns the subject of [stub.Behaviour]
-// for LabelledNodes. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for LabelledNodes. The subject calls a new
+// double that reports to tb.
 func stateStubLabelledNodesSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateLabelledNodesCall, placementtest.StateLabelledNodesReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateLabelledNodesCall, placementtest.StateLabelledNodesReturn]{
-		Stub: s.LabelledNodesStub.MethodStub,
+		Stub:  s.LabelledNodesStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubLabelledNodes(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateLabelledNodesCall) {
+			tb.Helper()
+			a0 := stateStubLabelledNodesArgs(tb)
+			assert.Equal(tb, c.T, a0, "the call records T")
 		},
 		Result: func() placementtest.StateLabelledNodesReturn {
 			got0 := stateStubLabelledNodes(tb, s)
 			return placementtest.StateLabelledNodesReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.LabelledNodesStub.Func(func(_ tag.Tag) int {
-				mark()
+		Returns: func() placementtest.StateLabelledNodesReturn {
+			want0 := stateStubLabelledNodesPins()
+			s.LabelledNodesStub.Returns(want0)
+			return placementtest.StateLabelledNodesReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateLabelledNodesCall)) {
+			s.LabelledNodesStub.Func(func(p0 tag.Tag) int {
+				seen(placementtest.StateLabelledNodesCall{T: p0})
 				var z0 int
 				return z0
 			})
@@ -1438,13 +1750,15 @@ func stateStubLabelledNodesSubject(
 	}
 }
 
-// stateStubMovedSubject returns the subject of [stub.Behaviour] for Moved.
-// The subject calls a new double that reports to tb.
+// stateStubMovedSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Moved. The subject calls a new double that
+// reports to tb.
 func stateStubMovedSubject(tb assert.TB) stub.Subject[placementtest.StateMovedCall, placementtest.StateMovedReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateMovedCall, placementtest.StateMovedReturn]{
-		Stub: s.MovedStub.MethodStub,
+		Stub:  s.MovedStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubMoved(tb, s)
 		},
@@ -1452,9 +1766,14 @@ func stateStubMovedSubject(tb assert.TB) stub.Subject[placementtest.StateMovedCa
 			got0 := stateStubMoved(tb, s)
 			return placementtest.StateMovedReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() placementtest.StateMovedReturn {
+			want0 := stateStubMovedPins()
+			s.MovedStub.Returns(want0)
+			return placementtest.StateMovedReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateMovedCall)) {
 			s.MovedStub.Func(func() int {
-				mark()
+				seen(placementtest.StateMovedCall{})
 				var z0 int
 				return z0
 			})
@@ -1462,25 +1781,37 @@ func stateStubMovedSubject(tb assert.TB) stub.Subject[placementtest.StateMovedCa
 	}
 }
 
-// stateStubMovedNodeSubject returns the subject of [stub.Behaviour] for
-// MovedNode. The subject calls a new double that reports to tb.
+// stateStubMovedNodeSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for MovedNode. The subject calls a new double that
+// reports to tb.
 func stateStubMovedNodeSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateMovedNodeCall, placementtest.StateMovedNodeReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateMovedNodeCall, placementtest.StateMovedNodeReturn]{
-		Stub: s.MovedNodeStub.MethodStub,
+		Stub:  s.MovedNodeStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubMovedNode(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateMovedNodeCall) {
+			tb.Helper()
+			a0 := stateStubMovedNodeArgs(tb)
+			assert.Equal(tb, c.N, a0, "the call records N")
 		},
 		Result: func() placementtest.StateMovedNodeReturn {
 			got0 := stateStubMovedNode(tb, s)
 			return placementtest.StateMovedNodeReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.MovedNodeStub.Func(func(_ shard.NodeID) int {
-				mark()
+		Returns: func() placementtest.StateMovedNodeReturn {
+			want0 := stateStubMovedNodePins()
+			s.MovedNodeStub.Returns(want0)
+			return placementtest.StateMovedNodeReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateMovedNodeCall)) {
+			s.MovedNodeStub.Func(func(p0 shard.NodeID) int {
+				seen(placementtest.StateMovedNodeCall{N: p0})
 				var z0 int
 				return z0
 			})
@@ -1488,25 +1819,37 @@ func stateStubMovedNodeSubject(
 	}
 }
 
-// stateStubMovedShardSubject returns the subject of [stub.Behaviour] for
-// MovedShard. The subject calls a new double that reports to tb.
+// stateStubMovedShardSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for MovedShard. The subject calls a new double
+// that reports to tb.
 func stateStubMovedShardSubject(
 	tb assert.TB,
 ) stub.Subject[placementtest.StateMovedShardCall, placementtest.StateMovedShardReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateMovedShardCall, placementtest.StateMovedShardReturn]{
-		Stub: s.MovedShardStub.MethodStub,
+		Stub:  s.MovedShardStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubMovedShard(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateMovedShardCall) {
+			tb.Helper()
+			a0 := stateStubMovedShardArgs(tb)
+			assert.Equal(tb, c.ID, a0, "the call records ID")
 		},
 		Result: func() placementtest.StateMovedShardReturn {
 			got0 := stateStubMovedShard(tb, s)
 			return placementtest.StateMovedShardReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.MovedShardStub.Func(func(_ shard.ID) int {
-				mark()
+		Returns: func() placementtest.StateMovedShardReturn {
+			want0 := stateStubMovedShardPins()
+			s.MovedShardStub.Returns(want0)
+			return placementtest.StateMovedShardReturn{Result: want0}
+		},
+		Override: func(seen func(placementtest.StateMovedShardCall)) {
+			s.MovedShardStub.Func(func(p0 shard.ID) int {
+				seen(placementtest.StateMovedShardCall{ID: p0})
 				var z0 int
 				return z0
 			})
@@ -1514,23 +1857,35 @@ func stateStubMovedShardSubject(
 	}
 }
 
-// stateStubApplySubject returns the subject of [stub.Behaviour] for Apply.
-// The subject calls a new double that reports to tb.
+// stateStubApplySubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Apply. The subject calls a new double that
+// reports to tb.
 func stateStubApplySubject(tb assert.TB) stub.Subject[placementtest.StateApplyCall, placementtest.StateApplyReturn] {
 	tb.Helper()
 	s := placementtest.NewStateStub(tb)
 	return stub.Subject[placementtest.StateApplyCall, placementtest.StateApplyReturn]{
-		Stub: s.ApplyStub.MethodStub,
+		Stub:  s.ApplyStub.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = stateStubApply(tb, s)
+		},
+		Arguments: func(tb assert.TB, c placementtest.StateApplyCall) {
+			tb.Helper()
+			a0 := stateStubApplyArgs(tb)
+			assert.Equal(tb, c.M, a0, "the call records M")
 		},
 		Result: func() placementtest.StateApplyReturn {
 			got0 := stateStubApply(tb, s)
 			return placementtest.StateApplyReturn{Err: got0}
 		},
-		Override: func(mark func()) {
-			s.ApplyStub.Func(func(_ placement.Move) error {
-				mark()
+		Returns: func() placementtest.StateApplyReturn {
+			want0 := stateStubApplyPins()
+			s.ApplyStub.Returns(want0)
+			return placementtest.StateApplyReturn{Err: want0}
+		},
+		Override: func(seen func(placementtest.StateApplyCall)) {
+			s.ApplyStub.Func(func(p0 placement.Move) error {
+				seen(placementtest.StateApplyCall{M: p0})
 				var z0 error
 				return z0
 			})
@@ -1555,7 +1910,6 @@ func stateStubInstanceOf(tb assert.TB, s *placementtest.StateStub) stateStubInst
 		Call: func() {
 			_ = stateStubShards(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -1567,1316 +1921,324 @@ func TestStateStub(t *testing.T) {
 	t.Run("Shards", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Shards", stateStubShardsSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateShardsCall
-			s.ShardsStub.OnRecord(func(c placementtest.StateShardsCall) { seen = append(seen, c) })
-			_ = stateStubShards(t, s)
-			_ = stateStubShards(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Shards")
-		})
 	})
 
 	t.Run("Shard", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Shard", stateStubShardSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_, _ = stateStubShard(t, s)
-			got := s.ShardStub.AssertCalledOnce(t, "Shard records the call")
-			a0 := stateStubShardArgs(t)
-			assert.Equal(t, got.ID, a0, "the call records ID")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateShardCall
-			s.ShardStub.OnRecord(func(c placementtest.StateShardCall) { seen = append(seen, c) })
-			_, _ = stateStubShard(t, s)
-			_, _ = stateStubShard(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Shard")
-		})
 	})
 
 	t.Run("Replicas", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Replicas", stateStubReplicasSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubReplicas(t, s)
-			got := s.ReplicasStub.AssertCalledOnce(t, "Replicas records the call")
-			a0 := stateStubReplicasArgs(t)
-			assert.Equal(t, got.ID, a0, "the call records ID")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateReplicasCall
-			s.ReplicasStub.OnRecord(func(c placementtest.StateReplicasCall) { seen = append(seen, c) })
-			_ = stateStubReplicas(t, s)
-			_ = stateStubReplicas(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Replicas")
-		})
 	})
 
 	t.Run("ReplicasAt", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "ReplicasAt", stateStubReplicasAtSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubReplicasAt(t, s)
-			got := s.ReplicasAtStub.AssertCalledOnce(t, "ReplicasAt records the call")
-			a0 := stateStubReplicasAtArgs(t)
-			assert.Equal(t, got.I, a0, "the call records I")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateReplicasAtCall
-			s.ReplicasAtStub.OnRecord(func(c placementtest.StateReplicasAtCall) { seen = append(seen, c) })
-			_ = stateStubReplicasAt(t, s)
-			_ = stateStubReplicasAt(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of ReplicasAt")
-		})
 	})
 
 	t.Run("Initial", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Initial", stateStubInitialSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubInitial(t, s)
-			got := s.InitialStub.AssertCalledOnce(t, "Initial records the call")
-			a0 := stateStubInitialArgs(t)
-			assert.Equal(t, got.ID, a0, "the call records ID")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateInitialCall
-			s.InitialStub.OnRecord(func(c placementtest.StateInitialCall) { seen = append(seen, c) })
-			_ = stateStubInitial(t, s)
-			_ = stateStubInitial(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Initial")
-		})
 	})
 
 	t.Run("InitialAt", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "InitialAt", stateStubInitialAtSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubInitialAt(t, s)
-			got := s.InitialAtStub.AssertCalledOnce(t, "InitialAt records the call")
-			a0 := stateStubInitialAtArgs(t)
-			assert.Equal(t, got.I, a0, "the call records I")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateInitialAtCall
-			s.InitialAtStub.OnRecord(func(c placementtest.StateInitialAtCall) { seen = append(seen, c) })
-			_ = stateStubInitialAt(t, s)
-			_ = stateStubInitialAt(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of InitialAt")
-		})
 	})
 
 	t.Run("InFlight", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "InFlight", stateStubInFlightSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_, _ = stateStubInFlight(t, s)
-			got := s.InFlightStub.AssertCalledOnce(t, "InFlight records the call")
-			a0 := stateStubInFlightArgs(t)
-			assert.Equal(t, got.ID, a0, "the call records ID")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateInFlightCall
-			s.InFlightStub.OnRecord(func(c placementtest.StateInFlightCall) { seen = append(seen, c) })
-			_, _ = stateStubInFlight(t, s)
-			_, _ = stateStubInFlight(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of InFlight")
-		})
 	})
 
 	t.Run("ShardLoad", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "ShardLoad", stateStubShardLoadSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubShardLoad(t, s)
-			got := s.ShardLoadStub.AssertCalledOnce(t, "ShardLoad records the call")
-			a0 := stateStubShardLoadArgs(t)
-			assert.Equal(t, got.ID, a0, "the call records ID")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateShardLoadCall
-			s.ShardLoadStub.OnRecord(func(c placementtest.StateShardLoadCall) { seen = append(seen, c) })
-			_ = stateStubShardLoad(t, s)
-			_ = stateStubShardLoad(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of ShardLoad")
-		})
 	})
 
 	t.Run("Desired", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Desired", stateStubDesiredSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateDesiredCall
-			s.DesiredStub.OnRecord(func(c placementtest.StateDesiredCall) { seen = append(seen, c) })
-			_ = stateStubDesired(t, s)
-			_ = stateStubDesired(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Desired")
-		})
 	})
 
 	t.Run("Max", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Max", stateStubMaxSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubMax(t, s)
-			got := s.MaxStub.AssertCalledOnce(t, "Max records the call")
-			a0 := stateStubMaxArgs(t)
-			assert.Equal(t, got.R, a0, "the call records R")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateMaxCall
-			s.MaxStub.OnRecord(func(c placementtest.StateMaxCall) { seen = append(seen, c) })
-			_ = stateStubMax(t, s)
-			_ = stateStubMax(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Max")
-		})
 	})
 
 	t.Run("Nodes", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Nodes", stateStubNodesSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateNodesCall
-			s.NodesStub.OnRecord(func(c placementtest.StateNodesCall) { seen = append(seen, c) })
-			_ = stateStubNodes(t, s)
-			_ = stateStubNodes(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Nodes")
-		})
 	})
 
 	t.Run("Node", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Node", stateStubNodeSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_, _ = stateStubNode(t, s)
-			got := s.NodeStub.AssertCalledOnce(t, "Node records the call")
-			a0 := stateStubNodeArgs(t)
-			assert.Equal(t, got.N, a0, "the call records N")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateNodeCall
-			s.NodeStub.OnRecord(func(c placementtest.StateNodeCall) { seen = append(seen, c) })
-			_, _ = stateStubNode(t, s)
-			_, _ = stateStubNode(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Node")
-		})
 	})
 
 	t.Run("Draining", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Draining", stateStubDrainingSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubDraining(t, s)
-			got := s.DrainingStub.AssertCalledOnce(t, "Draining records the call")
-			a0 := stateStubDrainingArgs(t)
-			assert.Equal(t, got.N, a0, "the call records N")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateDrainingCall
-			s.DrainingStub.OnRecord(func(c placementtest.StateDrainingCall) { seen = append(seen, c) })
-			_ = stateStubDraining(t, s)
-			_ = stateStubDraining(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Draining")
-		})
 	})
 
 	t.Run("OnNode", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "OnNode", stateStubOnNodeSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubOnNode(t, s)
-			got := s.OnNodeStub.AssertCalledOnce(t, "OnNode records the call")
-			a0 := stateStubOnNodeArgs(t)
-			assert.Equal(t, got.N, a0, "the call records N")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateOnNodeCall
-			s.OnNodeStub.OnRecord(func(c placementtest.StateOnNodeCall) { seen = append(seen, c) })
-			_ = stateStubOnNode(t, s)
-			_ = stateStubOnNode(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of OnNode")
-		})
 	})
 
 	t.Run("RoleCount", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "RoleCount", stateStubRoleCountSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubRoleCount(t, s)
-			got := s.RoleCountStub.AssertCalledOnce(t, "RoleCount records the call")
-			a0, a1 := stateStubRoleCountArgs(t)
-			expect.Equal(t, got.N, a0, "the call records N")
-			expect.Equal(t, got.R, a1, "the call records R")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateRoleCountCall
-			s.RoleCountStub.OnRecord(func(c placementtest.StateRoleCountCall) { seen = append(seen, c) })
-			_ = stateStubRoleCount(t, s)
-			_ = stateStubRoleCount(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of RoleCount")
-		})
 	})
 
 	t.Run("RoleTotal", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "RoleTotal", stateStubRoleTotalSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubRoleTotal(t, s)
-			got := s.RoleTotalStub.AssertCalledOnce(t, "RoleTotal records the call")
-			a0 := stateStubRoleTotalArgs(t)
-			assert.Equal(t, got.R, a0, "the call records R")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateRoleTotalCall
-			s.RoleTotalStub.OnRecord(func(c placementtest.StateRoleTotalCall) { seen = append(seen, c) })
-			_ = stateStubRoleTotal(t, s)
-			_ = stateStubRoleTotal(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of RoleTotal")
-		})
 	})
 
 	t.Run("NodeLoad", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "NodeLoad", stateStubNodeLoadSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubNodeLoad(t, s)
-			got := s.NodeLoadStub.AssertCalledOnce(t, "NodeLoad records the call")
-			a0 := stateStubNodeLoadArgs(t)
-			assert.Equal(t, got.N, a0, "the call records N")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateNodeLoadCall
-			s.NodeLoadStub.OnRecord(func(c placementtest.StateNodeLoadCall) { seen = append(seen, c) })
-			_ = stateStubNodeLoad(t, s)
-			_ = stateStubNodeLoad(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of NodeLoad")
-		})
 	})
 
 	t.Run("PeakLoad", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "PeakLoad", stateStubPeakLoadSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubPeakLoad(t, s)
-			got := s.PeakLoadStub.AssertCalledOnce(t, "PeakLoad records the call")
-			a0 := stateStubPeakLoadArgs(t)
-			assert.Equal(t, got.N, a0, "the call records N")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StatePeakLoadCall
-			s.PeakLoadStub.OnRecord(func(c placementtest.StatePeakLoadCall) { seen = append(seen, c) })
-			_ = stateStubPeakLoad(t, s)
-			_ = stateStubPeakLoad(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of PeakLoad")
-		})
 	})
 
 	t.Run("PeakCounts", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "PeakCounts", stateStubPeakCountsSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubPeakCounts(t, s)
-			got := s.PeakCountsStub.AssertCalledOnce(t, "PeakCounts records the call")
-			a0, a1 := stateStubPeakCountsArgs(t)
-			expect.Equal(t, got.N, a0, "the call records N")
-			expect.Equal(t, got.ID, a1, "the call records ID")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StatePeakCountsCall
-			s.PeakCountsStub.OnRecord(func(c placementtest.StatePeakCountsCall) { seen = append(seen, c) })
-			_ = stateStubPeakCounts(t, s)
-			_ = stateStubPeakCounts(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of PeakCounts")
-		})
 	})
 
 	t.Run("PeakCount", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "PeakCount", stateStubPeakCountSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubPeakCount(t, s)
-			got := s.PeakCountStub.AssertCalledOnce(t, "PeakCount records the call")
-			a0 := stateStubPeakCountArgs(t)
-			assert.Equal(t, got.N, a0, "the call records N")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StatePeakCountCall
-			s.PeakCountStub.OnRecord(func(c placementtest.StatePeakCountCall) { seen = append(seen, c) })
-			_ = stateStubPeakCount(t, s)
-			_ = stateStubPeakCount(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of PeakCount")
-		})
 	})
 
 	t.Run("PeakRoleCount", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "PeakRoleCount", stateStubPeakRoleCountSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubPeakRoleCount(t, s)
-			got := s.PeakRoleCountStub.AssertCalledOnce(t, "PeakRoleCount records the call")
-			a0, a1 := stateStubPeakRoleCountArgs(t)
-			expect.Equal(t, got.N, a0, "the call records N")
-			expect.Equal(t, got.R, a1, "the call records R")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StatePeakRoleCountCall
-			s.PeakRoleCountStub.OnRecord(func(c placementtest.StatePeakRoleCountCall) { seen = append(seen, c) })
-			_ = stateStubPeakRoleCount(t, s)
-			_ = stateStubPeakRoleCount(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of PeakRoleCount")
-		})
 	})
 
 	t.Run("Metrics", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Metrics", stateStubMetricsSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateMetricsCall
-			s.MetricsStub.OnRecord(func(c placementtest.StateMetricsCall) { seen = append(seen, c) })
-			_ = stateStubMetrics(t, s)
-			_ = stateStubMetrics(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Metrics")
-		})
 	})
 
 	t.Run("Capacity", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Capacity", stateStubCapacitySubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_, _ = stateStubCapacity(t, s)
-			got := s.CapacityStub.AssertCalledOnce(t, "Capacity records the call")
-			a0, a1 := stateStubCapacityArgs(t)
-			expect.Equal(t, got.N, a0, "the call records N")
-			expect.Equal(t, got.Metric, a1, "the call records Metric")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateCapacityCall
-			s.CapacityStub.OnRecord(func(c placementtest.StateCapacityCall) { seen = append(seen, c) })
-			_, _ = stateStubCapacity(t, s)
-			_, _ = stateStubCapacity(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Capacity")
-		})
 	})
 
 	t.Run("Utilisation", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Utilisation", stateStubUtilisationSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_, _ = stateStubUtilisation(t, s)
-			got := s.UtilisationStub.AssertCalledOnce(t, "Utilisation records the call")
-			a0, a1 := stateStubUtilisationArgs(t)
-			expect.Equal(t, got.N, a0, "the call records N")
-			expect.Equal(t, got.Metric, a1, "the call records Metric")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateUtilisationCall
-			s.UtilisationStub.OnRecord(func(c placementtest.StateUtilisationCall) { seen = append(seen, c) })
-			_, _ = stateStubUtilisation(t, s)
-			_, _ = stateStubUtilisation(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Utilisation")
-		})
 	})
 
 	t.Run("UtilisationSum", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "UtilisationSum", stateStubUtilisationSumSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_, _ = stateStubUtilisationSum(t, s)
-			got := s.UtilisationSumStub.AssertCalledOnce(t, "UtilisationSum records the call")
-			a0 := stateStubUtilisationSumArgs(t)
-			assert.Equal(t, got.Metric, a0, "the call records Metric")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateUtilisationSumCall
-			s.UtilisationSumStub.OnRecord(func(c placementtest.StateUtilisationSumCall) { seen = append(seen, c) })
-			_, _ = stateStubUtilisationSum(t, s)
-			_, _ = stateStubUtilisationSum(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of UtilisationSum")
-		})
 	})
 
 	t.Run("TotalLoad", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "TotalLoad", stateStubTotalLoadSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubTotalLoad(t, s)
-			got := s.TotalLoadStub.AssertCalledOnce(t, "TotalLoad records the call")
-			a0 := stateStubTotalLoadArgs(t)
-			assert.Equal(t, got.Metric, a0, "the call records Metric")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateTotalLoadCall
-			s.TotalLoadStub.OnRecord(func(c placementtest.StateTotalLoadCall) { seen = append(seen, c) })
-			_ = stateStubTotalLoad(t, s)
-			_ = stateStubTotalLoad(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of TotalLoad")
-		})
 	})
 
 	t.Run("Labelled", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Labelled", stateStubLabelledSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubLabelled(t, s)
-			got := s.LabelledStub.AssertCalledOnce(t, "Labelled records the call")
-			a0, a1 := stateStubLabelledArgs(t)
-			expect.Equal(t, got.T, a0, "the call records T")
-			expect.Equal(t, got.N, a1, "the call records N")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateLabelledCall
-			s.LabelledStub.OnRecord(func(c placementtest.StateLabelledCall) { seen = append(seen, c) })
-			_ = stateStubLabelled(t, s)
-			_ = stateStubLabelled(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Labelled")
-		})
 	})
 
 	t.Run("LabelledNodes", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "LabelledNodes", stateStubLabelledNodesSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubLabelledNodes(t, s)
-			got := s.LabelledNodesStub.AssertCalledOnce(t, "LabelledNodes records the call")
-			a0 := stateStubLabelledNodesArgs(t)
-			assert.Equal(t, got.T, a0, "the call records T")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateLabelledNodesCall
-			s.LabelledNodesStub.OnRecord(func(c placementtest.StateLabelledNodesCall) { seen = append(seen, c) })
-			_ = stateStubLabelledNodes(t, s)
-			_ = stateStubLabelledNodes(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of LabelledNodes")
-		})
 	})
 
 	t.Run("Moved", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Moved", stateStubMovedSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateMovedCall
-			s.MovedStub.OnRecord(func(c placementtest.StateMovedCall) { seen = append(seen, c) })
-			_ = stateStubMoved(t, s)
-			_ = stateStubMoved(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Moved")
-		})
 	})
 
 	t.Run("MovedNode", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "MovedNode", stateStubMovedNodeSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubMovedNode(t, s)
-			got := s.MovedNodeStub.AssertCalledOnce(t, "MovedNode records the call")
-			a0 := stateStubMovedNodeArgs(t)
-			assert.Equal(t, got.N, a0, "the call records N")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateMovedNodeCall
-			s.MovedNodeStub.OnRecord(func(c placementtest.StateMovedNodeCall) { seen = append(seen, c) })
-			_ = stateStubMovedNode(t, s)
-			_ = stateStubMovedNode(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of MovedNode")
-		})
 	})
 
 	t.Run("MovedShard", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "MovedShard", stateStubMovedShardSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubMovedShard(t, s)
-			got := s.MovedShardStub.AssertCalledOnce(t, "MovedShard records the call")
-			a0 := stateStubMovedShardArgs(t)
-			assert.Equal(t, got.ID, a0, "the call records ID")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateMovedShardCall
-			s.MovedShardStub.OnRecord(func(c placementtest.StateMovedShardCall) { seen = append(seen, c) })
-			_ = stateStubMovedShard(t, s)
-			_ = stateStubMovedShard(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of MovedShard")
-		})
 	})
 
 	t.Run("Apply", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Apply", stateStubApplySubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubApply(t, s)
-			got := s.ApplyStub.AssertCalledOnce(t, "Apply records the call")
-			a0 := stateStubApplyArgs(t)
-			assert.Equal(t, got.M, a0, "the call records M")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var seen []placementtest.StateApplyCall
-			s.ApplyStub.OnRecord(func(c placementtest.StateApplyCall) { seen = append(seen, c) })
-			_ = stateStubApply(t, s)
-			_ = stateStubApply(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Apply")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) stateStubInstance {
-			return stateStubInstanceOf(tb, placementtest.NewStateStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Shards", func(t *testing.T) {
+		t.Run("Shards", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubShards(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.ShardsStub.CallCount(), 0, "ResetCalls clears the calls of Shards")
+			stub.ResetBehaviour(t, "Shards", stateStubShardsSubject)
 		})
 
-		t.Run("clears the recorded calls of Shard", func(t *testing.T) {
+		t.Run("Shard", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_, _ = stateStubShard(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.ShardStub.CallCount(), 0, "ResetCalls clears the calls of Shard")
+			stub.ResetBehaviour(t, "Shard", stateStubShardSubject)
 		})
 
-		t.Run("keeps the results of Returns of Shard", func(t *testing.T) {
+		t.Run("Replicas", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0, want1 := stateStubShardPins()
-			s.ShardStub.Returns(want0, want1)
-			s.ResetCalls()
-			_, got1 := stateStubShard(t, s)
-			assert.Equal(t, got1, want1, "ResetCalls keeps the Result1 of Shard")
+			stub.ResetBehaviour(t, "Replicas", stateStubReplicasSubject)
 		})
 
-		t.Run("clears the recorded calls of Replicas", func(t *testing.T) {
+		t.Run("ReplicasAt", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubReplicas(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.ReplicasStub.CallCount(), 0, "ResetCalls clears the calls of Replicas")
+			stub.ResetBehaviour(t, "ReplicasAt", stateStubReplicasAtSubject)
 		})
 
-		t.Run("keeps the results of Returns of Replicas", func(t *testing.T) {
+		t.Run("Initial", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubReplicasPins()
-			s.ReplicasStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubReplicas(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Replicas")
+			stub.ResetBehaviour(t, "Initial", stateStubInitialSubject)
 		})
 
-		t.Run("clears the recorded calls of ReplicasAt", func(t *testing.T) {
+		t.Run("InitialAt", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubReplicasAt(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.ReplicasAtStub.CallCount(), 0, "ResetCalls clears the calls of ReplicasAt")
+			stub.ResetBehaviour(t, "InitialAt", stateStubInitialAtSubject)
 		})
 
-		t.Run("keeps the results of Returns of ReplicasAt", func(t *testing.T) {
+		t.Run("InFlight", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubReplicasAtPins()
-			s.ReplicasAtStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubReplicasAt(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of ReplicasAt")
+			stub.ResetBehaviour(t, "InFlight", stateStubInFlightSubject)
 		})
 
-		t.Run("clears the recorded calls of Initial", func(t *testing.T) {
+		t.Run("ShardLoad", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubInitial(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.InitialStub.CallCount(), 0, "ResetCalls clears the calls of Initial")
+			stub.ResetBehaviour(t, "ShardLoad", stateStubShardLoadSubject)
 		})
 
-		t.Run("keeps the results of Returns of Initial", func(t *testing.T) {
+		t.Run("Desired", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubInitialPins()
-			s.InitialStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubInitial(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Initial")
+			stub.ResetBehaviour(t, "Desired", stateStubDesiredSubject)
 		})
 
-		t.Run("clears the recorded calls of InitialAt", func(t *testing.T) {
+		t.Run("Max", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubInitialAt(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.InitialAtStub.CallCount(), 0, "ResetCalls clears the calls of InitialAt")
+			stub.ResetBehaviour(t, "Max", stateStubMaxSubject)
 		})
 
-		t.Run("keeps the results of Returns of InitialAt", func(t *testing.T) {
+		t.Run("Nodes", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubInitialAtPins()
-			s.InitialAtStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubInitialAt(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of InitialAt")
+			stub.ResetBehaviour(t, "Nodes", stateStubNodesSubject)
 		})
 
-		t.Run("clears the recorded calls of InFlight", func(t *testing.T) {
+		t.Run("Node", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_, _ = stateStubInFlight(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.InFlightStub.CallCount(), 0, "ResetCalls clears the calls of InFlight")
+			stub.ResetBehaviour(t, "Node", stateStubNodeSubject)
 		})
 
-		t.Run("keeps the results of Returns of InFlight", func(t *testing.T) {
+		t.Run("Draining", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0, want1 := stateStubInFlightPins()
-			s.InFlightStub.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := stateStubInFlight(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result0 of InFlight")
-			expect.Equal(t, got1, want1, "ResetCalls keeps the Result1 of InFlight")
+			stub.ResetBehaviour(t, "Draining", stateStubDrainingSubject)
 		})
 
-		t.Run("clears the recorded calls of ShardLoad", func(t *testing.T) {
+		t.Run("OnNode", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubShardLoad(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.ShardLoadStub.CallCount(), 0, "ResetCalls clears the calls of ShardLoad")
+			stub.ResetBehaviour(t, "OnNode", stateStubOnNodeSubject)
 		})
 
-		t.Run("keeps the results of Returns of ShardLoad", func(t *testing.T) {
+		t.Run("RoleCount", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubShardLoadPins()
-			s.ShardLoadStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubShardLoad(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of ShardLoad")
+			stub.ResetBehaviour(t, "RoleCount", stateStubRoleCountSubject)
 		})
 
-		t.Run("clears the recorded calls of Desired", func(t *testing.T) {
+		t.Run("RoleTotal", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubDesired(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.DesiredStub.CallCount(), 0, "ResetCalls clears the calls of Desired")
+			stub.ResetBehaviour(t, "RoleTotal", stateStubRoleTotalSubject)
 		})
 
-		t.Run("keeps the results of Returns of Desired", func(t *testing.T) {
+		t.Run("NodeLoad", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubDesiredPins()
-			s.DesiredStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubDesired(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Desired")
+			stub.ResetBehaviour(t, "NodeLoad", stateStubNodeLoadSubject)
 		})
 
-		t.Run("clears the recorded calls of Max", func(t *testing.T) {
+		t.Run("PeakLoad", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubMax(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.MaxStub.CallCount(), 0, "ResetCalls clears the calls of Max")
+			stub.ResetBehaviour(t, "PeakLoad", stateStubPeakLoadSubject)
 		})
 
-		t.Run("keeps the results of Returns of Max", func(t *testing.T) {
+		t.Run("PeakCounts", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubMaxPins()
-			s.MaxStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubMax(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Max")
+			stub.ResetBehaviour(t, "PeakCounts", stateStubPeakCountsSubject)
 		})
 
-		t.Run("clears the recorded calls of Nodes", func(t *testing.T) {
+		t.Run("PeakCount", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubNodes(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.NodesStub.CallCount(), 0, "ResetCalls clears the calls of Nodes")
+			stub.ResetBehaviour(t, "PeakCount", stateStubPeakCountSubject)
 		})
 
-		t.Run("keeps the results of Returns of Nodes", func(t *testing.T) {
+		t.Run("PeakRoleCount", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubNodesPins()
-			s.NodesStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubNodes(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Nodes")
+			stub.ResetBehaviour(t, "PeakRoleCount", stateStubPeakRoleCountSubject)
 		})
 
-		t.Run("clears the recorded calls of Node", func(t *testing.T) {
+		t.Run("Metrics", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_, _ = stateStubNode(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.NodeStub.CallCount(), 0, "ResetCalls clears the calls of Node")
+			stub.ResetBehaviour(t, "Metrics", stateStubMetricsSubject)
 		})
 
-		t.Run("keeps the results of Returns of Node", func(t *testing.T) {
+		t.Run("Capacity", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0, want1 := stateStubNodePins()
-			s.NodeStub.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := stateStubNode(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result0 of Node")
-			expect.Equal(t, got1, want1, "ResetCalls keeps the Result1 of Node")
+			stub.ResetBehaviour(t, "Capacity", stateStubCapacitySubject)
 		})
 
-		t.Run("clears the recorded calls of Draining", func(t *testing.T) {
+		t.Run("Utilisation", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubDraining(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.DrainingStub.CallCount(), 0, "ResetCalls clears the calls of Draining")
+			stub.ResetBehaviour(t, "Utilisation", stateStubUtilisationSubject)
 		})
 
-		t.Run("keeps the results of Returns of Draining", func(t *testing.T) {
+		t.Run("UtilisationSum", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubDrainingPins()
-			s.DrainingStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubDraining(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Draining")
+			stub.ResetBehaviour(t, "UtilisationSum", stateStubUtilisationSumSubject)
 		})
 
-		t.Run("clears the recorded calls of OnNode", func(t *testing.T) {
+		t.Run("TotalLoad", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubOnNode(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnNodeStub.CallCount(), 0, "ResetCalls clears the calls of OnNode")
+			stub.ResetBehaviour(t, "TotalLoad", stateStubTotalLoadSubject)
 		})
 
-		t.Run("clears the recorded calls of RoleCount", func(t *testing.T) {
+		t.Run("Labelled", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubRoleCount(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.RoleCountStub.CallCount(), 0, "ResetCalls clears the calls of RoleCount")
+			stub.ResetBehaviour(t, "Labelled", stateStubLabelledSubject)
 		})
 
-		t.Run("keeps the results of Returns of RoleCount", func(t *testing.T) {
+		t.Run("LabelledNodes", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubRoleCountPins()
-			s.RoleCountStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubRoleCount(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of RoleCount")
+			stub.ResetBehaviour(t, "LabelledNodes", stateStubLabelledNodesSubject)
 		})
 
-		t.Run("clears the recorded calls of RoleTotal", func(t *testing.T) {
+		t.Run("Moved", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubRoleTotal(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.RoleTotalStub.CallCount(), 0, "ResetCalls clears the calls of RoleTotal")
+			stub.ResetBehaviour(t, "Moved", stateStubMovedSubject)
 		})
 
-		t.Run("keeps the results of Returns of RoleTotal", func(t *testing.T) {
+		t.Run("MovedNode", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubRoleTotalPins()
-			s.RoleTotalStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubRoleTotal(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of RoleTotal")
+			stub.ResetBehaviour(t, "MovedNode", stateStubMovedNodeSubject)
 		})
 
-		t.Run("clears the recorded calls of NodeLoad", func(t *testing.T) {
+		t.Run("MovedShard", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubNodeLoad(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.NodeLoadStub.CallCount(), 0, "ResetCalls clears the calls of NodeLoad")
+			stub.ResetBehaviour(t, "MovedShard", stateStubMovedShardSubject)
 		})
 
-		t.Run("keeps the results of Returns of NodeLoad", func(t *testing.T) {
+		t.Run("Apply", func(t *testing.T) {
 			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubNodeLoadPins()
-			s.NodeLoadStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubNodeLoad(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of NodeLoad")
-		})
-
-		t.Run("clears the recorded calls of PeakLoad", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubPeakLoad(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.PeakLoadStub.CallCount(), 0, "ResetCalls clears the calls of PeakLoad")
-		})
-
-		t.Run("keeps the results of Returns of PeakLoad", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubPeakLoadPins()
-			s.PeakLoadStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubPeakLoad(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of PeakLoad")
-		})
-
-		t.Run("clears the recorded calls of PeakCounts", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubPeakCounts(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.PeakCountsStub.CallCount(), 0, "ResetCalls clears the calls of PeakCounts")
-		})
-
-		t.Run("keeps the results of Returns of PeakCounts", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubPeakCountsPins()
-			s.PeakCountsStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubPeakCounts(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of PeakCounts")
-		})
-
-		t.Run("clears the recorded calls of PeakCount", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubPeakCount(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.PeakCountStub.CallCount(), 0, "ResetCalls clears the calls of PeakCount")
-		})
-
-		t.Run("keeps the results of Returns of PeakCount", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubPeakCountPins()
-			s.PeakCountStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubPeakCount(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of PeakCount")
-		})
-
-		t.Run("clears the recorded calls of PeakRoleCount", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubPeakRoleCount(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.PeakRoleCountStub.CallCount(), 0, "ResetCalls clears the calls of PeakRoleCount")
-		})
-
-		t.Run("keeps the results of Returns of PeakRoleCount", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubPeakRoleCountPins()
-			s.PeakRoleCountStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubPeakRoleCount(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of PeakRoleCount")
-		})
-
-		t.Run("clears the recorded calls of Metrics", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubMetrics(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.MetricsStub.CallCount(), 0, "ResetCalls clears the calls of Metrics")
-		})
-
-		t.Run("keeps the results of Returns of Metrics", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubMetricsPins()
-			s.MetricsStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubMetrics(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Metrics")
-		})
-
-		t.Run("clears the recorded calls of Capacity", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_, _ = stateStubCapacity(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.CapacityStub.CallCount(), 0, "ResetCalls clears the calls of Capacity")
-		})
-
-		t.Run("keeps the results of Returns of Capacity", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0, want1 := stateStubCapacityPins()
-			s.CapacityStub.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := stateStubCapacity(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result0 of Capacity")
-			expect.Equal(t, got1, want1, "ResetCalls keeps the Result1 of Capacity")
-		})
-
-		t.Run("clears the recorded calls of Utilisation", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_, _ = stateStubUtilisation(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.UtilisationStub.CallCount(), 0, "ResetCalls clears the calls of Utilisation")
-		})
-
-		t.Run("keeps the results of Returns of Utilisation", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0, want1 := stateStubUtilisationPins()
-			s.UtilisationStub.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := stateStubUtilisation(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result0 of Utilisation")
-			expect.Equal(t, got1, want1, "ResetCalls keeps the Result1 of Utilisation")
-		})
-
-		t.Run("clears the recorded calls of UtilisationSum", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_, _ = stateStubUtilisationSum(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.UtilisationSumStub.CallCount(), 0, "ResetCalls clears the calls of UtilisationSum")
-		})
-
-		t.Run("keeps the results of Returns of UtilisationSum", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0, want1 := stateStubUtilisationSumPins()
-			s.UtilisationSumStub.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := stateStubUtilisationSum(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result0 of UtilisationSum")
-			expect.Equal(t, got1, want1, "ResetCalls keeps the Result1 of UtilisationSum")
-		})
-
-		t.Run("clears the recorded calls of TotalLoad", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubTotalLoad(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.TotalLoadStub.CallCount(), 0, "ResetCalls clears the calls of TotalLoad")
-		})
-
-		t.Run("keeps the results of Returns of TotalLoad", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubTotalLoadPins()
-			s.TotalLoadStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubTotalLoad(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of TotalLoad")
-		})
-
-		t.Run("clears the recorded calls of Labelled", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubLabelled(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.LabelledStub.CallCount(), 0, "ResetCalls clears the calls of Labelled")
-		})
-
-		t.Run("keeps the results of Returns of Labelled", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubLabelledPins()
-			s.LabelledStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubLabelled(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Labelled")
-		})
-
-		t.Run("clears the recorded calls of LabelledNodes", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubLabelledNodes(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.LabelledNodesStub.CallCount(), 0, "ResetCalls clears the calls of LabelledNodes")
-		})
-
-		t.Run("keeps the results of Returns of LabelledNodes", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubLabelledNodesPins()
-			s.LabelledNodesStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubLabelledNodes(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of LabelledNodes")
-		})
-
-		t.Run("clears the recorded calls of Moved", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubMoved(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.MovedStub.CallCount(), 0, "ResetCalls clears the calls of Moved")
-		})
-
-		t.Run("keeps the results of Returns of Moved", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubMovedPins()
-			s.MovedStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubMoved(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Moved")
-		})
-
-		t.Run("clears the recorded calls of MovedNode", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubMovedNode(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.MovedNodeStub.CallCount(), 0, "ResetCalls clears the calls of MovedNode")
-		})
-
-		t.Run("keeps the results of Returns of MovedNode", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubMovedNodePins()
-			s.MovedNodeStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubMovedNode(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of MovedNode")
-		})
-
-		t.Run("clears the recorded calls of MovedShard", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubMovedShard(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.MovedShardStub.CallCount(), 0, "ResetCalls clears the calls of MovedShard")
-		})
-
-		t.Run("keeps the results of Returns of MovedShard", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubMovedShardPins()
-			s.MovedShardStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubMovedShard(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of MovedShard")
-		})
-
-		t.Run("clears the recorded calls of Apply", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			_ = stateStubApply(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.ApplyStub.CallCount(), 0, "ResetCalls clears the calls of Apply")
-		})
-
-		t.Run("keeps the results of Returns of Apply", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubApplyPins()
-			s.ApplyStub.Returns(want0)
-			s.ResetCalls()
-			got0 := stateStubApply(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of Apply")
-		})
-	})
-
-	t.Run("NewStateStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) stateStubInstance {
-			return stateStubInstanceOf(tb, placementtest.NewStateStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewStateStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Apply with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Apply-failing")
-			s := placementtest.NewStateStubFailing(t, want)
-			r0 := stateStubApply(t, s)
-			assert.ErrorIs(t, r0, want, "Apply fails with the error of NewStateStubFailing")
+			stub.ResetBehaviour(t, "Apply", stateStubApplySubject)
 		})
 	})
 
@@ -3735,1461 +3097,4 @@ func TestStateStub(t *testing.T) {
 	})
 }
 
-// TestStateShardsStub checks the methods of StateShardsStub, which
-// configures Shards.
-func TestStateShardsStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Shards for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.ShardsStub.Strict()
-			var want0 []shard.ID
-			s.ShardsStub.Returns(want0)
-			_ = stateStubShards(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Shards")
-		})
-	})
-}
-
-// TestStateShardStub checks the methods of StateShardStub, which
-// configures Shard.
-func TestStateShardStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Shard", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0, want1 := stateStubShardPins()
-			s.ShardStub.Returns(want0, want1)
-			_, got1 := stateStubShard(t, s)
-			assert.Equal(t, got1, want1, "Shard returns the Result1 that Returns sets")
-		})
-
-		t.Run("configures Shard for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.ShardStub.Strict()
-			var want0 partition.Shard
-			var want1 bool
-			s.ShardStub.Returns(want0, want1)
-			_, _ = stateStubShard(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Shard")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Shard to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.ID
-			s.ShardStub.Func(func(p0 shard.ID) (partition.Shard, bool) {
-				got0 = p0
-				var z0 partition.Shard
-				var z1 bool
-				return z0, z1
-			})
-			_, _ = stateStubShard(t, s)
-			a0 := stateStubShardArgs(t)
-			assert.Equal(t, got0, a0, "the function receives ID")
-		})
-	})
-}
-
-// TestStateReplicasStub checks the methods of StateReplicasStub, which
-// configures Replicas.
-func TestStateReplicasStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Replicas", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubReplicasPins()
-			s.ReplicasStub.Returns(want0)
-			got0 := stateStubReplicas(t, s)
-			assert.Equal(t, got0, want0, "Replicas returns the Result that Returns sets")
-		})
-
-		t.Run("configures Replicas for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.ReplicasStub.Strict()
-			var want0 []shard.Replica
-			s.ReplicasStub.Returns(want0)
-			_ = stateStubReplicas(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Replicas")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Replicas to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.ID
-			s.ReplicasStub.Func(func(p0 shard.ID) []shard.Replica {
-				got0 = p0
-				var z0 []shard.Replica
-				return z0
-			})
-			_ = stateStubReplicas(t, s)
-			a0 := stateStubReplicasArgs(t)
-			assert.Equal(t, got0, a0, "the function receives ID")
-		})
-	})
-}
-
-// TestStateReplicasAtStub checks the methods of StateReplicasAtStub, which
-// configures ReplicasAt.
-func TestStateReplicasAtStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of ReplicasAt", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubReplicasAtPins()
-			s.ReplicasAtStub.Returns(want0)
-			got0 := stateStubReplicasAt(t, s)
-			assert.Equal(t, got0, want0, "ReplicasAt returns the Result that Returns sets")
-		})
-
-		t.Run("configures ReplicasAt for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.ReplicasAtStub.Strict()
-			var want0 []shard.Replica
-			s.ReplicasAtStub.Returns(want0)
-			_ = stateStubReplicasAt(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of ReplicasAt")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of ReplicasAt to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 int
-			s.ReplicasAtStub.Func(func(p0 int) []shard.Replica {
-				got0 = p0
-				var z0 []shard.Replica
-				return z0
-			})
-			_ = stateStubReplicasAt(t, s)
-			a0 := stateStubReplicasAtArgs(t)
-			assert.Equal(t, got0, a0, "the function receives I")
-		})
-	})
-}
-
-// TestStateInitialStub checks the methods of StateInitialStub, which
-// configures Initial.
-func TestStateInitialStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Initial", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubInitialPins()
-			s.InitialStub.Returns(want0)
-			got0 := stateStubInitial(t, s)
-			assert.Equal(t, got0, want0, "Initial returns the Result that Returns sets")
-		})
-
-		t.Run("configures Initial for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.InitialStub.Strict()
-			var want0 []shard.Replica
-			s.InitialStub.Returns(want0)
-			_ = stateStubInitial(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Initial")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Initial to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.ID
-			s.InitialStub.Func(func(p0 shard.ID) []shard.Replica {
-				got0 = p0
-				var z0 []shard.Replica
-				return z0
-			})
-			_ = stateStubInitial(t, s)
-			a0 := stateStubInitialArgs(t)
-			assert.Equal(t, got0, a0, "the function receives ID")
-		})
-	})
-}
-
-// TestStateInitialAtStub checks the methods of StateInitialAtStub, which
-// configures InitialAt.
-func TestStateInitialAtStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of InitialAt", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubInitialAtPins()
-			s.InitialAtStub.Returns(want0)
-			got0 := stateStubInitialAt(t, s)
-			assert.Equal(t, got0, want0, "InitialAt returns the Result that Returns sets")
-		})
-
-		t.Run("configures InitialAt for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.InitialAtStub.Strict()
-			var want0 []shard.Replica
-			s.InitialAtStub.Returns(want0)
-			_ = stateStubInitialAt(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of InitialAt")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of InitialAt to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 int
-			s.InitialAtStub.Func(func(p0 int) []shard.Replica {
-				got0 = p0
-				var z0 []shard.Replica
-				return z0
-			})
-			_ = stateStubInitialAt(t, s)
-			a0 := stateStubInitialAtArgs(t)
-			assert.Equal(t, got0, a0, "the function receives I")
-		})
-	})
-}
-
-// TestStateInFlightStub checks the methods of StateInFlightStub, which
-// configures InFlight.
-func TestStateInFlightStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of InFlight", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0, want1 := stateStubInFlightPins()
-			s.InFlightStub.Returns(want0, want1)
-			got0, got1 := stateStubInFlight(t, s)
-			expect.Equal(t, got0, want0, "InFlight returns the Result0 that Returns sets")
-			expect.Equal(t, got1, want1, "InFlight returns the Result1 that Returns sets")
-		})
-
-		t.Run("configures InFlight for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.InFlightStub.Strict()
-			var want0 placement.InFlight
-			var want1 bool
-			s.InFlightStub.Returns(want0, want1)
-			_, _ = stateStubInFlight(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of InFlight")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of InFlight to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.ID
-			s.InFlightStub.Func(func(p0 shard.ID) (placement.InFlight, bool) {
-				got0 = p0
-				var z0 placement.InFlight
-				var z1 bool
-				return z0, z1
-			})
-			_, _ = stateStubInFlight(t, s)
-			a0 := stateStubInFlightArgs(t)
-			assert.Equal(t, got0, a0, "the function receives ID")
-		})
-	})
-}
-
-// TestStateShardLoadStub checks the methods of StateShardLoadStub, which
-// configures ShardLoad.
-func TestStateShardLoadStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of ShardLoad", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubShardLoadPins()
-			s.ShardLoadStub.Returns(want0)
-			got0 := stateStubShardLoad(t, s)
-			assert.Equal(t, got0, want0, "ShardLoad returns the Result that Returns sets")
-		})
-
-		t.Run("configures ShardLoad for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.ShardLoadStub.Strict()
-			var want0 shard.Load
-			s.ShardLoadStub.Returns(want0)
-			_ = stateStubShardLoad(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of ShardLoad")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of ShardLoad to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.ID
-			s.ShardLoadStub.Func(func(p0 shard.ID) shard.Load {
-				got0 = p0
-				var z0 shard.Load
-				return z0
-			})
-			_ = stateStubShardLoad(t, s)
-			a0 := stateStubShardLoadArgs(t)
-			assert.Equal(t, got0, a0, "the function receives ID")
-		})
-	})
-}
-
-// TestStateDesiredStub checks the methods of StateDesiredStub, which
-// configures Desired.
-func TestStateDesiredStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Desired", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubDesiredPins()
-			s.DesiredStub.Returns(want0)
-			got0 := stateStubDesired(t, s)
-			assert.Equal(t, got0, want0, "Desired returns the Result that Returns sets")
-		})
-
-		t.Run("configures Desired for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.DesiredStub.Strict()
-			var want0 int
-			s.DesiredStub.Returns(want0)
-			_ = stateStubDesired(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Desired")
-		})
-	})
-}
-
-// TestStateMaxStub checks the methods of StateMaxStub, which configures
-// Max.
-func TestStateMaxStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Max", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubMaxPins()
-			s.MaxStub.Returns(want0)
-			got0 := stateStubMax(t, s)
-			assert.Equal(t, got0, want0, "Max returns the Result that Returns sets")
-		})
-
-		t.Run("configures Max for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.MaxStub.Strict()
-			var want0 int
-			s.MaxStub.Returns(want0)
-			_ = stateStubMax(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Max")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Max to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.Role
-			s.MaxStub.Func(func(p0 shard.Role) int {
-				got0 = p0
-				var z0 int
-				return z0
-			})
-			_ = stateStubMax(t, s)
-			a0 := stateStubMaxArgs(t)
-			assert.Equal(t, got0, a0, "the function receives R")
-		})
-	})
-}
-
-// TestStateNodesStub checks the methods of StateNodesStub, which
-// configures Nodes.
-func TestStateNodesStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Nodes", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubNodesPins()
-			s.NodesStub.Returns(want0)
-			got0 := stateStubNodes(t, s)
-			assert.Equal(t, got0, want0, "Nodes returns the Result that Returns sets")
-		})
-
-		t.Run("configures Nodes for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.NodesStub.Strict()
-			var want0 []shard.NodeID
-			s.NodesStub.Returns(want0)
-			_ = stateStubNodes(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Nodes")
-		})
-	})
-}
-
-// TestStateNodeStub checks the methods of StateNodeStub, which configures
-// Node.
-func TestStateNodeStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Node", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0, want1 := stateStubNodePins()
-			s.NodeStub.Returns(want0, want1)
-			got0, got1 := stateStubNode(t, s)
-			expect.Equal(t, got0, want0, "Node returns the Result0 that Returns sets")
-			expect.Equal(t, got1, want1, "Node returns the Result1 that Returns sets")
-		})
-
-		t.Run("configures Node for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.NodeStub.Strict()
-			var want0 shard.Node
-			var want1 bool
-			s.NodeStub.Returns(want0, want1)
-			_, _ = stateStubNode(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Node")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Node to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.NodeID
-			s.NodeStub.Func(func(p0 shard.NodeID) (shard.Node, bool) {
-				got0 = p0
-				var z0 shard.Node
-				var z1 bool
-				return z0, z1
-			})
-			_, _ = stateStubNode(t, s)
-			a0 := stateStubNodeArgs(t)
-			assert.Equal(t, got0, a0, "the function receives N")
-		})
-	})
-}
-
-// TestStateDrainingStub checks the methods of StateDrainingStub, which
-// configures Draining.
-func TestStateDrainingStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Draining", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubDrainingPins()
-			s.DrainingStub.Returns(want0)
-			got0 := stateStubDraining(t, s)
-			assert.Equal(t, got0, want0, "Draining returns the Result that Returns sets")
-		})
-
-		t.Run("configures Draining for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.DrainingStub.Strict()
-			var want0 bool
-			s.DrainingStub.Returns(want0)
-			_ = stateStubDraining(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Draining")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Draining to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.NodeID
-			s.DrainingStub.Func(func(p0 shard.NodeID) bool {
-				got0 = p0
-				var z0 bool
-				return z0
-			})
-			_ = stateStubDraining(t, s)
-			a0 := stateStubDrainingArgs(t)
-			assert.Equal(t, got0, a0, "the function receives N")
-		})
-	})
-}
-
-// TestStateOnNodeStub checks the methods of StateOnNodeStub, which
-// configures OnNode.
-func TestStateOnNodeStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures OnNode for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.OnNodeStub.Strict()
-			var want0 []shard.ID
-			s.OnNodeStub.Returns(want0)
-			_ = stateStubOnNode(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of OnNode")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of OnNode to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.NodeID
-			s.OnNodeStub.Func(func(p0 shard.NodeID) []shard.ID {
-				got0 = p0
-				var z0 []shard.ID
-				return z0
-			})
-			_ = stateStubOnNode(t, s)
-			a0 := stateStubOnNodeArgs(t)
-			assert.Equal(t, got0, a0, "the function receives N")
-		})
-	})
-}
-
-// TestStateRoleCountStub checks the methods of StateRoleCountStub, which
-// configures RoleCount.
-func TestStateRoleCountStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of RoleCount", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubRoleCountPins()
-			s.RoleCountStub.Returns(want0)
-			got0 := stateStubRoleCount(t, s)
-			assert.Equal(t, got0, want0, "RoleCount returns the Result that Returns sets")
-		})
-
-		t.Run("configures RoleCount for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.RoleCountStub.Strict()
-			var want0 int
-			s.RoleCountStub.Returns(want0)
-			_ = stateStubRoleCount(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of RoleCount")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of RoleCount to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.NodeID
-			var got1 shard.Role
-			s.RoleCountStub.Func(func(p0 shard.NodeID, p1 shard.Role) int {
-				got0, got1 = p0, p1
-				var z0 int
-				return z0
-			})
-			_ = stateStubRoleCount(t, s)
-			a0, a1 := stateStubRoleCountArgs(t)
-			expect.Equal(t, got0, a0, "the function receives N")
-			expect.Equal(t, got1, a1, "the function receives R")
-		})
-	})
-}
-
-// TestStateRoleTotalStub checks the methods of StateRoleTotalStub, which
-// configures RoleTotal.
-func TestStateRoleTotalStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of RoleTotal", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubRoleTotalPins()
-			s.RoleTotalStub.Returns(want0)
-			got0 := stateStubRoleTotal(t, s)
-			assert.Equal(t, got0, want0, "RoleTotal returns the Result that Returns sets")
-		})
-
-		t.Run("configures RoleTotal for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.RoleTotalStub.Strict()
-			var want0 int
-			s.RoleTotalStub.Returns(want0)
-			_ = stateStubRoleTotal(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of RoleTotal")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of RoleTotal to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.Role
-			s.RoleTotalStub.Func(func(p0 shard.Role) int {
-				got0 = p0
-				var z0 int
-				return z0
-			})
-			_ = stateStubRoleTotal(t, s)
-			a0 := stateStubRoleTotalArgs(t)
-			assert.Equal(t, got0, a0, "the function receives R")
-		})
-	})
-}
-
-// TestStateNodeLoadStub checks the methods of StateNodeLoadStub, which
-// configures NodeLoad.
-func TestStateNodeLoadStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of NodeLoad", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubNodeLoadPins()
-			s.NodeLoadStub.Returns(want0)
-			got0 := stateStubNodeLoad(t, s)
-			assert.Equal(t, got0, want0, "NodeLoad returns the Result that Returns sets")
-		})
-
-		t.Run("configures NodeLoad for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.NodeLoadStub.Strict()
-			var want0 shard.Load
-			s.NodeLoadStub.Returns(want0)
-			_ = stateStubNodeLoad(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of NodeLoad")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of NodeLoad to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.NodeID
-			s.NodeLoadStub.Func(func(p0 shard.NodeID) shard.Load {
-				got0 = p0
-				var z0 shard.Load
-				return z0
-			})
-			_ = stateStubNodeLoad(t, s)
-			a0 := stateStubNodeLoadArgs(t)
-			assert.Equal(t, got0, a0, "the function receives N")
-		})
-	})
-}
-
-// TestStatePeakLoadStub checks the methods of StatePeakLoadStub, which
-// configures PeakLoad.
-func TestStatePeakLoadStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of PeakLoad", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubPeakLoadPins()
-			s.PeakLoadStub.Returns(want0)
-			got0 := stateStubPeakLoad(t, s)
-			assert.Equal(t, got0, want0, "PeakLoad returns the Result that Returns sets")
-		})
-
-		t.Run("configures PeakLoad for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.PeakLoadStub.Strict()
-			var want0 shard.Load
-			s.PeakLoadStub.Returns(want0)
-			_ = stateStubPeakLoad(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of PeakLoad")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of PeakLoad to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.NodeID
-			s.PeakLoadStub.Func(func(p0 shard.NodeID) shard.Load {
-				got0 = p0
-				var z0 shard.Load
-				return z0
-			})
-			_ = stateStubPeakLoad(t, s)
-			a0 := stateStubPeakLoadArgs(t)
-			assert.Equal(t, got0, a0, "the function receives N")
-		})
-	})
-}
-
-// TestStatePeakCountsStub checks the methods of StatePeakCountsStub, which
-// configures PeakCounts.
-func TestStatePeakCountsStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of PeakCounts", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubPeakCountsPins()
-			s.PeakCountsStub.Returns(want0)
-			got0 := stateStubPeakCounts(t, s)
-			assert.Equal(t, got0, want0, "PeakCounts returns the Result that Returns sets")
-		})
-
-		t.Run("configures PeakCounts for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.PeakCountsStub.Strict()
-			var want0 bool
-			s.PeakCountsStub.Returns(want0)
-			_ = stateStubPeakCounts(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of PeakCounts")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of PeakCounts to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.NodeID
-			var got1 shard.ID
-			s.PeakCountsStub.Func(func(p0 shard.NodeID, p1 shard.ID) bool {
-				got0, got1 = p0, p1
-				var z0 bool
-				return z0
-			})
-			_ = stateStubPeakCounts(t, s)
-			a0, a1 := stateStubPeakCountsArgs(t)
-			expect.Equal(t, got0, a0, "the function receives N")
-			expect.Equal(t, got1, a1, "the function receives ID")
-		})
-	})
-}
-
-// TestStatePeakCountStub checks the methods of StatePeakCountStub, which
-// configures PeakCount.
-func TestStatePeakCountStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of PeakCount", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubPeakCountPins()
-			s.PeakCountStub.Returns(want0)
-			got0 := stateStubPeakCount(t, s)
-			assert.Equal(t, got0, want0, "PeakCount returns the Result that Returns sets")
-		})
-
-		t.Run("configures PeakCount for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.PeakCountStub.Strict()
-			var want0 int
-			s.PeakCountStub.Returns(want0)
-			_ = stateStubPeakCount(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of PeakCount")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of PeakCount to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.NodeID
-			s.PeakCountStub.Func(func(p0 shard.NodeID) int {
-				got0 = p0
-				var z0 int
-				return z0
-			})
-			_ = stateStubPeakCount(t, s)
-			a0 := stateStubPeakCountArgs(t)
-			assert.Equal(t, got0, a0, "the function receives N")
-		})
-	})
-}
-
-// TestStatePeakRoleCountStub checks the methods of StatePeakRoleCountStub,
-// which configures PeakRoleCount.
-func TestStatePeakRoleCountStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of PeakRoleCount", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubPeakRoleCountPins()
-			s.PeakRoleCountStub.Returns(want0)
-			got0 := stateStubPeakRoleCount(t, s)
-			assert.Equal(t, got0, want0, "PeakRoleCount returns the Result that Returns sets")
-		})
-
-		t.Run("configures PeakRoleCount for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.PeakRoleCountStub.Strict()
-			var want0 int
-			s.PeakRoleCountStub.Returns(want0)
-			_ = stateStubPeakRoleCount(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of PeakRoleCount")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of PeakRoleCount to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.NodeID
-			var got1 shard.Role
-			s.PeakRoleCountStub.Func(func(p0 shard.NodeID, p1 shard.Role) int {
-				got0, got1 = p0, p1
-				var z0 int
-				return z0
-			})
-			_ = stateStubPeakRoleCount(t, s)
-			a0, a1 := stateStubPeakRoleCountArgs(t)
-			expect.Equal(t, got0, a0, "the function receives N")
-			expect.Equal(t, got1, a1, "the function receives R")
-		})
-	})
-}
-
-// TestStateMetricsStub checks the methods of StateMetricsStub, which
-// configures Metrics.
-func TestStateMetricsStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Metrics", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubMetricsPins()
-			s.MetricsStub.Returns(want0)
-			got0 := stateStubMetrics(t, s)
-			assert.Equal(t, got0, want0, "Metrics returns the Result that Returns sets")
-		})
-
-		t.Run("configures Metrics for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.MetricsStub.Strict()
-			var want0 []placement.Metric
-			s.MetricsStub.Returns(want0)
-			_ = stateStubMetrics(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Metrics")
-		})
-	})
-}
-
-// TestStateCapacityStub checks the methods of StateCapacityStub, which
-// configures Capacity.
-func TestStateCapacityStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Capacity", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0, want1 := stateStubCapacityPins()
-			s.CapacityStub.Returns(want0, want1)
-			got0, got1 := stateStubCapacity(t, s)
-			expect.Equal(t, got0, want0, "Capacity returns the Result0 that Returns sets")
-			expect.Equal(t, got1, want1, "Capacity returns the Result1 that Returns sets")
-		})
-
-		t.Run("configures Capacity for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.CapacityStub.Strict()
-			var want0 float64
-			var want1 bool
-			s.CapacityStub.Returns(want0, want1)
-			_, _ = stateStubCapacity(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Capacity")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Capacity to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.NodeID
-			var got1 string
-			s.CapacityStub.Func(func(p0 shard.NodeID, p1 string) (float64, bool) {
-				got0, got1 = p0, p1
-				var z0 float64
-				var z1 bool
-				return z0, z1
-			})
-			_, _ = stateStubCapacity(t, s)
-			a0, a1 := stateStubCapacityArgs(t)
-			expect.Equal(t, got0, a0, "the function receives N")
-			expect.Equal(t, got1, a1, "the function receives Metric")
-		})
-	})
-}
-
-// TestStateUtilisationStub checks the methods of StateUtilisationStub,
-// which configures Utilisation.
-func TestStateUtilisationStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Utilisation", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0, want1 := stateStubUtilisationPins()
-			s.UtilisationStub.Returns(want0, want1)
-			got0, got1 := stateStubUtilisation(t, s)
-			expect.Equal(t, got0, want0, "Utilisation returns the Result0 that Returns sets")
-			expect.Equal(t, got1, want1, "Utilisation returns the Result1 that Returns sets")
-		})
-
-		t.Run("configures Utilisation for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.UtilisationStub.Strict()
-			var want0 float64
-			var want1 bool
-			s.UtilisationStub.Returns(want0, want1)
-			_, _ = stateStubUtilisation(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Utilisation")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Utilisation to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.NodeID
-			var got1 string
-			s.UtilisationStub.Func(func(p0 shard.NodeID, p1 string) (float64, bool) {
-				got0, got1 = p0, p1
-				var z0 float64
-				var z1 bool
-				return z0, z1
-			})
-			_, _ = stateStubUtilisation(t, s)
-			a0, a1 := stateStubUtilisationArgs(t)
-			expect.Equal(t, got0, a0, "the function receives N")
-			expect.Equal(t, got1, a1, "the function receives Metric")
-		})
-	})
-}
-
-// TestStateUtilisationSumStub checks the methods of
-// StateUtilisationSumStub, which configures UtilisationSum.
-func TestStateUtilisationSumStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of UtilisationSum", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0, want1 := stateStubUtilisationSumPins()
-			s.UtilisationSumStub.Returns(want0, want1)
-			got0, got1 := stateStubUtilisationSum(t, s)
-			expect.Equal(t, got0, want0, "UtilisationSum returns the Result0 that Returns sets")
-			expect.Equal(t, got1, want1, "UtilisationSum returns the Result1 that Returns sets")
-		})
-
-		t.Run("configures UtilisationSum for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.UtilisationSumStub.Strict()
-			var want0 float64
-			var want1 int
-			s.UtilisationSumStub.Returns(want0, want1)
-			_, _ = stateStubUtilisationSum(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of UtilisationSum")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of UtilisationSum to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 string
-			s.UtilisationSumStub.Func(func(p0 string) (float64, int) {
-				got0 = p0
-				var z0 float64
-				var z1 int
-				return z0, z1
-			})
-			_, _ = stateStubUtilisationSum(t, s)
-			a0 := stateStubUtilisationSumArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Metric")
-		})
-	})
-}
-
-// TestStateTotalLoadStub checks the methods of StateTotalLoadStub, which
-// configures TotalLoad.
-func TestStateTotalLoadStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of TotalLoad", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubTotalLoadPins()
-			s.TotalLoadStub.Returns(want0)
-			got0 := stateStubTotalLoad(t, s)
-			assert.Equal(t, got0, want0, "TotalLoad returns the Result that Returns sets")
-		})
-
-		t.Run("configures TotalLoad for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.TotalLoadStub.Strict()
-			var want0 float64
-			s.TotalLoadStub.Returns(want0)
-			_ = stateStubTotalLoad(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of TotalLoad")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of TotalLoad to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 string
-			s.TotalLoadStub.Func(func(p0 string) float64 {
-				got0 = p0
-				var z0 float64
-				return z0
-			})
-			_ = stateStubTotalLoad(t, s)
-			a0 := stateStubTotalLoadArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Metric")
-		})
-	})
-}
-
-// TestStateLabelledStub checks the methods of StateLabelledStub, which
-// configures Labelled.
-func TestStateLabelledStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Labelled", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubLabelledPins()
-			s.LabelledStub.Returns(want0)
-			got0 := stateStubLabelled(t, s)
-			assert.Equal(t, got0, want0, "Labelled returns the Result that Returns sets")
-		})
-
-		t.Run("configures Labelled for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.LabelledStub.Strict()
-			var want0 int
-			s.LabelledStub.Returns(want0)
-			_ = stateStubLabelled(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Labelled")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Labelled to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 tag.Tag
-			var got1 shard.NodeID
-			s.LabelledStub.Func(func(p0 tag.Tag, p1 shard.NodeID) int {
-				got0, got1 = p0, p1
-				var z0 int
-				return z0
-			})
-			_ = stateStubLabelled(t, s)
-			a0, a1 := stateStubLabelledArgs(t)
-			expect.Equal(t, got0, a0, "the function receives T")
-			expect.Equal(t, got1, a1, "the function receives N")
-		})
-	})
-}
-
-// TestStateLabelledNodesStub checks the methods of StateLabelledNodesStub,
-// which configures LabelledNodes.
-func TestStateLabelledNodesStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of LabelledNodes", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubLabelledNodesPins()
-			s.LabelledNodesStub.Returns(want0)
-			got0 := stateStubLabelledNodes(t, s)
-			assert.Equal(t, got0, want0, "LabelledNodes returns the Result that Returns sets")
-		})
-
-		t.Run("configures LabelledNodes for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.LabelledNodesStub.Strict()
-			var want0 int
-			s.LabelledNodesStub.Returns(want0)
-			_ = stateStubLabelledNodes(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of LabelledNodes")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of LabelledNodes to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 tag.Tag
-			s.LabelledNodesStub.Func(func(p0 tag.Tag) int {
-				got0 = p0
-				var z0 int
-				return z0
-			})
-			_ = stateStubLabelledNodes(t, s)
-			a0 := stateStubLabelledNodesArgs(t)
-			assert.Equal(t, got0, a0, "the function receives T")
-		})
-	})
-}
-
-// TestStateMovedStub checks the methods of StateMovedStub, which
-// configures Moved.
-func TestStateMovedStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Moved", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubMovedPins()
-			s.MovedStub.Returns(want0)
-			got0 := stateStubMoved(t, s)
-			assert.Equal(t, got0, want0, "Moved returns the Result that Returns sets")
-		})
-
-		t.Run("configures Moved for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.MovedStub.Strict()
-			var want0 int
-			s.MovedStub.Returns(want0)
-			_ = stateStubMoved(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Moved")
-		})
-	})
-}
-
-// TestStateMovedNodeStub checks the methods of StateMovedNodeStub, which
-// configures MovedNode.
-func TestStateMovedNodeStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of MovedNode", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubMovedNodePins()
-			s.MovedNodeStub.Returns(want0)
-			got0 := stateStubMovedNode(t, s)
-			assert.Equal(t, got0, want0, "MovedNode returns the Result that Returns sets")
-		})
-
-		t.Run("configures MovedNode for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.MovedNodeStub.Strict()
-			var want0 int
-			s.MovedNodeStub.Returns(want0)
-			_ = stateStubMovedNode(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of MovedNode")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of MovedNode to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.NodeID
-			s.MovedNodeStub.Func(func(p0 shard.NodeID) int {
-				got0 = p0
-				var z0 int
-				return z0
-			})
-			_ = stateStubMovedNode(t, s)
-			a0 := stateStubMovedNodeArgs(t)
-			assert.Equal(t, got0, a0, "the function receives N")
-		})
-	})
-}
-
-// TestStateMovedShardStub checks the methods of StateMovedShardStub, which
-// configures MovedShard.
-func TestStateMovedShardStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of MovedShard", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubMovedShardPins()
-			s.MovedShardStub.Returns(want0)
-			got0 := stateStubMovedShard(t, s)
-			assert.Equal(t, got0, want0, "MovedShard returns the Result that Returns sets")
-		})
-
-		t.Run("configures MovedShard for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.MovedShardStub.Strict()
-			var want0 int
-			s.MovedShardStub.Returns(want0)
-			_ = stateStubMovedShard(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of MovedShard")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of MovedShard to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 shard.ID
-			s.MovedShardStub.Func(func(p0 shard.ID) int {
-				got0 = p0
-				var z0 int
-				return z0
-			})
-			_ = stateStubMovedShard(t, s)
-			a0 := stateStubMovedShardArgs(t)
-			assert.Equal(t, got0, a0, "the function receives ID")
-		})
-	})
-}
-
-// TestStateApplyStub checks the methods of StateApplyStub, which
-// configures Apply.
-func TestStateApplyStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Apply", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			want0 := stateStubApplyPins()
-			s.ApplyStub.Returns(want0)
-			got0 := stateStubApply(t, s)
-			assert.ErrorIs(t, got0, want0, "Apply returns the error that Returns sets")
-		})
-
-		t.Run("configures Apply for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := placementtest.NewStateStub(r)
-			s.ApplyStub.Strict()
-			var want0 error
-			s.ApplyStub.Returns(want0)
-			_ = stateStubApply(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Apply")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Apply to the function", func(t *testing.T) {
-			t.Parallel()
-			s := placementtest.NewStateStub(t)
-			var got0 placement.Move
-			s.ApplyStub.Func(func(p0 placement.Move) error {
-				got0 = p0
-				var z0 error
-				return z0
-			})
-			_ = stateStubApply(t, s)
-			a0 := stateStubApplyArgs(t)
-			assert.Equal(t, got0, a0, "the function receives M")
-		})
-	})
-}
-
-// dokimi:provenance sha256:29f5d6bce0e59c7fc5cbff23375a115e05740b240e908e941903ced8d2fc8e7a
+// dokimi:provenance sha256:af2abdfe60e34034cb3dabd9abcf55cf59566aca111e3bad33af8744a9c04fa5

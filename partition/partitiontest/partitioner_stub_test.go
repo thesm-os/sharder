@@ -87,24 +87,37 @@ func partitionerStubInitialPins() ([]partition.Span, error) {
 }
 
 // partitionerStubPositionSubject returns the subject of [stub.Behaviour]
-// for Position. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for Position. The subject calls a new double
+// that reports to tb.
 func partitionerStubPositionSubject(
 	tb assert.TB,
 ) stub.Subject[partitiontest.PartitionerPositionCall, partitiontest.PartitionerPositionReturn] {
 	tb.Helper()
 	s := partitiontest.NewPartitionerStub(tb)
 	return stub.Subject[partitiontest.PartitionerPositionCall, partitiontest.PartitionerPositionReturn]{
-		Stub: s.OnPosition.MethodStub,
+		Stub:  s.OnPosition.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = partitionerStubPosition(tb, s)
+		},
+		Arguments: func(tb assert.TB, c partitiontest.PartitionerPositionCall) {
+			tb.Helper()
+			a0, a1 := partitionerStubPositionArgs(tb)
+			expect.Equal(tb, c.Dst, a0, "the call records Dst")
+			expect.Equal(tb, c.Key, a1, "the call records Key")
 		},
 		Result: func() partitiontest.PartitionerPositionReturn {
 			got0 := partitionerStubPosition(tb, s)
 			return partitiontest.PartitionerPositionReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnPosition.Func(func(_, _ []byte) []byte {
-				mark()
+		Returns: func() partitiontest.PartitionerPositionReturn {
+			want0 := partitionerStubPositionPins()
+			s.OnPosition.Returns(want0)
+			return partitiontest.PartitionerPositionReturn{Result: want0}
+		},
+		Override: func(seen func(partitiontest.PartitionerPositionCall)) {
+			s.OnPosition.Func(func(p0, p1 []byte) []byte {
+				seen(partitiontest.PartitionerPositionCall{Dst: p0, Key: p1})
 				var z0 []byte
 				return z0
 			})
@@ -113,14 +126,16 @@ func partitionerStubPositionSubject(
 }
 
 // partitionerStubMappingSubject returns the subject of [stub.Behaviour]
-// for Mapping. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for Mapping. The subject calls a new double
+// that reports to tb.
 func partitionerStubMappingSubject(
 	tb assert.TB,
 ) stub.Subject[partitiontest.PartitionerMappingCall, partitiontest.PartitionerMappingReturn] {
 	tb.Helper()
 	s := partitiontest.NewPartitionerStub(tb)
 	return stub.Subject[partitiontest.PartitionerMappingCall, partitiontest.PartitionerMappingReturn]{
-		Stub: s.OnMapping.MethodStub,
+		Stub:  s.OnMapping.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = partitionerStubMapping(tb, s)
 		},
@@ -128,9 +143,14 @@ func partitionerStubMappingSubject(
 			got0 := partitionerStubMapping(tb, s)
 			return partitiontest.PartitionerMappingReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() partitiontest.PartitionerMappingReturn {
+			want0 := partitionerStubMappingPins()
+			s.OnMapping.Returns(want0)
+			return partitiontest.PartitionerMappingReturn{Result: want0}
+		},
+		Override: func(seen func(partitiontest.PartitionerMappingCall)) {
 			s.OnMapping.Func(func() shard.Mapping {
-				mark()
+				seen(partitiontest.PartitionerMappingCall{})
 				var z0 shard.Mapping
 				return z0
 			})
@@ -139,24 +159,36 @@ func partitionerStubMappingSubject(
 }
 
 // partitionerStubInitialSubject returns the subject of [stub.Behaviour]
-// for Initial. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for Initial. The subject calls a new double
+// that reports to tb.
 func partitionerStubInitialSubject(
 	tb assert.TB,
 ) stub.Subject[partitiontest.PartitionerInitialCall, partitiontest.PartitionerInitialReturn] {
 	tb.Helper()
 	s := partitiontest.NewPartitionerStub(tb)
 	return stub.Subject[partitiontest.PartitionerInitialCall, partitiontest.PartitionerInitialReturn]{
-		Stub: s.OnInitial.MethodStub,
+		Stub:  s.OnInitial.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = partitionerStubInitial(tb, s)
+		},
+		Arguments: func(tb assert.TB, c partitiontest.PartitionerInitialCall) {
+			tb.Helper()
+			a0 := partitionerStubInitialArgs(tb)
+			assert.Equal(tb, c.R, a0, "the call records R")
 		},
 		Result: func() partitiontest.PartitionerInitialReturn {
 			got0, got1 := partitionerStubInitial(tb, s)
 			return partitiontest.PartitionerInitialReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnInitial.Func(func(_ shard.Range) ([]partition.Span, error) {
-				mark()
+		Returns: func() partitiontest.PartitionerInitialReturn {
+			want0, want1 := partitionerStubInitialPins()
+			s.OnInitial.Returns(want0, want1)
+			return partitiontest.PartitionerInitialReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(partitiontest.PartitionerInitialCall)) {
+			s.OnInitial.Func(func(p0 shard.Range) ([]partition.Span, error) {
+				seen(partitiontest.PartitionerInitialCall{R: p0})
 				var z0 []partition.Span
 				var z1 error
 				return z0, z1
@@ -183,7 +215,6 @@ func partitionerStubInstanceOf(tb assert.TB, s *partitiontest.PartitionerStub) p
 		Call: func() {
 			_ = partitionerStubPosition(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -195,145 +226,34 @@ func TestPartitionerStub(t *testing.T) {
 	t.Run("Position", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Position", partitionerStubPositionSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			_ = partitionerStubPosition(t, s)
-			got := s.OnPosition.AssertCalledOnce(t, "Position records the call")
-			a0, a1 := partitionerStubPositionArgs(t)
-			expect.Equal(t, got.Dst, a0, "the call records Dst")
-			expect.Equal(t, got.Key, a1, "the call records Key")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			var seen []partitiontest.PartitionerPositionCall
-			s.OnPosition.OnRecord(func(c partitiontest.PartitionerPositionCall) { seen = append(seen, c) })
-			_ = partitionerStubPosition(t, s)
-			_ = partitionerStubPosition(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Position")
-		})
 	})
 
 	t.Run("Mapping", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Mapping", partitionerStubMappingSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			var seen []partitiontest.PartitionerMappingCall
-			s.OnMapping.OnRecord(func(c partitiontest.PartitionerMappingCall) { seen = append(seen, c) })
-			_ = partitionerStubMapping(t, s)
-			_ = partitionerStubMapping(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Mapping")
-		})
 	})
 
 	t.Run("Initial", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Initial", partitionerStubInitialSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			_, _ = partitionerStubInitial(t, s)
-			got := s.OnInitial.AssertCalledOnce(t, "Initial records the call")
-			a0 := partitionerStubInitialArgs(t)
-			assert.Equal(t, got.R, a0, "the call records R")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			var seen []partitiontest.PartitionerInitialCall
-			s.OnInitial.OnRecord(func(c partitiontest.PartitionerInitialCall) { seen = append(seen, c) })
-			_, _ = partitionerStubInitial(t, s)
-			_, _ = partitionerStubInitial(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Initial")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) partitionerStubInstance {
-			return partitionerStubInstanceOf(tb, partitiontest.NewPartitionerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Position", func(t *testing.T) {
+		t.Run("Position", func(t *testing.T) {
 			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			_ = partitionerStubPosition(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnPosition.CallCount(), 0, "ResetCalls clears the calls of Position")
+			stub.ResetBehaviour(t, "Position", partitionerStubPositionSubject)
 		})
 
-		t.Run("keeps the results of Returns of Position", func(t *testing.T) {
+		t.Run("Mapping", func(t *testing.T) {
 			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			want0 := partitionerStubPositionPins()
-			s.OnPosition.Returns(want0)
-			s.ResetCalls()
-			got0 := partitionerStubPosition(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Position")
+			stub.ResetBehaviour(t, "Mapping", partitionerStubMappingSubject)
 		})
 
-		t.Run("clears the recorded calls of Mapping", func(t *testing.T) {
+		t.Run("Initial", func(t *testing.T) {
 			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			_ = partitionerStubMapping(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnMapping.CallCount(), 0, "ResetCalls clears the calls of Mapping")
-		})
-
-		t.Run("keeps the results of Returns of Mapping", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			want0 := partitionerStubMappingPins()
-			s.OnMapping.Returns(want0)
-			s.ResetCalls()
-			got0 := partitionerStubMapping(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Mapping")
-		})
-
-		t.Run("clears the recorded calls of Initial", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			_, _ = partitionerStubInitial(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnInitial.CallCount(), 0, "ResetCalls clears the calls of Initial")
-		})
-
-		t.Run("keeps the results of Returns of Initial", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			want0, want1 := partitionerStubInitialPins()
-			s.OnInitial.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := partitionerStubInitial(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Initial")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Initial")
-		})
-	})
-
-	t.Run("NewPartitionerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) partitionerStubInstance {
-			return partitionerStubInstanceOf(tb, partitiontest.NewPartitionerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewPartitionerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Initial with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Initial-failing")
-			s := partitiontest.NewPartitionerStubFailing(t, want)
-			_, r1 := partitionerStubInitial(t, s)
-			assert.ErrorIs(t, r1, want, "Initial fails with the error of NewPartitionerStubFailing")
+			stub.ResetBehaviour(t, "Initial", partitionerStubInitialSubject)
 		})
 	})
 
@@ -494,137 +414,6 @@ func TestPartitionerStub(t *testing.T) {
 	})
 }
 
-// TestPartitionerPositionStub checks the methods of
-// PartitionerPositionStub, which configures Position.
-func TestPartitionerPositionStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Position", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			want0 := partitionerStubPositionPins()
-			s.OnPosition.Returns(want0)
-			got0 := partitionerStubPosition(t, s)
-			assert.Equal(t, got0, want0, "Position returns the Result that Returns sets")
-		})
-
-		t.Run("configures Position for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := partitiontest.NewPartitionerStub(r)
-			s.OnPosition.Strict()
-			var want0 []byte
-			s.OnPosition.Returns(want0)
-			_ = partitionerStubPosition(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Position")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Position to the function", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			var got0 []byte
-			var got1 []byte
-			s.OnPosition.Func(func(p0, p1 []byte) []byte {
-				got0, got1 = p0, p1
-				var z0 []byte
-				return z0
-			})
-			_ = partitionerStubPosition(t, s)
-			a0, a1 := partitionerStubPositionArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Dst")
-			expect.Equal(t, got1, a1, "the function receives Key")
-		})
-	})
-}
-
-// TestPartitionerMappingStub checks the methods of PartitionerMappingStub,
-// which configures Mapping.
-func TestPartitionerMappingStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Mapping", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			want0 := partitionerStubMappingPins()
-			s.OnMapping.Returns(want0)
-			got0 := partitionerStubMapping(t, s)
-			assert.Equal(t, got0, want0, "Mapping returns the Result that Returns sets")
-		})
-
-		t.Run("configures Mapping for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := partitiontest.NewPartitionerStub(r)
-			s.OnMapping.Strict()
-			var want0 shard.Mapping
-			s.OnMapping.Returns(want0)
-			_ = partitionerStubMapping(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Mapping")
-		})
-	})
-}
-
-// TestPartitionerInitialStub checks the methods of PartitionerInitialStub,
-// which configures Initial.
-func TestPartitionerInitialStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Initial", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			want0, want1 := partitionerStubInitialPins()
-			s.OnInitial.Returns(want0, want1)
-			got0, got1 := partitionerStubInitial(t, s)
-			expect.Equal(t, got0, want0, "Initial returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Initial returns the error that Returns sets")
-		})
-
-		t.Run("configures Initial for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := partitiontest.NewPartitionerStub(r)
-			s.OnInitial.Strict()
-			var want0 []partition.Span
-			var want1 error
-			s.OnInitial.Returns(want0, want1)
-			_, _ = partitionerStubInitial(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Initial")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Initial to the function", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewPartitionerStub(t)
-			var got0 shard.Range
-			s.OnInitial.Func(func(p0 shard.Range) ([]partition.Span, error) {
-				got0 = p0
-				var z0 []partition.Span
-				var z1 error
-				return z0, z1
-			})
-			_, _ = partitionerStubInitial(t, s)
-			a0 := partitionerStubInitialArgs(t)
-			assert.Equal(t, got0, a0, "the function receives R")
-		})
-	})
-}
-
 // hashStubSum64Args returns the samples of the arguments of Sum64.
 func hashStubSum64Args(tb assert.TB) []byte {
 	tb.Helper()
@@ -660,23 +449,35 @@ func hashStubVersionPins() uint32 {
 	return want0
 }
 
-// hashStubSum64Subject returns the subject of [stub.Behaviour] for Sum64.
-// The subject calls a new double that reports to tb.
+// hashStubSum64Subject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Sum64. The subject calls a new double that
+// reports to tb.
 func hashStubSum64Subject(tb assert.TB) stub.Subject[partitiontest.HashSum64Call, partitiontest.HashSum64Return] {
 	tb.Helper()
 	s := partitiontest.NewHashStub(tb)
 	return stub.Subject[partitiontest.HashSum64Call, partitiontest.HashSum64Return]{
-		Stub: s.OnSum64.MethodStub,
+		Stub:  s.OnSum64.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = hashStubSum64(tb, s)
+		},
+		Arguments: func(tb assert.TB, c partitiontest.HashSum64Call) {
+			tb.Helper()
+			a0 := hashStubSum64Args(tb)
+			assert.Equal(tb, c.Key, a0, "the call records Key")
 		},
 		Result: func() partitiontest.HashSum64Return {
 			got0 := hashStubSum64(tb, s)
 			return partitiontest.HashSum64Return{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnSum64.Func(func(_ []byte) uint64 {
-				mark()
+		Returns: func() partitiontest.HashSum64Return {
+			want0 := hashStubSum64Pins()
+			s.OnSum64.Returns(want0)
+			return partitiontest.HashSum64Return{Result: want0}
+		},
+		Override: func(seen func(partitiontest.HashSum64Call)) {
+			s.OnSum64.Func(func(p0 []byte) uint64 {
+				seen(partitiontest.HashSum64Call{Key: p0})
 				var z0 uint64
 				return z0
 			})
@@ -684,13 +485,15 @@ func hashStubSum64Subject(tb assert.TB) stub.Subject[partitiontest.HashSum64Call
 	}
 }
 
-// hashStubVersionSubject returns the subject of [stub.Behaviour] for
-// Version. The subject calls a new double that reports to tb.
+// hashStubVersionSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Version. The subject calls a new double that
+// reports to tb.
 func hashStubVersionSubject(tb assert.TB) stub.Subject[partitiontest.HashVersionCall, partitiontest.HashVersionReturn] {
 	tb.Helper()
 	s := partitiontest.NewHashStub(tb)
 	return stub.Subject[partitiontest.HashVersionCall, partitiontest.HashVersionReturn]{
-		Stub: s.OnVersion.MethodStub,
+		Stub:  s.OnVersion.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = hashStubVersion(tb, s)
 		},
@@ -698,9 +501,14 @@ func hashStubVersionSubject(tb assert.TB) stub.Subject[partitiontest.HashVersion
 			got0 := hashStubVersion(tb, s)
 			return partitiontest.HashVersionReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() partitiontest.HashVersionReturn {
+			want0 := hashStubVersionPins()
+			s.OnVersion.Returns(want0)
+			return partitiontest.HashVersionReturn{Result: want0}
+		},
+		Override: func(seen func(partitiontest.HashVersionCall)) {
 			s.OnVersion.Func(func() uint32 {
-				mark()
+				seen(partitiontest.HashVersionCall{})
 				var z0 uint32
 				return z0
 			})
@@ -721,7 +529,6 @@ func hashStubInstanceOf(tb assert.TB, s *partitiontest.HashStub) hashStubInstanc
 		Call: func() {
 			_ = hashStubSum64(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -733,89 +540,24 @@ func TestHashStub(t *testing.T) {
 	t.Run("Sum64", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Sum64", hashStubSum64Subject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewHashStub(t)
-			_ = hashStubSum64(t, s)
-			got := s.OnSum64.AssertCalledOnce(t, "Sum64 records the call")
-			a0 := hashStubSum64Args(t)
-			assert.Equal(t, got.Key, a0, "the call records Key")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewHashStub(t)
-			var seen []partitiontest.HashSum64Call
-			s.OnSum64.OnRecord(func(c partitiontest.HashSum64Call) { seen = append(seen, c) })
-			_ = hashStubSum64(t, s)
-			_ = hashStubSum64(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Sum64")
-		})
 	})
 
 	t.Run("Version", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Version", hashStubVersionSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewHashStub(t)
-			var seen []partitiontest.HashVersionCall
-			s.OnVersion.OnRecord(func(c partitiontest.HashVersionCall) { seen = append(seen, c) })
-			_ = hashStubVersion(t, s)
-			_ = hashStubVersion(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Version")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) hashStubInstance {
-			return hashStubInstanceOf(tb, partitiontest.NewHashStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Sum64", func(t *testing.T) {
+		t.Run("Sum64", func(t *testing.T) {
 			t.Parallel()
-			s := partitiontest.NewHashStub(t)
-			_ = hashStubSum64(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSum64.CallCount(), 0, "ResetCalls clears the calls of Sum64")
+			stub.ResetBehaviour(t, "Sum64", hashStubSum64Subject)
 		})
 
-		t.Run("keeps the results of Returns of Sum64", func(t *testing.T) {
+		t.Run("Version", func(t *testing.T) {
 			t.Parallel()
-			s := partitiontest.NewHashStub(t)
-			want0 := hashStubSum64Pins()
-			s.OnSum64.Returns(want0)
-			s.ResetCalls()
-			got0 := hashStubSum64(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Sum64")
-		})
-
-		t.Run("clears the recorded calls of Version", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewHashStub(t)
-			_ = hashStubVersion(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnVersion.CallCount(), 0, "ResetCalls clears the calls of Version")
-		})
-
-		t.Run("keeps the results of Returns of Version", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewHashStub(t)
-			want0 := hashStubVersionPins()
-			s.OnVersion.Returns(want0)
-			s.ResetCalls()
-			got0 := hashStubVersion(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Version")
-		})
-	})
-
-	t.Run("NewHashStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) hashStubInstance {
-			return hashStubInstanceOf(tb, partitiontest.NewHashStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "Version", hashStubVersionSubject)
 		})
 	})
 
@@ -914,82 +656,4 @@ func TestHashStub(t *testing.T) {
 	})
 }
 
-// TestHashSum64Stub checks the methods of HashSum64Stub, which configures
-// Sum64.
-func TestHashSum64Stub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Sum64", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewHashStub(t)
-			want0 := hashStubSum64Pins()
-			s.OnSum64.Returns(want0)
-			got0 := hashStubSum64(t, s)
-			assert.Equal(t, got0, want0, "Sum64 returns the Result that Returns sets")
-		})
-
-		t.Run("configures Sum64 for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := partitiontest.NewHashStub(r)
-			s.OnSum64.Strict()
-			var want0 uint64
-			s.OnSum64.Returns(want0)
-			_ = hashStubSum64(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Sum64")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Sum64 to the function", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewHashStub(t)
-			var got0 []byte
-			s.OnSum64.Func(func(p0 []byte) uint64 {
-				got0 = p0
-				var z0 uint64
-				return z0
-			})
-			_ = hashStubSum64(t, s)
-			a0 := hashStubSum64Args(t)
-			assert.Equal(t, got0, a0, "the function receives Key")
-		})
-	})
-}
-
-// TestHashVersionStub checks the methods of HashVersionStub, which
-// configures Version.
-func TestHashVersionStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Version", func(t *testing.T) {
-			t.Parallel()
-			s := partitiontest.NewHashStub(t)
-			want0 := hashStubVersionPins()
-			s.OnVersion.Returns(want0)
-			got0 := hashStubVersion(t, s)
-			assert.Equal(t, got0, want0, "Version returns the Result that Returns sets")
-		})
-
-		t.Run("configures Version for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := partitiontest.NewHashStub(r)
-			s.OnVersion.Strict()
-			var want0 uint32
-			s.OnVersion.Returns(want0)
-			_ = hashStubVersion(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Version")
-		})
-	})
-}
-
-// dokimi:provenance sha256:1dba47dfd184f8f8717b2860a82008057b0ca36cc098fce48aeb88cb445775af
+// dokimi:provenance sha256:68c1de89349869f5bebbfa8dfc3fc564e206526e3bdf3ed07bc4e6cb401cf928

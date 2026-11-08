@@ -97,4 +97,9 @@ func (v *Operator) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// dokimi:provenance sha256:7fed98e303569a1d3fc2fbcb693347c87434e3ace8bd87b52c51e82e3911c939
+// StrictKanon marks Operator as a kanon.Strict type. UnmarshalText accepts
+// only the texts that MarshalText writes. A canonical decode of kanon
+// therefore does not encode a decoded Operator again.
+func (Operator) StrictKanon() {}
+
+// dokimi:provenance sha256:99bc087dcff75018b3d0583f95b42433377f290d4cec3e3f4687aa79c1bf0815

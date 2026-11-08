@@ -244,26 +244,6 @@ func NewPartitionerStub(tb assert.TB, opts ...PartitionerStubOption) *Partitione
 	return s
 }
 
-// NewPartitionerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewPartitionerStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...PartitionerStubOption,
-) *PartitionerStub {
-	return NewPartitionerStub(tb, append([]PartitionerStubOption{
-		PartitionerStubWithClock(clk),
-		PartitionerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewPartitionerStubFailing returns a double on which each call of a
-// method that can fail fails with err. It applies opts after the failure.
-func NewPartitionerStubFailing(tb assert.TB, err error, opts ...PartitionerStubOption) *PartitionerStub {
-	return NewPartitionerStub(tb, append([]PartitionerStubOption{PartitionerStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *PartitionerStub) ResetCalls() {
@@ -516,15 +496,6 @@ func NewHashStub(tb assert.TB, opts ...HashStubOption) *HashStub {
 	return s
 }
 
-// NewHashStubDelayed returns a double whose methods sleep d on clk before
-// they return. It applies opts after the clock and the latency.
-func NewHashStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...HashStubOption) *HashStub {
-	return NewHashStub(tb, append([]HashStubOption{
-		HashStubWithClock(clk),
-		HashStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *HashStub) ResetCalls() {
@@ -585,4 +556,4 @@ func (s *HashStub) Version() uint32 {
 	return r.Result
 }
 
-// dokimi:provenance sha256:ff69ce880f532f0e5756e134b2f14cca68f94555e5fbf01e31dd19fac31253ad
+// dokimi:provenance sha256:e07dd41f1d3e802f031c4877f8a4bc5c600078e892ba9862d56ebc1fcd2a143c

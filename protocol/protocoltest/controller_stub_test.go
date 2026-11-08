@@ -136,25 +136,38 @@ func controllerClientStubDonePins() error {
 }
 
 // controllerClientStubReportSubject returns the subject of
-// [stub.Behaviour] for Report. The subject calls a new double that reports
-// to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for Report. The subject calls
+// a new double that reports to tb.
 func controllerClientStubReportSubject(
 	tb assert.TB,
 ) stub.Subject[protocoltest.ControllerClientReportCall, protocoltest.ControllerClientReportReturn] {
 	tb.Helper()
 	s := protocoltest.NewControllerClientStub(tb)
 	return stub.Subject[protocoltest.ControllerClientReportCall, protocoltest.ControllerClientReportReturn]{
-		Stub: s.OnReport.MethodStub,
+		Stub:  s.OnReport.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = controllerClientStubReport(tb, s)
+		},
+		Arguments: func(tb assert.TB, c protocoltest.ControllerClientReportCall) {
+			tb.Helper()
+			a0, a1, a2 := controllerClientStubReportArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Cell, a1, "the call records Cell")
+			expect.Equal(tb, c.R, a2, "the call records R")
 		},
 		Result: func() protocoltest.ControllerClientReportReturn {
 			got0, got1 := controllerClientStubReport(tb, s)
 			return protocoltest.ControllerClientReportReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnReport.Func(func(_ context.Context, _ *shard.Cell, _ *protocol.Report) (protocol.Ack, error) {
-				mark()
+		Returns: func() protocoltest.ControllerClientReportReturn {
+			want0, want1 := controllerClientStubReportPins()
+			s.OnReport.Returns(want0, want1)
+			return protocoltest.ControllerClientReportReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(protocoltest.ControllerClientReportCall)) {
+			s.OnReport.Func(func(p0 context.Context, p1 *shard.Cell, p2 *protocol.Report) (protocol.Ack, error) {
+				seen(protocoltest.ControllerClientReportCall{Ctx: p0, Cell: p1, R: p2})
 				var z0 protocol.Ack
 				var z1 error
 				return z0, z1
@@ -168,25 +181,38 @@ func controllerClientStubReportSubject(
 }
 
 // controllerClientStubSubmitSubject returns the subject of
-// [stub.Behaviour] for Submit. The subject calls a new double that reports
-// to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for Submit. The subject calls
+// a new double that reports to tb.
 func controllerClientStubSubmitSubject(
 	tb assert.TB,
 ) stub.Subject[protocoltest.ControllerClientSubmitCall, protocoltest.ControllerClientSubmitReturn] {
 	tb.Helper()
 	s := protocoltest.NewControllerClientStub(tb)
 	return stub.Subject[protocoltest.ControllerClientSubmitCall, protocoltest.ControllerClientSubmitReturn]{
-		Stub: s.OnSubmit.MethodStub,
+		Stub:  s.OnSubmit.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = controllerClientStubSubmit(tb, s)
+		},
+		Arguments: func(tb assert.TB, c protocoltest.ControllerClientSubmitCall) {
+			tb.Helper()
+			a0, a1, a2 := controllerClientStubSubmitArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Cell, a1, "the call records Cell")
+			expect.Equal(tb, c.P, a2, "the call records P")
 		},
 		Result: func() protocoltest.ControllerClientSubmitReturn {
 			got0, got1 := controllerClientStubSubmit(tb, s)
 			return protocoltest.ControllerClientSubmitReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnSubmit.Func(func(_ context.Context, _ *shard.Cell, _ *proposal.Proposal) (protocol.Receipt, error) {
-				mark()
+		Returns: func() protocoltest.ControllerClientSubmitReturn {
+			want0, want1 := controllerClientStubSubmitPins()
+			s.OnSubmit.Returns(want0, want1)
+			return protocoltest.ControllerClientSubmitReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(protocoltest.ControllerClientSubmitCall)) {
+			s.OnSubmit.Func(func(p0 context.Context, p1 *shard.Cell, p2 *proposal.Proposal) (protocol.Receipt, error) {
+				seen(protocoltest.ControllerClientSubmitCall{Ctx: p0, Cell: p1, P: p2})
 				var z0 protocol.Receipt
 				var z1 error
 				return z0, z1
@@ -200,25 +226,38 @@ func controllerClientStubSubmitSubject(
 }
 
 // controllerClientStubDisruptSubject returns the subject of
-// [stub.Behaviour] for Disrupt. The subject calls a new double that
-// reports to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for Disrupt. The subject
+// calls a new double that reports to tb.
 func controllerClientStubDisruptSubject(
 	tb assert.TB,
 ) stub.Subject[protocoltest.ControllerClientDisruptCall, protocoltest.ControllerClientDisruptReturn] {
 	tb.Helper()
 	s := protocoltest.NewControllerClientStub(tb)
 	return stub.Subject[protocoltest.ControllerClientDisruptCall, protocoltest.ControllerClientDisruptReturn]{
-		Stub: s.OnDisrupt.MethodStub,
+		Stub:  s.OnDisrupt.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = controllerClientStubDisrupt(tb, s)
+		},
+		Arguments: func(tb assert.TB, c protocoltest.ControllerClientDisruptCall) {
+			tb.Helper()
+			a0, a1, a2 := controllerClientStubDisruptArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Cell, a1, "the call records Cell")
+			expect.Equal(tb, c.D, a2, "the call records D")
 		},
 		Result: func() protocoltest.ControllerClientDisruptReturn {
 			got0, got1 := controllerClientStubDisrupt(tb, s)
 			return protocoltest.ControllerClientDisruptReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnDisrupt.Func(func(_ context.Context, _ *shard.Cell, _ *budget.Disruption) (budget.Decision, error) {
-				mark()
+		Returns: func() protocoltest.ControllerClientDisruptReturn {
+			want0, want1 := controllerClientStubDisruptPins()
+			s.OnDisrupt.Returns(want0, want1)
+			return protocoltest.ControllerClientDisruptReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(protocoltest.ControllerClientDisruptCall)) {
+			s.OnDisrupt.Func(func(p0 context.Context, p1 *shard.Cell, p2 *budget.Disruption) (budget.Decision, error) {
+				seen(protocoltest.ControllerClientDisruptCall{Ctx: p0, Cell: p1, D: p2})
 				var z0 budget.Decision
 				var z1 error
 				return z0, z1
@@ -232,24 +271,38 @@ func controllerClientStubDisruptSubject(
 }
 
 // controllerClientStubDoneSubject returns the subject of [stub.Behaviour]
-// for Done. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for Done. The subject calls a new double that
+// reports to tb.
 func controllerClientStubDoneSubject(
 	tb assert.TB,
 ) stub.Subject[protocoltest.ControllerClientDoneCall, protocoltest.ControllerClientDoneReturn] {
 	tb.Helper()
 	s := protocoltest.NewControllerClientStub(tb)
 	return stub.Subject[protocoltest.ControllerClientDoneCall, protocoltest.ControllerClientDoneReturn]{
-		Stub: s.OnDone.MethodStub,
+		Stub:  s.OnDone.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = controllerClientStubDone(tb, s)
+		},
+		Arguments: func(tb assert.TB, c protocoltest.ControllerClientDoneCall) {
+			tb.Helper()
+			a0, a1, a2 := controllerClientStubDoneArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Cell, a1, "the call records Cell")
+			expect.Equal(tb, c.A, a2, "the call records A")
 		},
 		Result: func() protocoltest.ControllerClientDoneReturn {
 			got0 := controllerClientStubDone(tb, s)
 			return protocoltest.ControllerClientDoneReturn{Err: got0}
 		},
-		Override: func(mark func()) {
-			s.OnDone.Func(func(_ context.Context, _ *shard.Cell, _ *protocol.DoneArgs) error {
-				mark()
+		Returns: func() protocoltest.ControllerClientDoneReturn {
+			want0 := controllerClientStubDonePins()
+			s.OnDone.Returns(want0)
+			return protocoltest.ControllerClientDoneReturn{Err: want0}
+		},
+		Override: func(seen func(protocoltest.ControllerClientDoneCall)) {
+			s.OnDone.Func(func(p0 context.Context, p1 *shard.Cell, p2 *protocol.DoneArgs) error {
+				seen(protocoltest.ControllerClientDoneCall{Ctx: p0, Cell: p1, A: p2})
 				var z0 error
 				return z0
 			})
@@ -275,7 +328,6 @@ func controllerClientStubInstanceOf(tb assert.TB, s *protocoltest.ControllerClie
 		Call: func() {
 			_, _ = controllerClientStubReport(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -287,229 +339,44 @@ func TestControllerClientStub(t *testing.T) {
 	t.Run("Report", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Report", controllerClientStubReportSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			_, _ = controllerClientStubReport(t, s)
-			got := s.OnReport.AssertCalledOnce(t, "Report records the call")
-			a0, a1, a2 := controllerClientStubReportArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Cell, a1, "the call records Cell")
-			expect.Equal(t, got.R, a2, "the call records R")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			var seen []protocoltest.ControllerClientReportCall
-			s.OnReport.OnRecord(func(c protocoltest.ControllerClientReportCall) { seen = append(seen, c) })
-			_, _ = controllerClientStubReport(t, s)
-			_, _ = controllerClientStubReport(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Report")
-		})
 	})
 
 	t.Run("Submit", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Submit", controllerClientStubSubmitSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			_, _ = controllerClientStubSubmit(t, s)
-			got := s.OnSubmit.AssertCalledOnce(t, "Submit records the call")
-			a0, a1, a2 := controllerClientStubSubmitArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Cell, a1, "the call records Cell")
-			expect.Equal(t, got.P, a2, "the call records P")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			var seen []protocoltest.ControllerClientSubmitCall
-			s.OnSubmit.OnRecord(func(c protocoltest.ControllerClientSubmitCall) { seen = append(seen, c) })
-			_, _ = controllerClientStubSubmit(t, s)
-			_, _ = controllerClientStubSubmit(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Submit")
-		})
 	})
 
 	t.Run("Disrupt", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Disrupt", controllerClientStubDisruptSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			_, _ = controllerClientStubDisrupt(t, s)
-			got := s.OnDisrupt.AssertCalledOnce(t, "Disrupt records the call")
-			a0, a1, a2 := controllerClientStubDisruptArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Cell, a1, "the call records Cell")
-			expect.Equal(t, got.D, a2, "the call records D")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			var seen []protocoltest.ControllerClientDisruptCall
-			s.OnDisrupt.OnRecord(func(c protocoltest.ControllerClientDisruptCall) { seen = append(seen, c) })
-			_, _ = controllerClientStubDisrupt(t, s)
-			_, _ = controllerClientStubDisrupt(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Disrupt")
-		})
 	})
 
 	t.Run("Done", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Done", controllerClientStubDoneSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			_ = controllerClientStubDone(t, s)
-			got := s.OnDone.AssertCalledOnce(t, "Done records the call")
-			a0, a1, a2 := controllerClientStubDoneArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Cell, a1, "the call records Cell")
-			expect.Equal(t, got.A, a2, "the call records A")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			var seen []protocoltest.ControllerClientDoneCall
-			s.OnDone.OnRecord(func(c protocoltest.ControllerClientDoneCall) { seen = append(seen, c) })
-			_ = controllerClientStubDone(t, s)
-			_ = controllerClientStubDone(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Done")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) controllerClientStubInstance {
-			return controllerClientStubInstanceOf(tb, protocoltest.NewControllerClientStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Report", func(t *testing.T) {
+		t.Run("Report", func(t *testing.T) {
 			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			_, _ = controllerClientStubReport(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnReport.CallCount(), 0, "ResetCalls clears the calls of Report")
+			stub.ResetBehaviour(t, "Report", controllerClientStubReportSubject)
 		})
 
-		t.Run("keeps the results of Returns of Report", func(t *testing.T) {
+		t.Run("Submit", func(t *testing.T) {
 			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			want0, want1 := controllerClientStubReportPins()
-			s.OnReport.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := controllerClientStubReport(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Report")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Report")
+			stub.ResetBehaviour(t, "Submit", controllerClientStubSubmitSubject)
 		})
 
-		t.Run("clears the recorded calls of Submit", func(t *testing.T) {
+		t.Run("Disrupt", func(t *testing.T) {
 			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			_, _ = controllerClientStubSubmit(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSubmit.CallCount(), 0, "ResetCalls clears the calls of Submit")
+			stub.ResetBehaviour(t, "Disrupt", controllerClientStubDisruptSubject)
 		})
 
-		t.Run("keeps the results of Returns of Submit", func(t *testing.T) {
+		t.Run("Done", func(t *testing.T) {
 			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			want0, want1 := controllerClientStubSubmitPins()
-			s.OnSubmit.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := controllerClientStubSubmit(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Submit")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Submit")
-		})
-
-		t.Run("clears the recorded calls of Disrupt", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			_, _ = controllerClientStubDisrupt(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnDisrupt.CallCount(), 0, "ResetCalls clears the calls of Disrupt")
-		})
-
-		t.Run("keeps the results of Returns of Disrupt", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			want0, want1 := controllerClientStubDisruptPins()
-			s.OnDisrupt.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := controllerClientStubDisrupt(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Disrupt")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Disrupt")
-		})
-
-		t.Run("clears the recorded calls of Done", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			_ = controllerClientStubDone(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnDone.CallCount(), 0, "ResetCalls clears the calls of Done")
-		})
-
-		t.Run("keeps the results of Returns of Done", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			want0 := controllerClientStubDonePins()
-			s.OnDone.Returns(want0)
-			s.ResetCalls()
-			got0 := controllerClientStubDone(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of Done")
-		})
-	})
-
-	t.Run("NewControllerClientStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) controllerClientStubInstance {
-			return controllerClientStubInstanceOf(tb, protocoltest.NewControllerClientStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewControllerClientStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Report with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Report-failing")
-			s := protocoltest.NewControllerClientStubFailing(t, want)
-			_, r1 := controllerClientStubReport(t, s)
-			assert.ErrorIs(t, r1, want, "Report fails with the error of NewControllerClientStubFailing")
-		})
-
-		t.Run("fails Submit with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Submit-failing")
-			s := protocoltest.NewControllerClientStubFailing(t, want)
-			_, r1 := controllerClientStubSubmit(t, s)
-			assert.ErrorIs(t, r1, want, "Submit fails with the error of NewControllerClientStubFailing")
-		})
-
-		t.Run("fails Disrupt with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Disrupt-failing")
-			s := protocoltest.NewControllerClientStubFailing(t, want)
-			_, r1 := controllerClientStubDisrupt(t, s)
-			assert.ErrorIs(t, r1, want, "Disrupt fails with the error of NewControllerClientStubFailing")
-		})
-
-		t.Run("fails Done with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Done-failing")
-			s := protocoltest.NewControllerClientStubFailing(t, want)
-			r0 := controllerClientStubDone(t, s)
-			assert.ErrorIs(t, r0, want, "Done fails with the error of NewControllerClientStubFailing")
+			stub.ResetBehaviour(t, "Done", controllerClientStubDoneSubject)
 		})
 	})
 
@@ -767,221 +634,4 @@ func TestControllerClientStub(t *testing.T) {
 	})
 }
 
-// TestControllerClientReportStub checks the methods of
-// ControllerClientReportStub, which configures Report.
-func TestControllerClientReportStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Report", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			want0, want1 := controllerClientStubReportPins()
-			s.OnReport.Returns(want0, want1)
-			got0, got1 := controllerClientStubReport(t, s)
-			expect.Equal(t, got0, want0, "Report returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Report returns the error that Returns sets")
-		})
-
-		t.Run("configures Report for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := protocoltest.NewControllerClientStub(r)
-			s.OnReport.Strict()
-			var want0 protocol.Ack
-			var want1 error
-			s.OnReport.Returns(want0, want1)
-			_, _ = controllerClientStubReport(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Report")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Report to the function", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			var got0 context.Context
-			var got1 *shard.Cell
-			var got2 *protocol.Report
-			s.OnReport.Func(func(p0 context.Context, p1 *shard.Cell, p2 *protocol.Report) (protocol.Ack, error) {
-				got0, got1, got2 = p0, p1, p2
-				var z0 protocol.Ack
-				var z1 error
-				return z0, z1
-			})
-			_, _ = controllerClientStubReport(t, s)
-			a0, a1, a2 := controllerClientStubReportArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Cell")
-			expect.Equal(t, got2, a2, "the function receives R")
-		})
-	})
-}
-
-// TestControllerClientSubmitStub checks the methods of
-// ControllerClientSubmitStub, which configures Submit.
-func TestControllerClientSubmitStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Submit", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			want0, want1 := controllerClientStubSubmitPins()
-			s.OnSubmit.Returns(want0, want1)
-			got0, got1 := controllerClientStubSubmit(t, s)
-			expect.Equal(t, got0, want0, "Submit returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Submit returns the error that Returns sets")
-		})
-
-		t.Run("configures Submit for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := protocoltest.NewControllerClientStub(r)
-			s.OnSubmit.Strict()
-			var want0 protocol.Receipt
-			var want1 error
-			s.OnSubmit.Returns(want0, want1)
-			_, _ = controllerClientStubSubmit(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Submit")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Submit to the function", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			var got0 context.Context
-			var got1 *shard.Cell
-			var got2 *proposal.Proposal
-			s.OnSubmit.Func(func(p0 context.Context, p1 *shard.Cell, p2 *proposal.Proposal) (protocol.Receipt, error) {
-				got0, got1, got2 = p0, p1, p2
-				var z0 protocol.Receipt
-				var z1 error
-				return z0, z1
-			})
-			_, _ = controllerClientStubSubmit(t, s)
-			a0, a1, a2 := controllerClientStubSubmitArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Cell")
-			expect.Equal(t, got2, a2, "the function receives P")
-		})
-	})
-}
-
-// TestControllerClientDisruptStub checks the methods of
-// ControllerClientDisruptStub, which configures Disrupt.
-func TestControllerClientDisruptStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Disrupt", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			want0, want1 := controllerClientStubDisruptPins()
-			s.OnDisrupt.Returns(want0, want1)
-			got0, got1 := controllerClientStubDisrupt(t, s)
-			expect.Equal(t, got0, want0, "Disrupt returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Disrupt returns the error that Returns sets")
-		})
-
-		t.Run("configures Disrupt for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := protocoltest.NewControllerClientStub(r)
-			s.OnDisrupt.Strict()
-			var want0 budget.Decision
-			var want1 error
-			s.OnDisrupt.Returns(want0, want1)
-			_, _ = controllerClientStubDisrupt(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Disrupt")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Disrupt to the function", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			var got0 context.Context
-			var got1 *shard.Cell
-			var got2 *budget.Disruption
-			s.OnDisrupt.Func(func(p0 context.Context, p1 *shard.Cell, p2 *budget.Disruption) (budget.Decision, error) {
-				got0, got1, got2 = p0, p1, p2
-				var z0 budget.Decision
-				var z1 error
-				return z0, z1
-			})
-			_, _ = controllerClientStubDisrupt(t, s)
-			a0, a1, a2 := controllerClientStubDisruptArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Cell")
-			expect.Equal(t, got2, a2, "the function receives D")
-		})
-	})
-}
-
-// TestControllerClientDoneStub checks the methods of
-// ControllerClientDoneStub, which configures Done.
-func TestControllerClientDoneStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Done", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			want0 := controllerClientStubDonePins()
-			s.OnDone.Returns(want0)
-			got0 := controllerClientStubDone(t, s)
-			assert.ErrorIs(t, got0, want0, "Done returns the error that Returns sets")
-		})
-
-		t.Run("configures Done for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := protocoltest.NewControllerClientStub(r)
-			s.OnDone.Strict()
-			var want0 error
-			s.OnDone.Returns(want0)
-			_ = controllerClientStubDone(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Done")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Done to the function", func(t *testing.T) {
-			t.Parallel()
-			s := protocoltest.NewControllerClientStub(t)
-			var got0 context.Context
-			var got1 *shard.Cell
-			var got2 *protocol.DoneArgs
-			s.OnDone.Func(func(p0 context.Context, p1 *shard.Cell, p2 *protocol.DoneArgs) error {
-				got0, got1, got2 = p0, p1, p2
-				var z0 error
-				return z0
-			})
-			_ = controllerClientStubDone(t, s)
-			a0, a1, a2 := controllerClientStubDoneArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Cell")
-			expect.Equal(t, got2, a2, "the function receives A")
-		})
-	})
-}
-
-// dokimi:provenance sha256:bf5c133586711ae883f286eb63dff0e9981de671a1909e1f8cf2acaf6533da98
+// dokimi:provenance sha256:1709a2804da65639e3ce377ac1480c57bc0d71d901c9acabaa7470bb056ce393
