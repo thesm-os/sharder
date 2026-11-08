@@ -30,12 +30,13 @@ import (
 	"go.thesmos.sh/sharder/store"
 )
 
-// The bounds of the backoff before the root campaigns again after a campaign that ended
-// with a transient error. resilience.Backoff returns each backoff as a draw of Config.Rand
-// below its ceiling.
+// The bounds of the backoff that the root waits before it campaigns again. The root waits
+// after a campaign that ended with a transient error, and after the end of a term that it
+// resigned. resilience.Backoff returns each backoff as a draw of Config.Rand below its
+// ceiling.
 const (
-	// CampaignRetryBase is the ceiling of the backoff before the first retry. The ceiling
-	// doubles with each later retry.
+	// CampaignRetryBase is the ceiling of the first backoff in a row. The ceiling doubles
+	// with each later backoff. A term whose controller acquires the root scope ends the row.
 	CampaignRetryBase = 100 * time.Millisecond
 	// CampaignRetryMax is the highest ceiling of a backoff.
 	CampaignRetryMax = 10 * time.Second
@@ -135,7 +136,8 @@ const (
 	stateIdle state = 1 // idle
 	// stateCampaigning is the wait for the result of the last Campaign.
 	stateCampaigning state = 2 // campaigning
-	// stateWaiting is the backoff after a campaign that ended with a transient error.
+	// stateWaiting is the backoff before the next campaign. It follows a campaign that ended
+	// with a transient error, and the end of a term that the root resigned.
 	stateWaiting state = 3 // waiting
 	// stateLeading is a term that the election granted. The controller of the term
 	// acquires the root scope, and then serves.
@@ -179,7 +181,7 @@ var lifecycle = fsm.Must(fsm.NewBuilder[state, event, struct{}](stateIdle).
 	Edge(stateWaiting, eventElapsed, stateCampaigning).
 	Edge(stateLeading, eventEnded, stateCampaigning).
 	Edge(stateLeading, eventFault, stateResigning).
-	Edge(stateResigning, eventEnded, stateCampaigning).
+	Edge(stateResigning, eventEnded, stateWaiting).
 	Edges([]state{stateIdle, stateCampaigning, stateWaiting, stateLeading, stateResigning}, eventStop, stateStopped).
 	Terminal(stateStopped).
 	Build())
@@ -190,7 +192,8 @@ var lifecycle = fsm.Must(fsm.NewBuilder[state, event, struct{}](stateIdle).
 // scope and places the cells of the namespace on the controller processes. The root
 // creates the namespace when the root scope has no commit. It applies the spec proposals
 // of operators. At the end of a term, the root stops the controller of the term and
-// campaigns again.
+// campaigns again. After the end of a term that it resigned, it campaigns again after a
+// backoff.
 //
 // The zero Machine is not usable. Construct one with [New].
 //
@@ -233,7 +236,8 @@ type Machine struct {
 	wait machine.Token
 	// term is the fence epoch of the last term that the election granted.
 	term epoch.Epoch
-	// attempt counts the campaigns that ended with a transient error in a row.
+	// attempt counts the backoffs in a row since the last term whose controller acquired the
+	// root scope.
 	attempt int
 }
 
@@ -412,16 +416,12 @@ func (m *Machine) campaigned(ev *machine.Campaigned, out []machine.Effect) ([]ma
 		if !errs.Retryable(ev.Err) {
 			return out, errors.Join(fmt.Errorf("root: the campaign of %v: %w", m.scopeOf, ev.Err), lost)
 		}
-		m.attempt++
-		m.tokens++
-		m.wait = m.tokens
-		delay := resilience.Backoff(m.rand, m.attempt, CampaignRetryBase, CampaignRetryMax)
-		return append(out, machine.Timer{Token: m.wait, Duration: delay}), lost
+		return m.backoff(out), lost
 	}
 	err := m.fire(eventGranted)
 	var ctl *control.Controller
 	if err == nil {
-		m.attempt, m.term = 0, ev.Term
+		m.term = ev.Term
 		cfg := m.cfg
 		cfg.Term = ev.Term
 		ctl, err = control.New(&cfg)
@@ -437,8 +437,12 @@ func (m *Machine) campaigned(ev *machine.Campaigned, out []machine.Effect) ([]ma
 }
 
 // ended takes the end of a term. The root stops the controller of a term that the store
-// ended, and campaigns again.
+// ended, and campaigns again. After the end of a term that the root resigned, it campaigns
+// again after a backoff.
 func (m *Machine) ended(out []machine.Effect) ([]machine.Effect, error) {
+	if m.lc.State() == stateResigning {
+		return m.backoff(out), m.fire(eventEnded)
+	}
 	var err error
 	if m.control != nil {
 		out, err = m.control.Stop(out)
@@ -447,10 +451,24 @@ func (m *Machine) ended(out []machine.Effect) ([]machine.Effect, error) {
 	return m.elect(out), errors.Join(err, m.fire(eventEnded))
 }
 
-// controlled takes what the controller of the term completed. An error of the controller
-// ends the term: the root logs the error, stops the controller and resigns the term.
+// backoff appends the Timer of the backoff before the next campaign to out. The ceiling of
+// each backoff in a row doubles from CampaignRetryBase up to CampaignRetryMax.
+func (m *Machine) backoff(out []machine.Effect) []machine.Effect {
+	m.attempt++
+	m.tokens++
+	m.wait = m.tokens
+	delay := resilience.Backoff(m.rand, m.attempt, CampaignRetryBase, CampaignRetryMax)
+	return append(out, machine.Timer{Token: m.wait, Duration: delay})
+}
+
+// controlled takes what the controller of the term completed. A term whose controller
+// acquires the root scope ends the row of backoffs. An error of the controller ends the
+// term: the root logs the error, stops the controller and resigns the term.
 func (m *Machine) controlled(res *control.Result, out []machine.Effect) ([]machine.Effect, error) {
 	if res.Err == nil {
+		if res.Acquired {
+			m.attempt = 0
+		}
 		return out, nil
 	}
 	m.logger.LogAttrs(context.Background(), slog.LevelError, "root: the term failed",

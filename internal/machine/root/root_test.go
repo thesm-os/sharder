@@ -33,9 +33,13 @@ import (
 // The log message of an error of a term.
 const logTerm = "root: the term failed"
 
-// attrNamespaceKey is the key of the attribute that contains the namespace in the logs of
-// the root.
-const attrNamespaceKey = "namespace"
+// The keys of the attributes of the logs of the root.
+const (
+	// attrNamespaceKey is the key of the attribute that contains the namespace.
+	attrNamespaceKey = "namespace"
+	// attrTermKey is the key of the attribute that contains the term.
+	attrTermKey = "term"
+)
 
 // firstCampaignBackoff is the backoff before the first retry of a campaign with the source
 // of randomness of the tests: half of root.CampaignRetryBase.
@@ -305,11 +309,22 @@ func (m *model) lose(c *prop.Case, err error) {
 }
 
 // end has the store end the term that it granted to the root, and passes the end of the term
-// to the root, which campaigns again.
+// to the root. The root campaigns again at once after a term that the store ended. After a
+// term that the root resigned, it campaigns again after a backoff, whose Timer the model
+// keeps.
 func (m *model) end(c *prop.Case) {
 	assert.NoError(c, m.leader.Resign(assert.Context(c)), "the store must end the term")
+	resigned := m.term == epoch.Zero
 	m.leader, m.term = nil, epoch.Zero
+	campaigns, timers := len(m.h.campaigns), len(m.h.timers)
 	m.step(c, machine.TermEnded{Token: m.granted})
+	if resigned {
+		expect.Length(c, m.h.campaigns, campaigns,
+			"the root must not campaign before the backoff of a term that it resigned")
+		for _, tm := range m.h.timers[timers:] {
+			m.backoffs[tm.Token] = true
+		}
+	}
 	m.run(c)
 }
 
@@ -621,7 +636,60 @@ func TestMachine(t *testing.T) {
 				"the second backoff in a row must have twice the ceiling")
 		})
 
-		t.Run("starts the backoff again after a granted term", func(t *testing.T) {
+		t.Run("campaigns again after a backoff for a term that it resigned", func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.start(t)
+			h.st.Upgrade(rootScope, store.Schema+1)
+			h.end(t)
+			h.grant(t)
+			assert.Equal(t, h.resigned, h.campaigns[1:], "the root must resign the term of a scope of a newer schema")
+			h.end(t)
+			assert.Length(t, h.campaigns, 2, "the root must not campaign before the backoff")
+			h.elapse(t, firstCampaignBackoff)
+			assert.Length(t, h.campaigns, 3, "the root must campaign again after the backoff")
+		})
+
+		t.Run("doubles the backoff of each resigned term in a row", func(t *testing.T) {
+			t.Parallel()
+			full := false
+			h := newHarness(t, func(s *setup) {
+				s.fits = func(*store.Mutation) error {
+					if full {
+						return store.ErrTooLarge
+					}
+					return nil
+				}
+			})
+			h.start(t)
+			full = true
+			h.view(t, procA)
+			full = false
+			h.end(t)
+			h.elapse(t, firstCampaignBackoff)
+			perform := func(of func(machine.Effect) bool) {
+				i := slices.IndexFunc(h.pending, of)
+				assert.True(t, i >= 0, "the root must wait for the result of the effect")
+				e := h.pending[i]
+				h.pending = slices.Delete(h.pending, i, i+1)
+				h.step(t, h.perform(t, e))
+			}
+			perform(campaigning)
+			perform(func(e machine.Effect) bool {
+				_, head := e.(machine.Head)
+				return head
+			})
+			h.st.Upgrade(rootScope, store.Schema+1)
+			h.run(t)
+			assert.Equal(t, h.resigned, h.campaigns,
+				"the root must resign the term whose acquisition meets a newer schema")
+			h.end(t)
+			assert.NotEmpty(t, h.timers, "the second resigned term must arm a backoff")
+			assert.Equal(t, h.timers[len(h.timers)-1].Duration, 2*firstCampaignBackoff,
+				"the second backoff in a row must have twice the ceiling")
+		})
+
+		t.Run("starts the backoff again after a term that serves", func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.paused = true
@@ -632,7 +700,7 @@ func TestMachine(t *testing.T) {
 			h.end(t)
 			h.campaigned(t, errOutage, epoch.Zero)
 			assert.Equal(t, h.timers[len(h.timers)-1].Duration, firstCampaignBackoff,
-				"a granted term must start the backoff again at the first ceiling")
+				"a term that serves must start the backoff again at the first ceiling")
 		})
 
 		t.Run("stops at an error of a campaign that is not transient", func(t *testing.T) {
@@ -696,16 +764,22 @@ func TestMachine(t *testing.T) {
 			got := slices.DeleteFunc(h.logs.All(), func(r slog.Record) bool { return r.Message != logTerm })
 			assert.Length(t, got, 1, "the root must log the error of the term")
 			var named string
+			var term uint64
 			got[0].Attrs(func(a slog.Attr) bool {
-				if a.Key == attrNamespaceKey {
+				switch a.Key {
+				case attrNamespaceKey:
 					named = a.Value.String()
+				case attrTermKey:
+					term = a.Value.Uint64()
 				}
 				return true
 			})
 			expect.Equal(t, named, string(namespace), "the log must name the namespace")
+			expect.Equal(t, epoch.Epoch(term), h.term(t), "the log must name the term")
 			full = false
 			h.end(t)
-			expect.Length(t, h.campaigns, 2, "the root must campaign again once the term has ended")
+			h.elapse(t, firstCampaignBackoff)
+			expect.Length(t, h.campaigns, 2, "the root must campaign again after the backoff of the term")
 		})
 
 		t.Run("stops with fsm.ErrRejected for a second Started", func(t *testing.T) {
@@ -926,6 +1000,7 @@ func campaigning(e machine.Effect) bool {
 //     control.ErrNotServing, and to each call of a cell controller with control.ErrCall.
 //   - It campaigns only outside a term. It commits and watches the views only within a term,
 //     with the term of the controller that runs.
+//   - After the end of a term that it resigned, it campaigns again only after a backoff.
 //   - Every watch of a root that runs belongs to the controller that runs, so one controller
 //     runs at a time.
 //   - Each Resign has the token of the campaign of the term.

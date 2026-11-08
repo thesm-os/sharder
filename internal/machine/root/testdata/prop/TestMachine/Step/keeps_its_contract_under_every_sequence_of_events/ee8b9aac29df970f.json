@@ -1,0 +1,13 @@
+{
+  "store": 1,
+  "definition": "16.1.0",
+  "property": "a root keeps its contract under every sequence of events",
+  "identity": {
+    "assertion": "length",
+    "file": "root_test.go",
+    "line": 318
+  },
+  "choices": "prop1:AAEAAAAAAAAAAAAAAAEAAQAAAAAAAAABAAAAAAAAAAAAAQAAAAEAAgABAAAAAAAAAAA",
+  "counterexample": [],
+  "found": "2026-11-08"
+}

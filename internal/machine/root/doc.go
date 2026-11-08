@@ -17,10 +17,14 @@
 // process. After Started, the machine campaigns in the election of the root scope, and
 // replies to Started. For each term that the election grants, it starts a controller,
 // which acquires the root scope at the term. At the end of the term, the machine stops the
-// controller and campaigns again. A campaign that ends with a transient error runs again
-// after a backoff of [CampaignRetryBase] that doubles up to [CampaignRetryMax]. An error of
-// the controller of a term ends the term: the machine logs the error, stops the
-// controller and resigns the term. Any other error stops the machine in a terminal state.
+// controller and campaigns again. An error of the controller of a term ends the term: the
+// machine logs the error, stops the controller and resigns the term. A campaign that ends
+// with a transient error runs again. Any other error stops the machine in a terminal state.
+//
+// The machine waits for a backoff before it campaigns again after a campaign that ends with
+// a transient error, and after the end of a term that it resigned. The ceiling of the first
+// backoff in a row is [CampaignRetryBase], and the ceiling doubles with each later backoff
+// up to [CampaignRetryMax]. A term whose controller acquires the root scope ends the row.
 //
 // # Namespaces
 //
