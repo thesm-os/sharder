@@ -19,13 +19,19 @@
 // of the store applies them when no call arrives, so a run that advances a fake clock
 // gets the same effects whenever the store applies them.
 //
+// Under [WithManualTime] the store does not start a goroutine or renew a session. A runtime
+// on one goroutine applies the due events with [Store.Pump], and renews each session with
+// [Membership.Renew]. [Store.Candidate] enters an election, and [Membership.Views] reads the
+// views of a scope, without waiting.
+//
 // # Faults
 //
 // [Store.FailAt] loses a commit before it applies or its reply after it applies, and a
 // renewal of a lease before or after the store applies it. [Store.StartOutage] makes
 // every call fail as during an outage of the backend. [Store.Compact] discards the old
 // generations, and [Store.Delete] removes a scope as an operator does before a
-// namespace is created again under the same name.
+// namespace is created again under the same name. [Store.Upgrade] applies an empty
+// commit with a newer schema, as a controller of a newer release does.
 //
 // # Errors
 //

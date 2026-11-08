@@ -29,7 +29,8 @@ const (
 	// kindRenewal is a renewal of the lease, every Renew while the session renews.
 	kindRenewal eventKind = 1
 	// kindDeadline is the local deadline of the session: the validity of the lease
-	// after the latest renewal that the store accepted.
+	// after the latest renewal that the store accepted. Under WithManualTime the store
+	// does not schedule it, and the caller applies it with Membership.Lose.
 	kindDeadline eventKind = 2
 	// kindExpiry is the expiry of the lease at the store: the TTL after the latest
 	// renewal that the store applied.
@@ -74,8 +75,9 @@ func (*Membership) Provides() []config.Capability {
 
 // Join registers n in the scope id in the namespace incarnation inc, as
 // membership.Membership.Join states. The session renews its lease every l.Renew on the
-// clock of the store, while ctx has not ended at the renewal. A Join of a node whose
-// session is live ends that session, and gives the node a session of the next
+// clock of the store, while ctx has not ended at the renewal. Under WithManualTime the
+// store does not renew the session, and the caller renews it with Renew. A Join of a node
+// whose session is live ends that session, and gives the node a session of the next
 // incarnation.
 //
 // Error modes:
@@ -107,10 +109,77 @@ func (m *Membership) Join(ctx context.Context, id shard.Scope, inc shard.Namespa
 	return sc.members.join(ctx, s, sc, inc, n, l), nil
 }
 
+// Renew renews the lease of ss now, as the store renews a session in its own loop.
+// FailAt of PointRenewApply and PointRenewAck applies to the renewal. Renew does not
+// renew a session whose Done is closed or whose join context has ended, and returns nil
+// for it, as the loop of the store skips such a session. Under WithManualTime Renew moves
+// the expiry of the lease alone, and the caller moves the local deadline of a renewal that
+// returns nil.
+//
+// Error modes:
+//   - an error that wraps ErrClosed after Close.
+//   - an error that wraps ErrOutage during an outage.
+//   - an error that wraps ErrFault at a fault of PointRenewApply or PointRenewAck.
+//   - an error of class errs.Invalid for a session that another store created, or that no
+//     store created.
+func (m *Membership) Renew(ss membership.Session) error {
+	mine, ok := ss.(*session)
+	if !ok || mine.s != m.s {
+		return fmt.Errorf("%w: renew", errSession)
+	}
+	s := m.s
+	s.lock()
+	defer s.mu.Unlock()
+	if err := s.check(); err != nil {
+		return fmt.Errorf("memory: renew of %s in %v: %w", mine.node.ID, mine.sc.id, err)
+	}
+	if mine.closed || mine.ctx.Err() != nil {
+		return nil
+	}
+	if err := mine.renew(s.clk.Time()); err != nil {
+		return fmt.Errorf("memory: renew of %s in %v: %w", mine.node.ID, mine.sc.id, err)
+	}
+	return nil
+}
+
+// Lose ends the session ss at its node, as the local deadline of its lease ends it: Done
+// closes, and the session renews its lease no more. The views list the node until the store
+// expires the lease. Under WithManualTime the store does not apply the local deadline of a
+// session, so the caller ends each session with Lose once the validity of its lease after
+// its last accepted renewal has passed on the clock of its node. Lose does nothing for a
+// session whose Done is closed.
+//
+// Error modes:
+//   - an error of class errs.Invalid for a session that another store created, or that no
+//     store created.
+func (m *Membership) Lose(ss membership.Session) error {
+	mine, ok := ss.(*session)
+	if !ok || mine.s != m.s {
+		return fmt.Errorf("%w: lose", errSession)
+	}
+	m.s.lock()
+	defer m.s.mu.Unlock()
+	mine.lose()
+	return nil
+}
+
+// Views returns a reader of the views of the scope id in the incarnation inc. The store
+// keeps each view from the call of Views on, until the reader has read it or has closed.
+func (m *Membership) Views(id shard.Scope, inc shard.NamespaceIncarnation) *ViewReader {
+	s := m.s
+	s.lock()
+	defer s.mu.Unlock()
+	ms := &s.scope(id).members
+	r := &ViewReader{s: s, id: id, inc: inc, r: reader{next: ms.revision}}
+	ms.readers[&r.r] = struct{}{}
+	return r
+}
+
 // Watch yields the current view of the scope id in the incarnation inc, then every
 // later view in the order of their revisions, as membership.Membership.Watch states.
-// The nodes of a view are the nodes of the sessions of inc. The store keeps each view
-// until every watch of the scope has read it or has ended.
+// It reads the views through a ViewReader. The nodes of a view are the nodes of the
+// sessions of inc. The store keeps each view until every watch of the scope has read it
+// or has ended.
 //
 // Error modes:
 //   - an error that wraps ErrClosed after Close.
@@ -121,10 +190,10 @@ func (m *Membership) Watch(ctx context.Context, id shard.Scope, inc shard.Namesp
 	membership.View, error,
 ] {
 	return func(yield func(membership.View, error) bool) {
-		r := &reader{}
-		defer m.s.leave(id, r)
+		r := m.Views(id, inc)
+		defer r.Close()
 		for {
-			views, changed, err := m.s.views(id, inc, r)
+			views, changed, err := r.Next()
 			if err != nil {
 				yield(membership.View{}, err)
 				return
@@ -194,27 +263,40 @@ func (ms *members) join(ctx context.Context, s *Store, sc *scope, inc shard.Name
 		expiry:   now.Add(time.Duration(l.TTL)),
 	}
 	ms.sessions[n.ID] = ss
-	s.schedule(ss, kindRenewal, now.Add(time.Duration(l.Renew)))
-	s.schedule(ss, kindDeadline, ss.deadline)
+	if !s.manual {
+		s.schedule(ss, kindRenewal, now.Add(time.Duration(l.Renew)))
+		s.schedule(ss, kindDeadline, ss.deadline)
+	}
 	s.schedule(ss, kindExpiry, ss.expiry)
 	ms.record(sc)
 	return ss
 }
 
-// claim ends the sessions of every incarnation other than inc, after a commit of inc
-// created the scope. The caller has locked the mutex of the store.
-func (ms *members) claim(inc shard.NamespaceIncarnation) {
+// claim ends the sessions of every incarnation other than inc in sc, after a commit of inc
+// created the scope, and records the view without them as one revision. The caller has
+// locked the mutex of the store.
+func (ms *members) claim(sc *scope, inc shard.NamespaceIncarnation) {
+	ended := false
 	for _, ss := range ms.sessions {
 		if ss.inc != inc {
-			ss.remove()
+			ss.drop()
+			ended = true
 		}
+	}
+	if ended {
+		ms.record(sc)
 	}
 }
 
-// end ends every session of the scope. The caller has locked the mutex of the store.
-func (ms *members) end() {
+// end ends every session of sc, and records the view without them as one revision. The
+// caller has locked the mutex of the store.
+func (ms *members) end(sc *scope) {
+	ended := len(ms.sessions) > 0
 	for _, ss := range ms.sessions {
-		ss.remove()
+		ss.drop()
+	}
+	if ended {
+		ms.record(sc)
 	}
 }
 
@@ -263,9 +345,73 @@ func (v *view) at(id shard.Scope, inc shard.NamespaceIncarnation) membership.Vie
 }
 
 // reader is a watcher of the views of a scope, with the revision of the next view that
-// it reads. A reader without a revision reads the current view first.
+// it reads. Views registers a reader at the revision of the current view.
 type reader struct {
 	next epoch.Epoch
+}
+
+// ViewReader reads the views of one scope without waiting. Membership.Views returns it.
+//
+// # Concurrency
+//
+// A ViewReader is safe for concurrent use.
+type ViewReader struct {
+	// s is the store of the scope.
+	s *Store
+	// id is the scope of the views.
+	id shard.Scope
+	// r is the position of the reader among the views of the scope.
+	r reader
+	// inc is the namespace incarnation of the views.
+	inc shard.NamespaceIncarnation
+	// closed reports a call of Close. The mutex of s guards it.
+	closed bool
+}
+
+// Next returns the views that the reader has not read, in the order of their
+// revisions, and the channel that the next change of the scope closes.
+//
+// Error modes:
+//   - an error that wraps ErrClosed after Close of the store or of the reader.
+//   - an error that wraps ErrOutage during an outage.
+//   - shard.ErrIncarnation when a commit of another incarnation than inc created the
+//     scope.
+func (r *ViewReader) Next() ([]membership.View, <-chan struct{}, error) {
+	s := r.s
+	s.lock()
+	defer s.mu.Unlock()
+	if r.closed {
+		return nil, nil, fmt.Errorf("memory: watch the members of %v: %w", r.id, ErrClosed)
+	}
+	if err := s.check(); err != nil {
+		return nil, nil, fmt.Errorf("memory: watch the members of %v: %w", r.id, err)
+	}
+	sc := s.scope(r.id)
+	if err := sc.admits(r.inc); err != nil {
+		return nil, nil, err
+	}
+	ms := &sc.members
+	var views []membership.View
+	for i := range ms.views {
+		if v := &ms.views[i]; v.revision >= r.r.next {
+			views = append(views, v.at(r.id, r.inc))
+		}
+	}
+	r.r.next = ms.revision + 1
+	ms.trim()
+	return views, sc.changed, nil
+}
+
+// Close ends the reader, so the store no longer keeps a view for it. A second Close does
+// nothing.
+func (r *ViewReader) Close() {
+	s := r.s
+	s.lock()
+	defer s.mu.Unlock()
+	r.closed = true
+	ms := &s.scope(r.id).members
+	delete(ms.readers, &r.r)
+	ms.trim()
 }
 
 // session is one session of one node in one scope.
@@ -332,7 +478,11 @@ func (ss *session) handle(k eventKey) {
 		if ss.closed || ss.ctx.Err() != nil {
 			return
 		}
-		ss.renew(k.due)
+		// A renewal during an outage fails. A renewal at a fault point applies the part of
+		// the renewal that the point lets through, and no caller waits for its error.
+		if !ss.s.outage {
+			_ = ss.renew(k.due)
+		}
 		ss.s.schedule(ss, kindRenewal, k.due.Add(time.Duration(ss.lease.Renew)))
 	case kindDeadline:
 		if k.due.Equal(ss.deadline) {
@@ -345,20 +495,25 @@ func (ss *session) handle(k eventKey) {
 	}
 }
 
-// renew renews the lease at at. A renewal during an outage, or at a fault of
-// PointRenewApply, fails. A renewal at a fault of PointRenewAck moves the expiry and
-// not the deadline. The caller has locked the mutex of the store.
-func (ss *session) renew(at time.Time) {
-	if ss.s.outage || ss.s.failsAt(PointRenewApply) {
-		return
+// renew renews the lease at at. A renewal at a fault of PointRenewApply fails with
+// ErrFault. A renewal at a fault of PointRenewAck moves the expiry and not the deadline,
+// and fails with ErrFault. Under WithManualTime renew moves the expiry alone, because the
+// caller applies the deadline. The caller has locked the mutex of the store and has checked
+// that no outage stops the renewal.
+func (ss *session) renew(at time.Time) error {
+	if ss.s.failsAt(PointRenewApply) {
+		return ErrFault
 	}
 	ss.expiry = at.Add(time.Duration(ss.lease.TTL))
 	ss.s.schedule(ss, kindExpiry, ss.expiry)
 	if ss.s.failsAt(PointRenewAck) {
-		return
+		return ErrFault
 	}
-	ss.deadline = at.Add(ss.lease.Validity())
-	ss.s.schedule(ss, kindDeadline, ss.deadline)
+	if !ss.s.manual {
+		ss.deadline = at.Add(ss.lease.Validity())
+		ss.s.schedule(ss, kindDeadline, ss.deadline)
+	}
+	return nil
 }
 
 // lose ends the session at its node. It closes Done, and a session with a closed Done
@@ -373,57 +528,25 @@ func (ss *session) lose() {
 // remove removes the node of the session from the view, and ends the session. The
 // caller has locked the mutex of the store.
 func (ss *session) remove() {
+	if ss.drop() {
+		ss.sc.members.record(ss.sc)
+	}
+}
+
+// drop ends the session and deletes its node from the sessions of its scope, without a
+// view. It reports whether the scope listed the node of the session, so the caller records
+// the view without it. The caller has locked the mutex of the store.
+func (ss *session) drop() bool {
 	if ss.gone {
-		return
+		return false
 	}
 	ss.gone = true
 	ss.lose()
-	members := &ss.sc.members
-	delete(members.sessions, ss.node.ID)
-	members.record(ss.sc)
+	delete(ss.sc.members.sessions, ss.node.ID)
+	return true
 }
 
 // Membership returns the membership of s, which keeps its sessions in the scopes of s.
 func (s *Store) Membership() *Membership {
 	return s.membership
-}
-
-// views returns the views of the scope id that the watcher r of the incarnation inc has
-// not read, and the channel that the next change of the scope closes. It registers r
-// with the scope.
-func (s *Store) views(id shard.Scope, inc shard.NamespaceIncarnation, r *reader) (
-	[]membership.View, <-chan struct{}, error,
-) {
-	s.lock()
-	defer s.mu.Unlock()
-	if err := s.check(); err != nil {
-		return nil, nil, fmt.Errorf("memory: watch the members of %v: %w", id, err)
-	}
-	sc := s.scope(id)
-	if err := sc.admits(inc); err != nil {
-		return nil, nil, err
-	}
-	ms := &sc.members
-	if _, ok := ms.readers[r]; !ok {
-		ms.readers[r] = struct{}{}
-		r.next = ms.revision
-	}
-	var views []membership.View
-	for i := range ms.views {
-		if v := &ms.views[i]; v.revision >= r.next {
-			views = append(views, v.at(id, inc))
-		}
-	}
-	r.next = ms.revision + 1
-	ms.trim()
-	return views, sc.changed, nil
-}
-
-// leave unregisters the watcher r of the scope id.
-func (s *Store) leave(id shard.Scope, r *reader) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ms := &s.scope(id).members
-	delete(ms.readers, r)
-	ms.trim()
 }

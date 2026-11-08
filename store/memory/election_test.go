@@ -12,6 +12,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.thesmos.sh/core/clock/fake"
+	"go.thesmos.sh/core/epoch"
 
 	"go.thesmos.sh/sharder/internal/streamtest"
 	"go.thesmos.sh/sharder/store"
@@ -24,9 +25,9 @@ type grant struct {
 	err error
 }
 
-// TestElection checks Campaign and Resign after Close, with an ended context and for a
-// term that has ended. It also checks the candidates that wait, and the contexts that the
-// store keeps.
+// TestElection checks Campaign, Candidate and Resign after Close, with an ended context and
+// for a term that has ended. It also checks the candidates that wait, the candidacies, and
+// the contexts that the store keeps.
 func TestElection(t *testing.T) {
 	t.Parallel()
 
@@ -118,6 +119,164 @@ func TestElection(t *testing.T) {
 			runtime.GC()
 			assert.Nil(t, gone.Value(), "the store releases the context of a call that returns without a term")
 			runtime.KeepAlive(s)
+		})
+	})
+
+	t.Run("Candidate", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns ErrClosed after Close", func(t *testing.T) {
+			t.Parallel()
+			s := open(t)
+			assert.FailsAfterClose(t, s.Close, func() error {
+				_, err := s.Candidate(t.Context(), scope)
+				return err
+			}, memory.ErrClosed, "Candidate returns ErrClosed after Close")
+		})
+
+		t.Run("grants the terms in the order of the calls", func(t *testing.T) {
+			t.Parallel()
+			s := manual(t, fake.New(origin))
+			first, err := s.Candidate(t.Context(), scope)
+			assert.NoError(t, err, "Candidate enters the election")
+			second, err := s.Candidate(t.Context(), scope)
+			assert.NoError(t, err, "Candidate enters the election")
+			l, granted := first.Lead()
+			assert.True(t, granted, "the election grants a term to the first candidacy")
+			streamtest.Blocks(t, second.Granted(), "the second candidacy waits while the first one leads")
+			assert.NoError(t, l.Resign(t.Context()), "Resign returns nil")
+			streamtest.Receive(t, second.Granted(), waitFor,
+				"the election grants the next term to the second candidacy once the first one resigns")
+		})
+
+		t.Run("ends the term at the next call once its context ends under WithManualTime", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				s := manual(t, fake.New(origin))
+				ctx, cancel := context.WithCancel(t.Context())
+				c, err := s.Candidate(ctx, scope)
+				assert.NoError(t, err, "Candidate enters the election")
+				l, granted := c.Lead()
+				assert.True(t, granted, "the election grants a term to the candidacy")
+				cancel()
+				synctest.Wait()
+				streamtest.Blocks(t, l.Done(), "the term lasts until a call of the store after its context ends")
+				s.Pump()
+				streamtest.Receive(t, l.Done(), waitFor, "the next call of the store ends the term")
+			})
+		})
+
+		t.Run("keeps the other candidacies waiting when the context of one candidacy ends under WithManualTime",
+			func(t *testing.T) {
+				t.Parallel()
+				s := manual(t, fake.New(origin))
+				leader, err := s.Candidate(t.Context(), scope)
+				assert.NoError(t, err, "Candidate enters the election")
+				ended, cancel := context.WithCancel(t.Context())
+				_, err = s.Candidate(ended, scope)
+				assert.NoError(t, err, "Candidate enters the election")
+				waiting, err := s.Candidate(t.Context(), scope)
+				assert.NoError(t, err, "Candidate enters the election")
+				cancel()
+				s.Pump()
+				l, granted := leader.Lead()
+				assert.True(t, granted, "the election grants a term to the first candidacy")
+				assert.NoError(t, l.Resign(t.Context()), "Resign returns nil")
+				streamtest.Receive(t, waiting.Granted(), waitFor,
+					"the candidacy that waits leads once the leader resigns")
+			})
+
+		t.Run("releases the context of a candidacy whose term has ended under WithManualTime", func(t *testing.T) {
+			t.Parallel()
+			s := manual(t, fake.New(origin))
+			gone := func() weak.Pointer[tracked] {
+				ctx := &tracked{Context: t.Context()}
+				c, err := s.Candidate(ctx, scope)
+				assert.NoError(t, err, "Candidate enters the election")
+				l, granted := c.Lead()
+				assert.True(t, granted, "the election grants a term to the candidacy")
+				assert.NoError(t, l.Resign(t.Context()), "Resign returns nil")
+				return weak.Make(ctx)
+			}()
+			s.Pump()
+			runtime.GC()
+			assert.Nil(t, gone.Value(),
+				"the next call of the store releases the context of a candidacy whose term has ended")
+			runtime.KeepAlive(s)
+		})
+
+		t.Run("ends the term once its context ends", func(t *testing.T) {
+			t.Parallel()
+			s := open(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			c, err := s.Candidate(ctx, scope)
+			assert.NoError(t, err, "Candidate enters the election")
+			l, granted := c.Lead()
+			assert.True(t, granted, "the election grants a term to the candidacy")
+			cancel()
+			streamtest.Receive(t, l.Done(), waitFor, "the term ends once the context of the candidacy ends")
+		})
+
+		t.Run("releases the context of a candidacy that ends before its grant under WithManualTime",
+			func(t *testing.T) {
+				t.Parallel()
+				s := manual(t, fake.New(origin))
+				_, err := s.Candidate(t.Context(), scope)
+				assert.NoError(t, err, "Candidate enters the election")
+				gone := func() weak.Pointer[tracked] {
+					inner, cancel := context.WithCancel(t.Context())
+					ctx := &tracked{Context: inner}
+					_, err := s.Candidate(ctx, scope)
+					assert.NoError(t, err, "Candidate enters the election")
+					cancel()
+					return weak.Make(ctx)
+				}()
+				s.Pump()
+				runtime.GC()
+				assert.Nil(t, gone.Value(),
+					"the next call of the store releases the context of a candidacy that ended before its grant")
+				runtime.KeepAlive(s)
+			})
+	})
+
+	t.Run("Candidacy", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Granted", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns a channel that the grant of the term closes", func(t *testing.T) {
+				t.Parallel()
+				s := manual(t, fake.New(origin))
+				c, err := s.Candidate(t.Context(), scope)
+				assert.NoError(t, err, "Candidate enters the election")
+				streamtest.Receive(t, c.Granted(), waitFor, "Granted is closed once the election grants the term")
+			})
+		})
+
+		t.Run("Lead", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("reports false before the grant", func(t *testing.T) {
+				t.Parallel()
+				s := manual(t, fake.New(origin))
+				_, err := s.Candidate(t.Context(), scope)
+				assert.NoError(t, err, "Candidate enters the election")
+				c, err := s.Candidate(t.Context(), scope)
+				assert.NoError(t, err, "Candidate enters the election")
+				_, granted := c.Lead()
+				assert.False(t, granted, "Lead reports false while another candidacy leads")
+			})
+
+			t.Run("returns the term that the election granted", func(t *testing.T) {
+				t.Parallel()
+				s := manual(t, fake.New(origin))
+				c, err := s.Candidate(t.Context(), scope)
+				assert.NoError(t, err, "Candidate enters the election")
+				l, granted := c.Lead()
+				assert.True(t, granted, "the election grants a term to the candidacy")
+				assert.Equal(t, l.Term(), epoch.Epoch(1), "Lead returns the first term of the election")
+			})
 		})
 	})
 

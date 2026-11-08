@@ -13,6 +13,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.thesmos.sh/core/clock/fake"
+	"go.thesmos.sh/core/errs"
 
 	"go.thesmos.sh/sharder/config"
 	"go.thesmos.sh/sharder/internal/streamtest"
@@ -65,8 +66,8 @@ func (m backedMembership) LoseRenewals(l membershiptest.Loss) {
 	m.s.FailAt(renewalPoints[l])
 }
 
-// TestSession checks the capabilities, the joins, the watches and the sessions of a
-// Membership.
+// TestSession checks the capabilities, the joins, the renewals, the watches, the readers of
+// the views and the sessions of a Membership.
 func TestSession(t *testing.T) {
 	t.Parallel()
 
@@ -123,6 +124,24 @@ func TestSession(t *testing.T) {
 				commit(t, s, incA, &store.Mutation{})
 				streamtest.Receive(t, ss.Done(), waitFor,
 					"Done of a session is closed once another incarnation creates its scope")
+			})
+
+			t.Run("records one view once a commit of another incarnation ends the sessions", func(t *testing.T) {
+				t.Parallel()
+				s := manual(t, fake.New(origin))
+				for _, id := range [...]shard.NodeID{node, otherNode} {
+					n := shard.Node{ID: id}
+					_, err := s.Membership().Join(t.Context(), scope, incB, &n, lease)
+					assert.NoError(t, err, "Join registers the node in a scope before its first commit")
+				}
+				r := s.Membership().Views(scope, incA)
+				t.Cleanup(r.Close)
+				_, _, err := r.Next()
+				assert.NoError(t, err, "Next returns the views of the scope")
+				commit(t, s, incA, &store.Mutation{})
+				views, _, err := r.Next()
+				assert.NoError(t, err, "Next returns the views after the commit")
+				assert.Length(t, views, 1, "a commit that creates the scope ends the other sessions in one view")
 			})
 
 			t.Run("keeps the sessions of the incarnation of the commit that creates the scope", func(t *testing.T) {
@@ -254,6 +273,304 @@ func TestSession(t *testing.T) {
 				runtime.KeepAlive(s)
 			})
 		})
+
+		t.Run("Renew", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("moves the expiry of the lease", func(t *testing.T) {
+				t.Parallel()
+				clk := fake.New(origin)
+				s := manual(t, clk)
+				ss := joinNode(t, s)
+				r := s.Membership().Views(scope, incA)
+				t.Cleanup(r.Close)
+				clk.Advance(time.Duration(lease.Renew))
+				assert.NoError(t, s.Membership().Renew(ss), "Renew renews the lease")
+				clk.Advance(time.Duration(lease.TTL - lease.Renew))
+				views, _, err := r.Next()
+				assert.NoError(t, err, "Next returns the views of the scope")
+				assert.NotEmpty(t, views, "Next returns the views since the creation of the reader")
+				assert.Equal(t, views[len(views)-1].Nodes, []shard.Node{{ID: node, Incarnation: 1}},
+					"the view lists the node at the TTL after its join after a renewal", assert.EquateEmpty())
+			})
+
+			t.Run("returns ErrClosed after Close", func(t *testing.T) {
+				t.Parallel()
+				s := manual(t, fake.New(origin))
+				ss := joinNode(t, s)
+				assert.FailsAfterClose(t, s.Close, func() error { return s.Membership().Renew(ss) }, memory.ErrClosed,
+					"Renew returns ErrClosed after Close")
+			})
+
+			tests := []struct {
+				name  string
+				point memory.Point
+			}{
+				{name: "returns ErrFault at a fault of PointRenewApply", point: memory.PointRenewApply},
+				{name: "returns ErrFault at a fault of PointRenewAck", point: memory.PointRenewAck},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					s := manual(t, fake.New(origin))
+					ss := joinNode(t, s)
+					s.FailAt(tt.point)
+					assert.ErrorIs(t, s.Membership().Renew(ss), memory.ErrFault,
+						"Renew returns ErrFault at a fault of its point")
+				})
+			}
+
+			t.Run("moves the expiry of the lease at a fault of PointRenewAck", func(t *testing.T) {
+				t.Parallel()
+				clk := fake.New(origin)
+				s := manual(t, clk)
+				ss := joinNode(t, s)
+				r := s.Membership().Views(scope, incA)
+				t.Cleanup(r.Close)
+				clk.Advance(time.Duration(lease.Renew))
+				s.FailAt(memory.PointRenewAck)
+				assert.ErrorIs(t, s.Membership().Renew(ss), memory.ErrFault, "Renew returns ErrFault at the fault")
+				clk.Advance(time.Duration(lease.TTL - lease.Renew))
+				views, _, err := r.Next()
+				assert.NoError(t, err, "Next returns the views of the scope")
+				assert.NotEmpty(t, views, "Next returns the views since the creation of the reader")
+				assert.Equal(t, views[len(views)-1].Nodes, []shard.Node{{ID: node, Incarnation: 1}},
+					"the view lists the node at the TTL after its join after a renewal whose reply is lost",
+					assert.EquateEmpty())
+			})
+
+			t.Run("keeps the expiry of the lease at a fault of PointRenewApply", func(t *testing.T) {
+				t.Parallel()
+				clk := fake.New(origin)
+				s := manual(t, clk)
+				ss := joinNode(t, s)
+				r := s.Membership().Views(scope, incA)
+				t.Cleanup(r.Close)
+				clk.Advance(time.Duration(lease.Renew))
+				s.FailAt(memory.PointRenewApply)
+				assert.ErrorIs(t, s.Membership().Renew(ss), memory.ErrFault, "Renew returns ErrFault at the fault")
+				clk.Advance(time.Duration(lease.TTL - lease.Renew))
+				views, _, err := r.Next()
+				assert.NoError(t, err, "Next returns the views of the scope")
+				assert.NotEmpty(t, views, "Next returns the views since the creation of the reader")
+				assert.Empty(t, views[len(views)-1].Nodes,
+					"the view lists no node at the TTL after the join after a renewal that the store lost")
+			})
+
+			t.Run("returns nil for a session whose Done is closed", func(t *testing.T) {
+				t.Parallel()
+				s := manual(t, fake.New(origin))
+				ss := joinNode(t, s)
+				assert.NoError(t, ss.Leave(t.Context()), "Leave returns nil")
+				assert.NoError(t, s.Membership().Renew(ss), "Renew returns nil for a session that has ended")
+			})
+
+			t.Run("keeps the expiry of a session whose Done is closed", func(t *testing.T) {
+				t.Parallel()
+				clk := fake.New(origin)
+				s := manual(t, clk)
+				ss := joinNode(t, s)
+				r := s.Membership().Views(scope, incA)
+				t.Cleanup(r.Close)
+				assert.NoError(t, s.Membership().Lose(ss), "Lose ends the session at its node")
+				streamtest.Receive(t, ss.Done(), waitFor, "Done is closed once Lose ends the session")
+				clk.Advance(time.Duration(lease.Renew))
+				assert.NoError(t, s.Membership().Renew(ss), "Renew returns nil for a session that has ended")
+				clk.Advance(time.Duration(lease.TTL - lease.Renew))
+				views, _, err := r.Next()
+				assert.NoError(t, err, "Next returns the views of the scope")
+				assert.NotEmpty(t, views, "Next returns the views since the reader read last")
+				assert.Empty(t, views[len(views)-1].Nodes,
+					"the view lists no node at the TTL after the join of a session that Renew did not renew")
+			})
+
+			t.Run("keeps the expiry of a session whose join context has ended", func(t *testing.T) {
+				t.Parallel()
+				clk := fake.New(origin)
+				s := manual(t, clk)
+				ended, cancel := context.WithCancel(t.Context())
+				cancel()
+				n := shard.Node{ID: node}
+				ss, err := s.Membership().Join(ended, scope, incA, &n, lease)
+				assert.NoError(t, err, "Join registers the node")
+				r := s.Membership().Views(scope, incA)
+				t.Cleanup(r.Close)
+				clk.Advance(time.Duration(lease.Renew))
+				assert.NoError(t, s.Membership().Renew(ss),
+					"Renew returns nil for a session whose join context has ended")
+				clk.Advance(time.Duration(lease.TTL - lease.Renew))
+				views, _, err := r.Next()
+				assert.NoError(t, err, "Next returns the views of the scope")
+				assert.NotEmpty(t, views, "Next returns the views since the creation of the reader")
+				assert.Empty(t, views[len(views)-1].Nodes,
+					"the view lists no node at the TTL after a join whose context ended before the renewal")
+			})
+
+			t.Run("returns an error of class errs.Invalid for a session of another store", func(t *testing.T) {
+				t.Parallel()
+				ss := joinNode(t, manual(t, fake.New(origin)))
+				err := manual(t, fake.New(origin)).Membership().Renew(ss)
+				assert.Equal(t, errs.Classify(err), errs.Invalid,
+					"Renew refuses a session of another store as an invalid request")
+			})
+
+			t.Run("returns an error of class errs.Invalid for a session that no store created", func(t *testing.T) {
+				t.Parallel()
+				err := manual(t, fake.New(origin)).Membership().Renew(membershiptest.NewSessionStub(t))
+				assert.Equal(t, errs.Classify(err), errs.Invalid,
+					"Renew refuses a session that no store created as an invalid request")
+			})
+		})
+
+		t.Run("Lose", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("closes Done of the session", func(t *testing.T) {
+				t.Parallel()
+				s := manual(t, fake.New(origin))
+				ss := joinNode(t, s)
+				assert.NoError(t, s.Membership().Lose(ss), "Lose ends the session at its node")
+				streamtest.Receive(t, ss.Done(), waitFor, "Done is closed once Lose ends the session")
+			})
+
+			t.Run("keeps the node in the view until the expiry of the lease", func(t *testing.T) {
+				t.Parallel()
+				clk := fake.New(origin)
+				s := manual(t, clk)
+				ss := joinNode(t, s)
+				r := s.Membership().Views(scope, incA)
+				t.Cleanup(r.Close)
+				assert.NoError(t, s.Membership().Lose(ss), "Lose ends the session at its node")
+				views, _, err := r.Next()
+				assert.NoError(t, err, "Next returns the views of the scope")
+				assert.NotEmpty(t, views, "Next returns the views since the creation of the reader")
+				assert.Equal(t, views[len(views)-1].Nodes, []shard.Node{{ID: node, Incarnation: 1}},
+					"the view lists the node of a lost session before the expiry of its lease", assert.EquateEmpty())
+				clk.Advance(time.Duration(lease.TTL))
+				views, _, err = r.Next()
+				assert.NoError(t, err, "Next returns the views of the scope")
+				assert.NotEmpty(t, views, "Next returns the view after the expiry")
+				assert.Empty(t, views[len(views)-1].Nodes, "the view lists no node after the expiry of the lease")
+			})
+
+			t.Run("returns an error of class errs.Invalid for a session of another store", func(t *testing.T) {
+				t.Parallel()
+				ss := joinNode(t, manual(t, fake.New(origin)))
+				err := manual(t, fake.New(origin)).Membership().Lose(ss)
+				assert.Equal(t, errs.Classify(err), errs.Invalid,
+					"Lose refuses a session of another store as an invalid request")
+			})
+
+			t.Run("returns an error of class errs.Invalid for a session that no store created", func(t *testing.T) {
+				t.Parallel()
+				err := manual(t, fake.New(origin)).Membership().Lose(membershiptest.NewSessionStub(t))
+				assert.Equal(t, errs.Classify(err), errs.Invalid,
+					"Lose refuses a session that no store created as an invalid request")
+			})
+		})
+
+		t.Run("Views", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns a reader that keeps every view from its creation", func(t *testing.T) {
+				t.Parallel()
+				s := manual(t, fake.New(origin))
+				r := s.Membership().Views(scope, incA)
+				t.Cleanup(r.Close)
+				joinEach(t.Context(), t, s)
+				views, _, err := r.Next()
+				assert.NoError(t, err, "Next returns the views of the scope")
+				assert.Length(t, views, 3, "the reader returns the view at its creation and the view after each join")
+			})
+		})
+	})
+
+	t.Run("ViewReader", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Next", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns ErrClosed after Close of the store", func(t *testing.T) {
+				t.Parallel()
+				s := manual(t, fake.New(origin))
+				r := s.Membership().Views(scope, incA)
+				t.Cleanup(r.Close)
+				assert.FailsAfterClose(t, s.Close, func() error {
+					_, _, err := r.Next()
+					return err
+				}, memory.ErrClosed, "Next returns ErrClosed after Close of the store")
+			})
+
+			t.Run("returns ErrClosed after Close of the reader", func(t *testing.T) {
+				t.Parallel()
+				r := manual(t, fake.New(origin)).Membership().Views(scope, incA)
+				assert.FailsAfterClose(t, func() error {
+					r.Close()
+					return nil
+				}, func() error {
+					_, _, err := r.Next()
+					return err
+				}, memory.ErrClosed, "Next returns ErrClosed after Close of the reader")
+			})
+
+			t.Run("returns ErrIncarnation for a scope that a commit of another incarnation created",
+				func(t *testing.T) {
+					t.Parallel()
+					s := manual(t, fake.New(origin))
+					commit(t, s, incA, &store.Mutation{})
+					r := s.Membership().Views(scope, incB)
+					t.Cleanup(r.Close)
+					_, _, err := r.Next()
+					assert.ErrorIs(t, err, shard.ErrIncarnation,
+						"Next returns ErrIncarnation for a scope that a commit of another incarnation created")
+				})
+
+			t.Run("returns the views that the reader has not read", func(t *testing.T) {
+				t.Parallel()
+				s := manual(t, fake.New(origin))
+				r := s.Membership().Views(scope, incA)
+				t.Cleanup(r.Close)
+				first, _, err := r.Next()
+				assert.NoError(t, err, "Next returns the views of the scope")
+				assert.Length(t, first, 1, "the first Next returns the view at the creation of the reader")
+				joinNode(t, s)
+				views, _, err := r.Next()
+				assert.NoError(t, err, "Next returns the views of the scope")
+				assert.Length(t, views, 1, "Next returns the one view that the reader has not read")
+				assert.Equal(t, views[0].Revision, first[0].Revision+1, "Next returns the view after the join")
+			})
+
+			t.Run("returns the channel that the next change of the scope closes", func(t *testing.T) {
+				t.Parallel()
+				s := manual(t, fake.New(origin))
+				r := s.Membership().Views(scope, incA)
+				t.Cleanup(r.Close)
+				_, changed, err := r.Next()
+				assert.NoError(t, err, "Next returns the views of the scope")
+				streamtest.Blocks(t, changed, "the channel is open while the scope does not change")
+				joinNode(t, s)
+				streamtest.Receive(t, changed, waitFor, "the channel is closed once a join changes the scope")
+			})
+		})
+
+		t.Run("Close", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("releases the views that the reader has not read", func(t *testing.T) {
+				t.Parallel()
+				clk := fake.New(origin)
+				s := manual(t, clk)
+				r := s.Membership().Views(scope, incA)
+				_, _, err := r.Next()
+				assert.NoError(t, err, "Next returns the views of the scope")
+				gone := leftSession(t, s, clk)
+				r.Close()
+				runtime.GC()
+				assert.Nil(t, gone.Value(), "the store releases a session once the reader that lags closes")
+				runtime.KeepAlive(s)
+			})
+		})
 	})
 
 	t.Run("Session", func(t *testing.T) {
@@ -326,15 +643,14 @@ func pull(t *testing.T, next func() (membership.View, error, bool)) membership.V
 	return v
 }
 
-// joinEach joins the node and then the other node to the scope of s in the incarnation A,
-// each with the context ctx.
-func joinEach(ctx context.Context, t *testing.T, s *memory.Store) {
+// joinNode joins the node to the scope of s in the incarnation A with the lease of the
+// tests, and returns its session. It fails t when the join fails.
+func joinNode(t *testing.T, s *memory.Store) membership.Session {
 	t.Helper()
-	for _, id := range [...]shard.NodeID{node, otherNode} {
-		n := shard.Node{ID: id}
-		_, err := s.Membership().Join(ctx, scope, incA, &n, lease)
-		assert.NoError(t, err, "Join registers the node")
-	}
+	n := shard.Node{ID: node}
+	ss, err := s.Membership().Join(t.Context(), scope, incA, &n, lease)
+	assert.NoError(t, err, "Join registers the node")
+	return ss
 }
 
 // leftSession joins the node to the scope of s with a context of its own, and leaves the

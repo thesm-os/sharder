@@ -1,0 +1,73 @@
+{
+  "store": 1,
+  "definition": "16.1.0",
+  "property": "Outcome returns an error for a cancelled context",
+  "identity": {
+    "assertion": "err-present",
+    "file": "single.go",
+    "line": 31
+  },
+  "choices": "prop1:AwADAAAAAAA",
+  "counterexample": [
+    {
+      "label": "s",
+      "value": {
+        "type": "record",
+        "fields": [
+          [
+            "Namespace",
+            {
+              "type": "string",
+              "value": ""
+            }
+          ],
+          [
+            "Cell",
+            {
+              "type": "string",
+              "value": ""
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "label": "id",
+      "value": {
+        "type": "record",
+        "fields": [
+          [
+            "Incarnation",
+            {
+              "type": "record",
+              "fields": [
+                [
+                  "ID",
+                  {
+                    "type": "string",
+                    "value": "id:"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "Term",
+            {
+              "type": "int",
+              "value": 0
+            }
+          ],
+          [
+            "Seq",
+            {
+              "type": "int",
+              "value": 0
+            }
+          ]
+        ]
+      }
+    }
+  ],
+  "found": "2026-11-07"
+}

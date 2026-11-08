@@ -107,7 +107,7 @@ func (sc *scope) apply(w *writer, m *store.Mutation, digest crypto.Digest) epoch
 	//dokimi:mutate-skip ror-true: after the commit that creates the scope, the scope and each of its sessions have the incarnation of w, so the block does not change anything for a later commit
 	if sc.head.Generation == 0 {
 		sc.head.Incarnation = w.inc
-		sc.members.claim(w.inc)
+		sc.members.claim(sc, w.inc)
 	}
 	sc.head.Generation++
 	sc.head.Schema = max(sc.head.Schema, store.Schema)
@@ -190,7 +190,7 @@ func (sc *scope) compact() {
 // end ends the sessions and the term of the scope, and wakes its watchers. Close and
 // Delete call it.
 func (sc *scope) end() {
-	sc.members.end()
+	sc.members.end(sc)
 	sc.election.end()
 	sc.notify()
 }
@@ -411,7 +411,11 @@ func drains(prev []store.Drain, m *store.Mutation) []store.Drain {
 // Error modes:
 //   - an error that wraps ErrClosed after Close.
 //   - an error that wraps ErrOutage during an outage.
-func (s *Store) Head(_ context.Context, id shard.Scope) (store.Head, error) {
+//   - an error that wraps the cause of ctx when ctx has ended before the call.
+func (s *Store) Head(ctx context.Context, id shard.Scope) (store.Head, error) {
+	if ctx.Err() != nil {
+		return store.Head{}, fmt.Errorf("memory: head of %v: %w", id, context.Cause(ctx))
+	}
 	s.lock()
 	defer s.mu.Unlock()
 	if err := s.check(); err != nil {
@@ -528,7 +532,11 @@ func (s *Store) Watch(ctx context.Context, id shard.Scope, inc shard.NamespaceIn
 // Error modes:
 //   - an error that wraps ErrClosed after Close.
 //   - an error that wraps ErrOutage during an outage.
-func (s *Store) Outcome(_ context.Context, sc shard.Scope, id store.CommitID) (store.Receipt, bool, error) {
+//   - an error that wraps the cause of ctx when ctx has ended before the call.
+func (s *Store) Outcome(ctx context.Context, sc shard.Scope, id store.CommitID) (store.Receipt, bool, error) {
+	if ctx.Err() != nil {
+		return store.Receipt{}, false, fmt.Errorf("memory: outcome in %v: %w", sc, context.Cause(ctx))
+	}
 	s.lock()
 	defer s.mu.Unlock()
 	if err := s.check(); err != nil {
@@ -561,6 +569,23 @@ func (s *Store) Delete(id shard.Scope) {
 	sc.history = nil
 	clear(sc.receipts)
 	sc.starts.Clear()
+}
+
+// Upgrade applies an empty commit at the next generation of the scope id with the schema
+// schema, as a controller of a newer release does. The scope keeps a higher schema that it
+// already has. Upgrade does not add a receipt or change the watermark. It does nothing for a
+// scope before its first commit.
+func (s *Store) Upgrade(id shard.Scope, schema uint32) {
+	s.lock()
+	defer s.mu.Unlock()
+	sc := s.scope(id)
+	if sc.head.Generation == 0 {
+		return
+	}
+	sc.head.Generation++
+	sc.head.Schema = max(sc.head.Schema, schema)
+	sc.history = append(sc.history, sc.next(&store.Mutation{}))
+	sc.notify()
 }
 
 // events returns the events of the generations of the scope id from next on, for a

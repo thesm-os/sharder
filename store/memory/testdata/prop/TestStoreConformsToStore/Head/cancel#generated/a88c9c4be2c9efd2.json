@@ -1,0 +1,36 @@
+{
+  "store": 1,
+  "definition": "16.1.0",
+  "property": "Head returns an error for a cancelled context",
+  "identity": {
+    "assertion": "err-present",
+    "file": "single.go",
+    "line": 31
+  },
+  "choices": "prop1:AwADAA",
+  "counterexample": [
+    {
+      "label": "s",
+      "value": {
+        "type": "record",
+        "fields": [
+          [
+            "Namespace",
+            {
+              "type": "string",
+              "value": ""
+            }
+          ],
+          [
+            "Cell",
+            {
+              "type": "string",
+              "value": ""
+            }
+          ]
+        ]
+      }
+    }
+  ],
+  "found": "2026-11-07"
+}

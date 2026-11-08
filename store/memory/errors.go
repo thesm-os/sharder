@@ -29,6 +29,13 @@ var (
 	ErrToken = errs.WithClass(errors.New("memory: malformed page token"), errs.Invalid)
 )
 
-// errNodeID reports a join of a node without an ID. It classifies as errs.Invalid, as
-// membership.Membership.Join states.
-var errNodeID = errs.WithClass(errors.New("memory: node without an ID"), errs.Invalid)
+// The unexported sentinel errors of package memory.
+var (
+	// errNodeID reports a join of a node without an ID. It classifies as errs.Invalid, as
+	// membership.Membership.Join states.
+	errNodeID = errs.WithClass(errors.New("memory: node without an ID"), errs.Invalid)
+
+	// errSession reports a renewal of a session that the store did not create. Renew
+	// returns it. It classifies as errs.Invalid.
+	errSession = errs.WithClass(errors.New("memory: a session of another store"), errs.Invalid)
+)

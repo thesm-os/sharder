@@ -6,6 +6,7 @@ package memory
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -49,6 +50,9 @@ type Store struct {
 	closed chan struct{}
 	// membership is the membership that Membership returns.
 	membership *Membership
+	// candidacies lists the candidacies of Candidate whose contexts each call checks under
+	// WithManualTime, in the order of their calls.
+	candidacies []*candidate
 	// limits bounds every commit.
 	limits store.Limits
 	mu     sync.Mutex
@@ -58,6 +62,8 @@ type Store struct {
 	outage bool
 	// done reports a call of Close.
 	done bool
+	// manual reports the option WithManualTime.
+	manual bool
 }
 
 // The interfaces that a Store implements.
@@ -72,6 +78,7 @@ type Option func(*options)
 // options is the result of the Options that New receives.
 type options struct {
 	limits store.Limits
+	manual bool
 }
 
 // WithLimits sets the bounds of every commit, which Limits returns and Fits applies.
@@ -80,9 +87,19 @@ func WithLimits(l store.Limits) Option {
 	return func(o *options) { o.limits = l }
 }
 
+// WithManualTime makes the caller apply the events of the leases of the store, and run the
+// node side of each session. The store does not start a goroutine, renew a session or end a
+// session at its local deadline. The caller applies the due expiries of the leases with Pump,
+// renews each session with Membership.Renew, and ends each session at its local deadline on
+// the clock of its node with Membership.Lose.
+func WithManualTime() Option {
+	return func(o *options) { o.manual = true }
+}
+
 // New returns an empty store whose leases run on clk. It starts the goroutine that
 // applies the events of the leases when they are due, and Close makes it return. The
-// goroutine keeps at most one timer on clk, and stops each timer that it creates.
+// goroutine keeps at most one timer on clk, and stops each timer that it creates. Under
+// WithManualTime, New does not start a goroutine.
 func New(clk clock.Clock, opts ...Option) *Store {
 	o := options{limits: store.Limits{MaxPlacements: math.MaxInt, MaxBytes: math.MaxInt}}
 	for _, opt := range opts {
@@ -96,10 +113,21 @@ func New(clk clock.Clock, opts ...Option) *Store {
 		wake:   make(chan struct{}, 1),
 		closed: make(chan struct{}),
 		limits: o.limits,
+		manual: o.manual,
 	}
 	s.membership = &Membership{s: s}
-	go s.apply()
+	if !o.manual {
+		go s.apply()
+	}
 	return s
+}
+
+// Pump applies every event of the leases that is due on the clock of the store. Under
+// WithManualTime it also ends each term and drops each waiting candidacy of Candidate whose
+// context has ended, as every call of the store does.
+func (s *Store) Pump() {
+	s.lock()
+	s.mu.Unlock()
 }
 
 // Provides returns the capability leases. A Store does not keep anything beyond its
@@ -182,17 +210,19 @@ func (s *Store) lock() {
 // pump applies every event that is due on the clock, in the order of their due times,
 // and the events of one due time in the order in which the store scheduled them. Each
 // event takes effect at its due time, so the effects of a run do not depend on when the
-// store applies them. The caller has locked s.mu.
+// store applies them. pump then settles each candidacy of WithManualTime in the order of
+// the calls of Candidate. The caller has locked s.mu.
 func (s *Store) pump() {
 	now := s.clk.Time()
 	for {
 		k, ss, ok := s.queue.Min()
 		if !ok || k.due.After(now) {
-			return
+			break
 		}
 		s.queue.Delete(k)
 		ss.handle(k)
 	}
+	s.candidacies = slices.DeleteFunc(s.candidacies, (*candidate).settled)
 }
 
 // schedule adds the event of kind for ss at due, and wakes the goroutine of apply. The

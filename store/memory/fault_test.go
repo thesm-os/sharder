@@ -6,7 +6,6 @@ package memory_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
@@ -15,27 +14,13 @@ import (
 	"go.thesmos.sh/core/version"
 
 	"go.thesmos.sh/sharder/internal/streamtest"
-	"go.thesmos.sh/sharder/ownership"
 	"go.thesmos.sh/sharder/shard"
 	"go.thesmos.sh/sharder/store"
 	"go.thesmos.sh/sharder/store/memory"
 )
 
-// waitFor bounds each wait of the tests for an item, an event or a closed channel that the
-// store delivers at once.
-const waitFor = 10 * time.Second
-
 // otherPoint is a point that is not one of Points.
 const otherPoint memory.Point = "elsewhere"
-
-// lease is the lease of the sessions of the tests. It renews every 3 seconds, with a
-// validity of 5 seconds and a TTL of 10 seconds.
-var lease = ownership.Lease{
-	TTL:          shard.Duration(10 * time.Second),
-	Renew:        shard.Duration(3 * time.Second),
-	MaxDriftRate: 0.5,
-	OnLoss:       ownership.Stop,
-}
 
 // TestFault checks the fault points, the outages and the compaction of a Store.
 func TestFault(t *testing.T) {
@@ -94,6 +79,10 @@ func TestFault(t *testing.T) {
 				_, err := s.Campaign(ctx, scope)
 				return err
 			}},
+			{name: "makes Candidate return ErrOutage", call: func(ctx context.Context, s *memory.Store) error {
+				_, err := s.Candidate(ctx, scope)
+				return err
+			}},
 			{name: "makes Join return ErrOutage", call: func(ctx context.Context, s *memory.Store) error {
 				n := shard.Node{ID: node}
 				_, err := s.Membership().Join(ctx, scope, incA, &n, lease)
@@ -112,6 +101,15 @@ func TestFault(t *testing.T) {
 						return err
 					}
 					return nil
+				},
+			},
+			{
+				name: "makes Next of a reader of the views return ErrOutage",
+				call: func(_ context.Context, s *memory.Store) error {
+					r := s.Membership().Views(scope, incA)
+					defer r.Close()
+					_, _, err := r.Next()
+					return err
 				},
 			},
 		}
@@ -162,6 +160,16 @@ func TestFault(t *testing.T) {
 			assert.NoError(t, err, "Join registers the node")
 			s.StartOutage()
 			assert.ErrorIs(t, ss.Leave(t.Context()), memory.ErrOutage, "Leave returns ErrOutage during an outage")
+		})
+
+		t.Run("makes Renew return ErrOutage", func(t *testing.T) {
+			t.Parallel()
+			s := manual(t, fake.New(origin))
+			n := shard.Node{ID: node}
+			ss, err := s.Membership().Join(t.Context(), scope, incA, &n, lease)
+			assert.NoError(t, err, "Join registers the node")
+			s.StartOutage()
+			assert.ErrorIs(t, s.Membership().Renew(ss), memory.ErrOutage, "Renew returns ErrOutage during an outage")
 		})
 
 		t.Run("makes Resign return ErrOutage", func(t *testing.T) {

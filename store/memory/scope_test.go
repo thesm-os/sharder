@@ -9,10 +9,12 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
+	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/epochtest"
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/id"
@@ -91,8 +93,8 @@ type fenced struct {
 }
 
 // TestScope checks the calls of a Store on one scope after Close, with an ended context, at
-// the end of a watch and after Delete, the fence laws of its commits, and the parts of the
-// state that generations share.
+// the end of a watch, after Delete and after Upgrade, the fence laws of its commits, and the
+// parts of the state that generations share.
 func TestScope(t *testing.T) {
 	t.Parallel()
 
@@ -288,6 +290,35 @@ func TestScope(t *testing.T) {
 			streamtest.Receive(t, ss.Done(), waitFor, "Done is closed once Delete removes the scope")
 		})
 
+		t.Run("records one view without the sessions of the scope", func(t *testing.T) {
+			t.Parallel()
+			s := manual(t, fake.New(origin))
+			joinEach(t.Context(), t, s)
+			r := s.Membership().Views(scope, incA)
+			t.Cleanup(r.Close)
+			_, _, err := r.Next()
+			assert.NoError(t, err, "Next returns the views of the scope")
+			s.Delete(scope)
+			views, _, err := r.Next()
+			assert.NoError(t, err, "Next returns the views after the Delete")
+			assert.Length(t, views, 1, "a Delete ends every session of the scope in one view")
+			assert.Empty(t, views[0].Nodes, "the view after a Delete lists no node")
+		})
+
+		t.Run("records no view for a scope without sessions", func(t *testing.T) {
+			t.Parallel()
+			s := manual(t, fake.New(origin))
+			commit(t, s, incA, &store.Mutation{})
+			r := s.Membership().Views(scope, incA)
+			t.Cleanup(r.Close)
+			_, _, err := r.Next()
+			assert.NoError(t, err, "Next returns the views of the scope")
+			s.Delete(scope)
+			views, _, err := r.Next()
+			assert.NoError(t, err, "Next returns the views after the Delete")
+			assert.Empty(t, views, "a Delete of a scope without sessions records no view")
+		})
+
 		t.Run("discards the generations of the scope", func(t *testing.T) {
 			t.Parallel()
 			s := open(t)
@@ -303,6 +334,59 @@ func TestScope(t *testing.T) {
 				got = append(got, p)
 			}
 			assert.Equal(t, got, placements[1:], "Read returns the placements of the scope that a commit created again")
+		})
+	})
+
+	t.Run("Upgrade", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("applies an empty commit with the schema at the next generation", func(t *testing.T) {
+			t.Parallel()
+			s := open(t)
+			commit(t, s, incA, &store.Mutation{})
+			s.Upgrade(scope, store.Schema+1)
+			h, err := s.Head(t.Context(), scope)
+			assert.NoError(t, err, "Head returns the header of the scope")
+			expect.Equal(t, h.Generation, epoch.Epoch(2), "Upgrade applies the generation after the commit")
+			expect.Equal(t, h.Schema, store.Schema+1, "Upgrade raises the schema of the scope")
+		})
+
+		t.Run("keeps the schema of a scope that has a higher one", func(t *testing.T) {
+			t.Parallel()
+			s := open(t)
+			commit(t, s, incA, &store.Mutation{})
+			s.Upgrade(scope, store.Schema+2)
+			s.Upgrade(scope, store.Schema+1)
+			h, err := s.Head(t.Context(), scope)
+			assert.NoError(t, err, "Head returns the header of the scope")
+			assert.Equal(t, h.Schema, store.Schema+2, "Upgrade keeps the higher schema of the scope")
+		})
+
+		t.Run("makes a watch that waits yield the empty commit", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				s := manual(t, fake.New(origin))
+				commit(t, s, incA, &store.Mutation{})
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				items := streamtest.Follow(ctx, s.Watch(ctx, scope, incA, 1, ""))
+				synctest.Wait()
+				s.Upgrade(scope, store.Schema+1)
+				it, ok := streamtest.Receive(t, items, waitFor, "Watch yields the empty commit once Upgrade applies it")
+				assert.True(t, ok, "Watch yields an event before it ends")
+				assert.NoError(t, it.Err, "Watch yields the generations of the scope")
+				assert.Equal(t, it.Value, store.Event{Generation: 2},
+					"Watch yields the generation of the empty commit after the commit", assert.EquateEmpty())
+			})
+		})
+
+		t.Run("leaves a scope that no commit has created", func(t *testing.T) {
+			t.Parallel()
+			s := open(t)
+			s.Upgrade(scope, store.Schema+1)
+			h, err := s.Head(t.Context(), scope)
+			assert.NoError(t, err, "Head returns the header of the scope")
+			assert.Equal(t, h, store.Head{}, "Upgrade leaves the header of a scope that no commit has created")
 		})
 	})
 }
