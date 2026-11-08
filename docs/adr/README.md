@@ -56,3 +56,4 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0045](0045-dokimi-generates-the-test-code.md) | dokimi generates the enumerations, the error checks, the conformance suites, the doubles and the builders | Accepted |
 | [0046](0046-specs-build-structs-through-fixtures.md) | The specs build the structs with generated builders through the fixtures of their package | Accepted |
 | [0047](0047-planner-applies-the-placer-suite-through-subject.md) | The planner applies the suite of Placer through the directive subject | Accepted |
+| [0048](0048-dokimi-generates-the-simulation-of-a-namespace.md) | dokimi generates the simulation of the machines of a namespace | Accepted |

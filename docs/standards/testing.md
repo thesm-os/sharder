@@ -17,7 +17,9 @@ which part of the library states which contract.
   package `x`, and no package has an `export_test.go`.
 - A source file `x.go` has its spec `x_test.go` beside it. The spec tests
   the behaviour that `x.go` implements. `doc.go` has no spec, and a
-  generated file has one that pins what it generates.
+  generated file has one that pins what it generates. The generated tests
+  of a simulation are the spec of each source file that declares a
+  function under a directive of `sim`.
 - A test file without a source file of its name does not exist, except
   `helpers_test.go` and the specs that dokimi writes: `x_enum_test.go`,
   `errors_sentinel_test.go` and `x_suite_test.go`. `helpers_test.go`
@@ -98,7 +100,8 @@ which part of the library states which contract.
 - A test waits on a channel or a context, never on `time.Sleep`. Code
   under test reads time through core's `clock`. A test that advances time
   uses core's `clock/fake` inside a `testing/synctest` bubble, and waits
-  with `synctest.Wait`.
+  with `synctest.Wait`. The simulation of a namespace advances the time of
+  its world on the goroutine of the case, outside a bubble.
 - Randomness comes from core's `rand/seeded` or `rand/constant`, so a run
   is the same on every machine. An assertion never reads the wall clock
   and never depends on the local time zone.

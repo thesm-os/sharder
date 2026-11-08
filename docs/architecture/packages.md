@@ -11,7 +11,7 @@ The repository has two Go modules. The root module is the library, and the examp
 
 | Module | Directory | Contains | Requires |
 |---|---|---|---|
-| `go.thesmos.sh/sharder` | `.` | The library | `go.thesmos.sh/core`, `go.thesmos.sh/kanon` and `github.com/cespare/xxhash/v2`. Its tests and its kits also require `go.dokimi.dev/assert`, `go.dokimi.dev/conform` and `go.dokimi.dev/stub` |
+| `go.thesmos.sh/sharder` | `.` | The library | `go.thesmos.sh/core`, `go.thesmos.sh/kanon` and `github.com/cespare/xxhash/v2`. Its tests and its kits also require `go.dokimi.dev/assert`, `go.dokimi.dev/conform`, `go.dokimi.dev/spec` and `go.dokimi.dev/stub` |
 | `go.thesmos.sh/sharder/examples` | `examples/` | One example per preset and per topology of the support matrix | The root module and `go.thesmos.sh/core`. Its tests also require `go.dokimi.dev/assert` |
 
 The root module contains the in-memory store and membership of `store/memory`, and the in-process transport of `protocol/local`. It contains no adapter of a production store and no network transport.
@@ -89,7 +89,7 @@ The internal packages contain the machines and the logic that two components sha
 | Package | Contains | Callers |
 |---|---|---|
 | `internal/machine` | The events that a machine takes and the effects that it returns | Every machine and each of its parts, `internal/driver`, `controller`, `replica` and `router` |
-| `internal/machine/machinetest` | The double of `Machine` | The tests of `internal/driver` |
+| `internal/machine/machinetest` | The double of `Machine`, and the simulation of a namespace with its system, performers, actions, reference application, invariants, convergence, scenarios and traces | The tests of `internal/driver`, and its own tests |
 | `internal/machine/root` | The machine of a namespace's root | `controller` |
 | `internal/machine/cell` | The machine of a cell's controller | `controller` |
 | `internal/machine/agent` | The machine of an agent | `replica`, and `controller` for the agent of the root that hosts the cells of a controller process |
@@ -109,7 +109,7 @@ The internal packages contain the machines and the logic that two components sha
 
 ## Import rules
 
-1. The root module imports only the standard library, `go.thesmos.sh/core`, `go.thesmos.sh/kanon`, `github.com/cespare/xxhash/v2` and its own packages. Its tests and its kits also import `go.dokimi.dev/assert`, `go.dokimi.dev/conform` and `go.dokimi.dev/stub`.
+1. The root module imports only the standard library, `go.thesmos.sh/core`, `go.thesmos.sh/kanon`, `github.com/cespare/xxhash/v2` and its own packages. Its tests and its kits also import `go.dokimi.dev/assert`, `go.dokimi.dev/conform`, `go.dokimi.dev/spec` and `go.dokimi.dev/stub`, and `internal/machine/machinetest` imports `go.dokimi.dev/sim`.
 2. `shard` does not import another package of sharder.
 3. A subpackage may import the package above it. A package never imports a package below it.
 4. The strategy packages and their subpackages do not import `config`, `builtin`, `controller`, `replica`, `router` or an internal package. The strategy packages are `partition`, `placement`, `replication`, `ownership`, `handoff`, `fence` and `budget`.

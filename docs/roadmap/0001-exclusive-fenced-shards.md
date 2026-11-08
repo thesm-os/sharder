@@ -7,7 +7,7 @@ released-in: unscheduled
 deadline: none
 deadline-source: none
 prd: none
-rfc: RFC-0001, RFC-0002, RFC-0003, RFC-0004, RFC-0005, RFC-0006, RFC-0007, RFC-0008, RFC-0009, RFC-0014, RFC-0015
+rfc: RFC-0001, RFC-0002, RFC-0003, RFC-0004, RFC-0005, RFC-0006, RFC-0007, RFC-0008, RFC-0009, RFC-0014, RFC-0015, RFC-0017
 ---
 
 <!--
@@ -53,9 +53,9 @@ An application can embed sharder to spread exclusive shards over its processes, 
 
 ### Failure traces in the simulator
 
-CI runs each trace over every supported preset from fixed seeds, at `GOMAXPROCS` 1 and 4, and fails when the two event traces differ.
+CI runs the simulation of each trace and its stored cases over every supported preset, and fails when the replay of a case gives another log.
 
-- [ ] A controller crash just before and just after every event of each `sim.CrashPoints` scenario of a preset resumes the move with the same operation ID, keys, digests and epochs, on the forward and on the abort path. The agent returns the result that it kept for a resent key, and no handler effect that an example records happens twice.
+- [ ] A controller crash just before and just after every event of each scenario of the crash points of a preset resumes the move with the same operation ID, keys, digests and epochs, on the forward and on the abort path. The agent returns the result that it kept for a resent key, and no handler effect that an example records happens twice.
 - [ ] A fallback that restarts during an abort, or whose handler returns an error that is not transient, abandons the abort path. One commit ends the transition, leaves the shard unplaced, and keeps `Reserved` and `Sequence`. The next pass places the shard at epochs above every reserved one, and late callbacks and reports of the abandoned operation do not change the assignment.
 - [ ] An abort `drop` to a node that has restarted completes, and repeated restarts of fallbacks end with a serving writer once the faults stop.
 - [ ] The first placement of a shard of each preset ends with a serving writer or an unplaced shard, on one and on two live nodes, when its `add` is lost before or after its effect, fails with a permanent error, or is followed by a restart of its node. No epoch is granted twice.
@@ -94,7 +94,7 @@ CI runs each trace over every supported preset from fixed seeds, at `GOMAXPROCS`
 - [ ] When a namespace is recreated at a lower and at an equal generation, while an old redirect and an old `Refresh` are outstanding, the router routes with the new mapping and caches. No `Refresh` waits for a generation of the old incarnation. A server of the new incarnation refuses a request of the old one before the request starts. `router.Do` retries no application write after any other error.
 - [ ] A manual drain and two disruptions that drain the same node keep the node draining until the last of the three ends, in every order of expiry, cancellation and undrain, with a controller takeover between the steps. `undrain` removes only the manual drain.
 - [ ] Under `stop`, a node that keeps sending renewals while every reply is lost ends its session at the deadline of its last accepted renewal, and a late success reply neither extends nor reopens the session.
-- [ ] The simulator checks a predicate for every safety property of the core after every event. It checks convergence within the bound that it derives from the spec, from the moment the last fault has ended. A pause that lasts into the last quarter of a run does not cause a false convergence failure. When a pause ends, the process handles the timers that expired during the pause.
+- [ ] The simulator checks a predicate for every safety property of the core after every event. It checks convergence within the bound that it derives from the spec, from the moment the last fault has ended. A pause that lasts into `Settle` does not shorten the bound of convergence. When a pause ends, the process takes the events that became due during the pause.
 
 ### The accepted authority backend
 
@@ -230,8 +230,11 @@ It needs these from outside this repository:
 - Core's `id.ID128`, which a shard ID embeds.
 - `resilience.Retrier.Start` and `Retry` in core, with which the transition engine decides each retry of a callback without a wait inside the call.
 - kanon's generator, and its runtime packages `go.thesmos.sh/kanon` and `go.thesmos.sh/kanon/wire`, which the generated codecs import.
+- The generator `sim` of dokimi and the module `go.dokimi.dev/sim` v0.10.1 for the simulation of RFC-0017, with the mechanism that dokimasia/dokimi#80 requests.
+- `hlc.NewOver` in core, which runs the clock of each host of that simulation over the clock of the host.
+- A nightly step of ergon that runs the long tests, which dokimasia/ergon#78 requests, for the job that runs the failure traces.
 
-Core v0.12.0 contains every core item, and kanon v0.1.0 contains the generator and both runtime packages.
+Core v0.42.0 contains every core item, and kanon v0.1.0 contains the generator and both runtime packages.
 
 Milestones 0002 to 0005 wait for this one.
 
@@ -257,11 +260,17 @@ The scope is the support matrix of the first release and its enforcement: `Resol
 |---|---|---|
 | RFC-0014, RFC-0015 or the external root-quorum dependency remains unresolved | Cross-process support and every dependent milestone | Keep that capability disabled; complete the protocol decision and real-process gates before advertising it |
 | The selected backend cannot durably encode a supported transaction shape within its limits | This milestone, and milestones 0002 to 0005 | Split the shape into smaller commits, or publish lower limits for a cell |
+| dokimi releases no mechanism for dokimasia/dokimi#80 | The convergence of each case whose recreation of a namespace takes effect in its final phase, and the failure traces of recreations in the simulator | Revise RFC-0017 for the mechanism that dokimi releases in its place |
+| ergon releases no nightly step for dokimasia/ergon#78 | The run of the failure traces in CI | Revise RFC-0017 for the mechanism that ergon releases in its place |
 
 ## Changes
 
 | Date | What changed | Why |
 |---|---|---|
+| 2026-11-08 | Named sim v0.10.1 in the prerequisites, and replaced the requests dokimasia/dokimi#76, #77 and #78 with dokimasia/dokimi#80 in the prerequisites and the risks | sim v0.10.1 releases the mechanisms of #76, #77 and #78. A host that exits in the final phase of a case remains down, so the simulation needs one more mechanism of dokimi |
+| 2026-11-08 | Added the requests dokimasia/ergon#78 and dokimasia/dokimi#78 to the prerequisites and the risks | The spec of the failure traces of RFC-0017 runs in the nightly workflow, and ergon has no nightly step that runs tests. sim drops the start and the stop of a cell machine at a loss after the effect |
+| 2026-11-08 | Added the generator `sim` of dokimi with sim v0.9.0, `hlc.NewOver` of core v0.42.0 and the requests dokimasia/dokimi#76 and #77 to the prerequisites and the risks | The simulation of RFC-0017 runs on sim v0.9.0 and core v0.42.0, and needs two more mechanisms of dokimi |
+| 2026-11-07 | Named the simulation of RFC-0017 in the introduction of the failure traces, in the first trace and in the check of the simulator | RFC-0017 replaces the simulator of RFC-0001 with a simulation that dokimi generates |
 | 2026-10-20 | Distinguished draft control-store decisions, delegated consensus and the primary-backup application adapter | The theke v2 integration needs explicit authority and configuration gates; no draft protocol or implementation is accepted by this update |
 | 2026-10-13 | Named `controller.New` with the `Volatile` field of its `Config`, and `replica.New` in place of `replica.Start`, in the check of the refused configurations. Added the randomness source to the required fields of `replica.New` and `router.New` | ADR-0031 gives each constructor a pointer to its configuration. ADR-0034 makes `Guard` and `Rand` required fields of an agent, ADR-0035 makes `Rand` a required field of a router, and ADR-0037 constructs an agent with `New` |
 | 2026-10-11 | Named `builtin.Register` in place of `builtin.Registry`. Changed the class of the refusal of an approvals section, `hold`, `scale` and a replica count to `errs.Invalid` | ADR-0019 registers the built-ins with `Register` and a constructor per factory, and refuses a field outside the support matrix as an unknown field, as ADR-0012 does for approvals |
