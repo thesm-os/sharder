@@ -106,7 +106,8 @@
 // deadline of the call. Once the replicas of the node have moved away, the controller admits
 // the disruption. The machine then ends the session of the node, ends the reservation and
 // stops. A Close whose caller stops waiting ends the session without the end of the
-// reservation.
+// reservation. A machine that a Close has stopped replies with ErrNotServing to each later
+// callback, Close, ReportFault and Recovered.
 //
 // The agent of the root ends its session without a disruption, because the root places the
 // cells of the process on other processes once the view no longer lists the process. Its

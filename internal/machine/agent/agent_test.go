@@ -202,7 +202,11 @@ func newModel(c *prop.Case, stopping bool) *model {
 func (m *model) observe(e machine.Effect) {
 	c := m.c
 	c.Helper()
-	assert.False(c, m.stopped, "a stopped agent must not append an effect")
+	if m.stopped {
+		r, isReply := e.(machine.Reply[struct{}])
+		assert.True(c, isReply, "a stopped agent must append only replies")
+		assert.ErrorIs(c, r.Err, agent.ErrNotServing, "a stopped agent must refuse each call")
+	}
 	switch e := e.(type) {
 	case machine.Join:
 		m.live = true
@@ -397,13 +401,11 @@ func (m *model) resend(c *prop.Case) {
 	m.send(c, m.sent[c.Draw(prop.Integer(0, len(m.sent)-1), "callback")])
 }
 
-// send passes the callback r to the agent, and records it. The model does not wait for the
-// reply to a callback that it sends after the agent has stopped.
+// send passes the callback r to the agent, and records it. An agent that has stopped replies
+// to the callback with ErrNotServing.
 func (m *model) send(c *prop.Case, r *protocol.Request) {
 	to := m.h.call()
-	if !m.stopped {
-		m.calls[to] = r
-	}
+	m.calls[to] = r
 	m.sent = append(m.sent, r)
 	md := protocol.Metadata{Caller: controllerIdentity, Version: protocol.Current}
 	m.h.step(c, machine.Do{Request: r, Metadata: md, Reply: to})
@@ -831,6 +833,50 @@ func TestMachine(t *testing.T) {
 			assert.Equal(t, got, out, "an agent that an error stopped must not take an event")
 		})
 
+		tests := []struct {
+			give func(h *harness, to machine.ReplyToken) machine.Event
+			name string
+		}{
+			{
+				name: "replies with ErrNotServing to a Do after a Close",
+				give: func(h *harness, to machine.ReplyToken) machine.Event {
+					md := protocol.Metadata{Caller: controllerIdentity, Version: protocol.Current}
+					return machine.Do{Request: h.request(protocol.Add, shardA, 1, firstEpoch), Metadata: md, Reply: to}
+				},
+			},
+			{
+				name: "replies with ErrNotServing to a Close after a Close",
+				give: func(_ *harness, to machine.ReplyToken) machine.Event {
+					return machine.Close{Deadline: origin.Add(grace), Reply: to}
+				},
+			},
+			{
+				name: "replies with ErrNotServing to a ReportFault after a Close",
+				give: func(_ *harness, to machine.ReplyToken) machine.Event {
+					return machine.ReportFault{Cause: errBroken, Reply: to, Shard: shardA, Fault: shard.FaultPermanent}
+				},
+			},
+			{
+				name: "replies with ErrNotServing to a Recovered after a Close",
+				give: func(_ *harness, to machine.ReplyToken) machine.Event {
+					return machine.Recovered{Reply: to, Shard: shardA}
+				},
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				h := newHarness(t)
+				h.start(t)
+				h.step(t, machine.SessionEnded{Token: h.join})
+				h.close(t, origin.Add(grace))
+				to := h.call()
+				h.step(t, tt.give(h, to))
+				assert.ErrorIs(t, replyTo[struct{}](t, h, to).Err, agent.ErrNotServing,
+					"an agent that a Close stopped must refuse each call")
+			})
+		}
+
 		t.Run("drops the reply to a Started that the runtime cancelled", func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
@@ -946,7 +992,8 @@ func completeConfig(tb assert.TB) agent.Config {
 //   - It reports a fault, or closes or stops the agent.
 //
 // The model checks the contract of the agent after every step:
-//   - No step stops the agent with an error. A stopped agent appends no effect.
+//   - No step stops the agent with an error. A stopped agent appends only the reply with
+//     ErrNotServing to each call.
 //   - The agent replies to each call once. It never replies to a call that the runtime
 //     cancelled.
 //   - It runs one callback, cleanup or revocation of a shard at a time. It calls the handler

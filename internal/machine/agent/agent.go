@@ -321,8 +321,7 @@ func (m *Machine) Err() error {
 
 // Step applies ev to the agent and appends the effects of ev to out. It takes the callbacks
 // of the controller of the cell, the calls of the application, the results of the effects of
-// the agent and of its readers, and Started and Stopped. It ignores every other event, and
-// every event after the agent has stopped.
+// the agent and of its readers, and Started and Stopped. It ignores every other event.
 //
 // An error of the event stops the agent. The agent then drops the effects of the event,
 // ends the reads of its scopes and the session of the node, and replies with the error to
@@ -331,9 +330,26 @@ func (m *Machine) Err() error {
 //
 // At Stopped, every call that waits gets ErrNotServing. The agent appends no other effect,
 // because the runtime ends every read and every session of the run.
+//
+// A Close stops the agent without an error, so the runtime passes it the events that arrive
+// after the Close. A stopped agent replies with ErrNotServing to each callback and to each
+// Close, ReportFault and Recovered, and ignores every other event.
 func (m *Machine) Step(ev machine.Event, out []machine.Effect) []machine.Effect {
 	if m.lc.State() == stateStopped {
-		return out
+		var to machine.ReplyToken
+		switch ev := ev.(type) {
+		case machine.Do:
+			to = ev.Reply
+		case machine.Close:
+			to = ev.Reply
+		case machine.ReportFault:
+			to = ev.Reply
+		case machine.Recovered:
+			to = ev.Reply
+		default:
+			return out
+		}
+		return append(out, machine.Reply[struct{}]{Err: ErrNotServing, To: to})
 	}
 	n := len(out)
 	next, err := m.step(ev, out)
