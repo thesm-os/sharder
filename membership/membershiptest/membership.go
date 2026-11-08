@@ -400,6 +400,7 @@ func (ls *leases) settle(c *prop.Case, items <-chan streamtest.Item[membership.V
 			break
 		}
 	}
+	ls.h.Engage()
 	assert.Pairwise(c, views, func(earlier, later membership.View) bool { return earlier.Revision < later.Revision },
 		ls.h.Statement())
 	assert.Equal(c, views[len(views)-1], last, ls.h.Statement(), assert.EquateEmpty())
