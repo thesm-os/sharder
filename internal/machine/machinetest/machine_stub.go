@@ -186,21 +186,6 @@ func NewMachineStub(tb assert.TB, opts ...MachineStubOption) *MachineStub {
 	return s
 }
 
-// NewMachineStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewMachineStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...MachineStubOption) *MachineStub {
-	return NewMachineStub(tb, append([]MachineStubOption{
-		MachineStubWithClock(clk),
-		MachineStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewMachineStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewMachineStubFailing(tb assert.TB, err error, opts ...MachineStubOption) *MachineStub {
-	return NewMachineStub(tb, append([]MachineStubOption{MachineStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *MachineStub) ResetCalls() {
@@ -262,4 +247,4 @@ func (s *MachineStub) Err() error {
 	return r.Err
 }
 
-// dokimi:provenance sha256:1b70783ba7aafe663207eeef8e74f788929c45054a313e890ae425aac6f32fd0
+// dokimi:provenance sha256:77a7248132acee060dd01a26fd4bbaa946a7289c98db6f4e4e2414da65851651

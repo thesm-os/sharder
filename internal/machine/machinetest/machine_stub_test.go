@@ -45,23 +45,31 @@ func machineStubErrPins() error {
 	return want0
 }
 
-// machineStubStepSubject returns the subject of [stub.Behaviour] for Step.
-// The subject calls a new double that reports to tb.
+// machineStubStepSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Step. The subject calls a new double that
+// reports to tb.
 func machineStubStepSubject(tb assert.TB) stub.Subject[machinetest.MachineStepCall, machinetest.MachineStepReturn] {
 	tb.Helper()
 	s := machinetest.NewMachineStub(tb)
 	return stub.Subject[machinetest.MachineStepCall, machinetest.MachineStepReturn]{
-		Stub: s.OnStep.MethodStub,
+		Stub:  s.OnStep.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = machineStubStep(tb, s)
+		},
+		Arguments: func(tb assert.TB, c machinetest.MachineStepCall) {
+			tb.Helper()
+			a0, a1 := machineStubStepArgs(tb)
+			expect.Equal(tb, c.Ev, a0, "the call records Ev")
+			expect.Equal(tb, c.Out, a1, "the call records Out")
 		},
 		Result: func() machinetest.MachineStepReturn {
 			got0 := machineStubStep(tb, s)
 			return machinetest.MachineStepReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnStep.Func(func(_ machine.Event, _ []machine.Effect) []machine.Effect {
-				mark()
+		Override: func(seen func(machinetest.MachineStepCall)) {
+			s.OnStep.Func(func(p0 machine.Event, p1 []machine.Effect) []machine.Effect {
+				seen(machinetest.MachineStepCall{Ev: p0, Out: p1})
 				var z0 []machine.Effect
 				return z0
 			})
@@ -69,13 +77,15 @@ func machineStubStepSubject(tb assert.TB) stub.Subject[machinetest.MachineStepCa
 	}
 }
 
-// machineStubErrSubject returns the subject of [stub.Behaviour] for Err.
-// The subject calls a new double that reports to tb.
+// machineStubErrSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Err. The subject calls a new double that
+// reports to tb.
 func machineStubErrSubject(tb assert.TB) stub.Subject[machinetest.MachineErrCall, machinetest.MachineErrReturn] {
 	tb.Helper()
 	s := machinetest.NewMachineStub(tb)
 	return stub.Subject[machinetest.MachineErrCall, machinetest.MachineErrReturn]{
-		Stub: s.OnErr.MethodStub,
+		Stub:  s.OnErr.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = machineStubErr(tb, s)
 		},
@@ -83,9 +93,14 @@ func machineStubErrSubject(tb assert.TB) stub.Subject[machinetest.MachineErrCall
 			got0 := machineStubErr(tb, s)
 			return machinetest.MachineErrReturn{Err: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() machinetest.MachineErrReturn {
+			want0 := machineStubErrPins()
+			s.OnErr.Returns(want0)
+			return machinetest.MachineErrReturn{Err: want0}
+		},
+		Override: func(seen func(machinetest.MachineErrCall)) {
 			s.OnErr.Func(func() error {
-				mark()
+				seen(machinetest.MachineErrCall{})
 				var z0 error
 				return z0
 			})
@@ -110,7 +125,6 @@ func machineStubInstanceOf(tb assert.TB, s *machinetest.MachineStub) machineStub
 		Call: func() {
 			_ = machineStubStep(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -122,92 +136,24 @@ func TestMachineStub(t *testing.T) {
 	t.Run("Step", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Step", machineStubStepSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := machinetest.NewMachineStub(t)
-			_ = machineStubStep(t, s)
-			got := s.OnStep.AssertCalledOnce(t, "Step records the call")
-			a0, a1 := machineStubStepArgs(t)
-			expect.Equal(t, got.Ev, a0, "the call records Ev")
-			expect.Equal(t, got.Out, a1, "the call records Out")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := machinetest.NewMachineStub(t)
-			var seen []machinetest.MachineStepCall
-			s.OnStep.OnRecord(func(c machinetest.MachineStepCall) { seen = append(seen, c) })
-			_ = machineStubStep(t, s)
-			_ = machineStubStep(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Step")
-		})
 	})
 
 	t.Run("Err", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Err", machineStubErrSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := machinetest.NewMachineStub(t)
-			var seen []machinetest.MachineErrCall
-			s.OnErr.OnRecord(func(c machinetest.MachineErrCall) { seen = append(seen, c) })
-			_ = machineStubErr(t, s)
-			_ = machineStubErr(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Err")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) machineStubInstance {
-			return machineStubInstanceOf(tb, machinetest.NewMachineStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Step", func(t *testing.T) {
+		t.Run("Step", func(t *testing.T) {
 			t.Parallel()
-			s := machinetest.NewMachineStub(t)
-			_ = machineStubStep(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnStep.CallCount(), 0, "ResetCalls clears the calls of Step")
+			stub.ResetBehaviour(t, "Step", machineStubStepSubject)
 		})
 
-		t.Run("clears the recorded calls of Err", func(t *testing.T) {
+		t.Run("Err", func(t *testing.T) {
 			t.Parallel()
-			s := machinetest.NewMachineStub(t)
-			_ = machineStubErr(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnErr.CallCount(), 0, "ResetCalls clears the calls of Err")
-		})
-
-		t.Run("keeps the results of Returns of Err", func(t *testing.T) {
-			t.Parallel()
-			s := machinetest.NewMachineStub(t)
-			want0 := machineStubErrPins()
-			s.OnErr.Returns(want0)
-			s.ResetCalls()
-			got0 := machineStubErr(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of Err")
-		})
-	})
-
-	t.Run("NewMachineStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) machineStubInstance {
-			return machineStubInstanceOf(tb, machinetest.NewMachineStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewMachineStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Err with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Err-failing")
-			s := machinetest.NewMachineStubFailing(t, want)
-			r0 := machineStubErr(t, s)
-			assert.ErrorIs(t, r0, want, "Err fails with the error of NewMachineStubFailing")
+			stub.ResetBehaviour(t, "Err", machineStubErrSubject)
 		})
 	})
 
@@ -331,75 +277,4 @@ func TestMachineStub(t *testing.T) {
 	})
 }
 
-// TestMachineStepStub checks the methods of MachineStepStub, which
-// configures Step.
-func TestMachineStepStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Step for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := machinetest.NewMachineStub(r)
-			s.OnStep.Strict()
-			var want0 []machine.Effect
-			s.OnStep.Returns(want0)
-			_ = machineStubStep(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Step")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Step to the function", func(t *testing.T) {
-			t.Parallel()
-			s := machinetest.NewMachineStub(t)
-			var got0 machine.Event
-			var got1 []machine.Effect
-			s.OnStep.Func(func(p0 machine.Event, p1 []machine.Effect) []machine.Effect {
-				got0, got1 = p0, p1
-				var z0 []machine.Effect
-				return z0
-			})
-			_ = machineStubStep(t, s)
-			a0, a1 := machineStubStepArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ev")
-			expect.Equal(t, got1, a1, "the function receives Out")
-		})
-	})
-}
-
-// TestMachineErrStub checks the methods of MachineErrStub, which
-// configures Err.
-func TestMachineErrStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Err", func(t *testing.T) {
-			t.Parallel()
-			s := machinetest.NewMachineStub(t)
-			want0 := machineStubErrPins()
-			s.OnErr.Returns(want0)
-			got0 := machineStubErr(t, s)
-			assert.ErrorIs(t, got0, want0, "Err returns the error that Returns sets")
-		})
-
-		t.Run("configures Err for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := machinetest.NewMachineStub(r)
-			s.OnErr.Strict()
-			var want0 error
-			s.OnErr.Returns(want0)
-			_ = machineStubErr(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Err")
-		})
-	})
-}
-
-// dokimi:provenance sha256:25fa5a6789794a04472bbcce80b12cad35527d30ff131263576224bfdb3b31ed
+// dokimi:provenance sha256:03a1b880cf38f74ef8c314149a7854e14727f44e4687c58475501126c4d75a43
