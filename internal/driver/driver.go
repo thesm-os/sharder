@@ -32,8 +32,12 @@ import (
 type Handler interface {
 	// AddShard starts serving r.Shard in r.Role. t is the fencing token of the tenure that r
 	// starts.
+	//
+	//dokimi:fault errors=[context.DeadlineExceeded]
 	AddShard(ctx context.Context, r *protocol.Request, t *fence.Token) error
 	// DropShard stops serving r.Shard, and releases its local resources.
+	//
+	//dokimi:fault errors=[context.DeadlineExceeded]
 	DropShard(ctx context.Context, r *protocol.Request) error
 }
 
@@ -45,6 +49,8 @@ type Handler interface {
 //dokimi:out path=drivertest/
 type Revoker interface {
 	// RevokeShard ends the work of the tenure of t, whose session has ended.
+	//
+	//dokimi:fault errors=[context.DeadlineExceeded]
 	RevokeShard(ctx context.Context, t *fence.Token) error
 }
 

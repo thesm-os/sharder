@@ -7,6 +7,8 @@ import (
 	"context"
 	"testing"
 
+	"go.dokimi.dev/conform"
+
 	"go.thesmos.sh/sharder/placement"
 	"go.thesmos.sh/sharder/placement/placementtest"
 )
@@ -39,5 +41,9 @@ func (keeper) Constraints() []placement.Constraint {
 func TestPlacer(t *testing.T) {
 	t.Parallel()
 
-	placementtest.RunPlacerSuite(t, func() keeper { return keeper{} })
+	placementtest.RunPlacerSuite(t, func() keeper { return keeper{} },
+		conform.Excuse(placementtest.PlacerChecks.Place.PlaceTargetsOnlyChanges(),
+			"keeper lists no shard in its plans"),
+		conform.Excuse(placementtest.PlacerChecks.Place.PlaceKeepsTheCursorInTheLayout(),
+			"keeper keeps the repair cursor of the input"))
 }

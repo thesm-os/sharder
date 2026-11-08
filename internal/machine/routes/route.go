@@ -104,6 +104,7 @@ type cache struct {
 //
 //dokimi:budget allocs=0
 //dokimi:mixin concurrent
+//dokimi:refuse cancel reason="Route does not wait for a step, and it uses ctx only for the telemetry of the lookup"
 func (m *Machine) Route(ctx context.Context, key []byte) (Route, error) {
 	t := m.published.Load()
 	if t.err != nil {

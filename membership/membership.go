@@ -94,6 +94,8 @@ type Membership interface {
 	//     s.
 	//   - an error of class errs.Invalid for a node without an ID, and for a lease that
 	//     ownership.Config.Validate refuses.
+	//
+	//dokimi:fault errors=[go.thesmos.sh/core/version.ErrOutcomeUnknown]
 	Join(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, n *shard.Node, l ownership.Lease) (
 		Session, error)
 	// Watch yields the current view of s in the namespace incarnation inc, then every

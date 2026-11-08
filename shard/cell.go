@@ -73,6 +73,7 @@ type Cell struct {
 //dokimi:suite
 //dokimi:out path=shardtest/
 //dokimi:subject CellMap new=newCellMap
+//dokimi:excuse CellMap.Locate/zero-on-miss reason="the cell map of the subject covers every position, so Locate does not miss"
 type CellMap struct {
 	// Namespace is the namespace of the cells.
 	Namespace Namespace

@@ -155,6 +155,8 @@ func New(ctx context.Context, cfg *Config) (*Watcher, error) {
 //
 //dokimi:budget allocs=0
 //dokimi:mixin concurrent
+//dokimi:refuse cancel reason="Route does not wait for the router, and it uses ctx only for the telemetry of the lookup"
+//dokimi:refuse zero-on-error reason="Route fails only for a key whose shard has no route, and no derived input selects such a key"
 func (w *Watcher) Route(ctx context.Context, req *RouteRequest) (RouteResult, error) {
 	r, err := w.machine.Route(ctx, req.Key)
 	//nolint:wrapcheck // Route returns the sentinels of the router as they are, so errors.Is matches them without an allocation.

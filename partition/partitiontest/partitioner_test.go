@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"testing"
 
+	"go.dokimi.dev/conform"
+
 	"go.thesmos.sh/sharder/partition"
 	"go.thesmos.sh/sharder/partition/partitiontest"
 	"go.thesmos.sh/sharder/shard"
@@ -59,5 +61,7 @@ func (quarters) Initial(r shard.Range) ([]partition.Span, error) {
 func TestPartitioner(t *testing.T) {
 	t.Parallel()
 
-	partitiontest.RunPartitionerSuite(t, func() quarters { return quarters{} })
+	partitiontest.RunPartitionerSuite(t, func() quarters { return quarters{} },
+		conform.Excuse(partitiontest.PartitionerChecks.Initial.ZeroOnError(),
+			"quarters divides every range, and returns no error"))
 }

@@ -257,8 +257,11 @@ func movesCursorsOut(h *PlacerHandle) placement.Placer {
 	return constrained{Placer: NewPlacerStub(h, PlacerStubDelegateTo(fake),
 		WithPlacerPlace(func(ctx context.Context, in *placement.Input) (placement.Plan, error) {
 			plan, err := fake.Place(ctx, in)
+			if err != nil {
+				return plan, err
+			}
 			plan.RepairNext = unknownShard
-			return plan, err
+			return plan, nil
 		})), constraints: fakeConstraints}
 }
 

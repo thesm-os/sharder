@@ -118,6 +118,8 @@ type Reader interface {
 	// Head returns the header of s with a linearizable read. A controller reads it to
 	// learn the generation that its acquisition expects, and decides nothing else from
 	// it. The Head of a scope before its first commit is zero.
+	//
+	//dokimi:fault errors=[go.thesmos.sh/core/version.ErrOutcomeUnknown]
 	Head(ctx context.Context, s shard.Scope) (Head, error)
 	// Read returns the state of s and a cursor over the placements that q selects, one
 	// page per call. The read of the state is linearizable, and every page is at the
@@ -130,6 +132,8 @@ type Reader interface {
 	//     non-zero inc created, also for a later page of a scope that was deleted and
 	//     created again by another incarnation.
 	//   - ErrCompacted for a later page whose generation the store no longer keeps.
+	//
+	//dokimi:fault errors=[go.thesmos.sh/core/version.ErrOutcomeUnknown]
 	Read(ctx context.Context, s shard.Scope, inc shard.NamespaceIncarnation, q Query, p page.Page) (
 		State, page.Cursor[shard.Placement], error)
 	// Watch yields the generations of s later than from, in order and each whole,
@@ -229,12 +233,15 @@ type Store interface {
 	Writer(s shard.Scope, inc shard.NamespaceIncarnation, term epoch.Epoch) Writer
 	// Outcome returns the receipt of commit id, and reports whether s has one. It does
 	// not apply anything. An absent receipt does not prove that the commit was rejected.
+	//
+	//dokimi:fault errors=[go.thesmos.sh/core/version.ErrOutcomeUnknown]
 	Outcome(ctx context.Context, s shard.Scope, id CommitID) (Receipt, bool, error)
 	// Campaign blocks until the caller leads the election of s, or until ctx ends. The
 	// term lasts until Resign, until ctx ends, or until the store ends it. The root of
 	// a namespace campaigns in the root scope.
 	//
 	//dokimi:mixin waits
+	//dokimi:fault errors=[go.thesmos.sh/core/version.ErrOutcomeUnknown]
 	Campaign(ctx context.Context, s shard.Scope) (Leadership, error)
 	// Limits returns the bounds of one commit to s.
 	Limits(s shard.Scope) Limits

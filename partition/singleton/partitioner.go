@@ -27,6 +27,7 @@ const config = "{}"
 // [Partitioner.Position] does not allocate.
 //
 //dokimi:subject partition.Partitioner new=newPartitioner
+//dokimi:excuse Partitioner.Initial/zero-on-error reason="Initial returns one span of the range for every range, and no error"
 //dokimi:budget Partitioner.Position allocs=0
 type Partitioner struct{}
 

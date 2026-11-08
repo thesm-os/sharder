@@ -48,6 +48,8 @@ type Acquirer interface {
 	// transaction. A writer calls it once per tenure, before it reads the data of its
 	// shard. It returns epoch.ErrFenced when the watermark of the fence key is above
 	// t.Epoch.
+	//
+	//dokimi:fault errors=[context.DeadlineExceeded]
 	Acquire(ctx context.Context, t Token) error
 }
 
