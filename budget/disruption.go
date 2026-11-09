@@ -15,8 +15,9 @@ import (
 	"go.thesmos.sh/sharder/shard"
 )
 
-// ID is the identity of a disruption in the scope of its cell. The caller assigns it.
-// sharderctl uses a ULID, and a cluster manager can use the UUID of its own operation.
+// ID is the identity of a disruption in the scope of its cell. The caller assigns it. The
+// client of package maintenance gives a disruption without an ID a ULID, and a cluster
+// manager can use the UUID of its own operation.
 //
 // The zero ID is no disruption.
 //

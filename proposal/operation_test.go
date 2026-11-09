@@ -14,8 +14,8 @@ import (
 	"go.thesmos.sh/sharder/shard"
 )
 
-// The recorded JSON of the bodies and the results of the operations. sharderctl writes
-// the bodies, and the controller of a cell writes the results.
+// The recorded JSON of the bodies and the results of the operations. A client of package
+// maintenance writes the bodies, and the controller of a cell writes the results.
 const (
 	// recordedMoveJSON pins the body of a move of the shard 0H289H858P2WC1J6GV3GEHW7S0,
 	// the text of the ULID of the bytes 0x11 to 0x20, to the node node-a.

@@ -8,8 +8,8 @@
 // proposals, and the records of the controllers. Its [Head] contains the namespace
 // incarnation that created the scope, the generation of the scope and the watermark of
 // its fence. A [Writer] commits a [Mutation] as the generation after the one it expects.
-// The agent, the router and sharderctl read through a [Reader], and a controller commits
-// through a [Store].
+// The agent, the router and the client of package maintenance read through a [Reader], and
+// a controller commits through a [Store].
 //
 // # Commits
 //

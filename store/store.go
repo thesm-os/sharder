@@ -105,8 +105,8 @@ type Limits struct {
 	MaxBytes int
 }
 
-// Reader reads the scopes of namespaces. The agent, the router and sharderctl take a
-// Reader, so they cannot commit.
+// Reader reads the scopes of namespaces. The agent, the router and the client of package
+// maintenance take a Reader, so they cannot commit.
 //
 // # Concurrency
 //

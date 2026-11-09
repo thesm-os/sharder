@@ -15,9 +15,9 @@ import (
 // Drain is one reason to keep new replicas off a node. A node is draining while it
 // has at least one drain. The node and the disruption ID identify a drain.
 //
-// The zero disruption ID marks the manual drain of the node, which sharderctl drain
-// adds and sharderctl undrain removes. Operators share it, so a second manual drain of
-// a node does not change the drains. Every other drain belongs to the reservation of its
+// The zero disruption ID marks the manual drain of the node, which a drain proposal adds
+// and an undrain proposal removes. Operators share it, so a second manual drain of a node
+// does not change the drains. Every other drain belongs to the reservation of its
 // disruption, and ends with the reservation.
 //
 // # Encoding
