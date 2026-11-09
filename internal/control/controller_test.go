@@ -145,6 +145,7 @@ const (
 	logMove      = "control: the engine does not start a move"
 	logAdmission = "control: the admission of a plan failed"
 	logRefusal   = "control: the admission refuses a move"
+	logBackoff   = "control: a move aborted, and its shard waits for a backoff"
 )
 
 // The nodes of the tests, each at its first incarnation.

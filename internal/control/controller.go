@@ -347,22 +347,28 @@ func New(cfg *Config) (*Controller, error) {
 			slog.String(attrNamespace, string(cfg.Scope.Namespace)),
 			slog.String(attrCell, string(cfg.Scope.Cell)),
 		),
-		registry:        cfg.Registry,
-		provided:        cfg.Provided,
-		acquisition:     cfg.Acquisition,
-		fits:            cfg.Fits,
-		tokens:          cfg.Tokens,
-		ids:             ulid.New(cfg.Clock, cfg.Rand),
-		metrics:         newMetrics(cfg.Reporter, cfg.Scope),
-		commits:         make(map[store.CommitID]*pending),
-		operators:       make(map[shard.Identity]bool, len(cfg.Operators)),
-		proposing:       make(map[proposal.ID]bool),
-		applied:         btree.NewMapFunc[proposal.ID, time.Time](byID),
-		gaps:            idmap.NewTyped128[shard.ID, gap](0),
-		load:            maps.Clone(cfg.Load),
-		kinds:           slices.Clone(cfg.Kinds),
-		budget:          newBudgets(),
-		passes:          passes{plans: make(map[machine.Token]*plan), moving: idmap.NewTyped128[shard.ID, moving](0)},
+		registry:    cfg.Registry,
+		provided:    cfg.Provided,
+		acquisition: cfg.Acquisition,
+		fits:        cfg.Fits,
+		tokens:      cfg.Tokens,
+		ids:         ulid.New(cfg.Clock, cfg.Rand),
+		metrics:     newMetrics(cfg.Reporter, cfg.Scope),
+		commits:     make(map[store.CommitID]*pending),
+		operators:   make(map[shard.Identity]bool, len(cfg.Operators)),
+		proposing:   make(map[proposal.ID]bool),
+		applied:     btree.NewMapFunc[proposal.ID, time.Time](byID),
+		gaps:        idmap.NewTyped128[shard.ID, gap](0),
+		load:        maps.Clone(cfg.Load),
+		kinds:       slices.Clone(cfg.Kinds),
+		budget:      newBudgets(),
+		passes: passes{
+			plans:    make(map[machine.Token]*plan),
+			moving:   idmap.NewTyped128[shard.ID, moving](0),
+			backoffs: idmap.NewTyped128[shard.ID, *backoff](0),
+			timers:   make(map[machine.Token]shard.ID),
+			faulted:  idmap.NewTyped128[shard.ID, struct{}](0),
+		},
 		lc:              lifecycle.Start(struct{}{}),
 		node:            cfg.Node,
 		scopeOf:         cfg.Scope,
@@ -608,6 +614,7 @@ func (c *Controller) acquired(snap *scope.Snapshot, out []machine.Effect) ([]mac
 			Tokens:      c.tokens,
 			Fits:        c.fits,
 			Refused:     c.refuse,
+			Aborted:     func(sid shard.ID) { c.passes.aborted = append(c.passes.aborted, sid) },
 			Scope:       c.scopeOf,
 			Term:        c.term,
 			Incarnation: c.incarnation,
@@ -636,8 +643,9 @@ func (c *Controller) acquired(snap *scope.Snapshot, out []machine.Effect) ([]mac
 }
 
 // elapsed takes the end of a Timer of the controller: the backoff of the watch of the
-// views, the interval of the periodic passes, the deadline of a waiting call, or a timer of
-// a reservation. It reports whether the Timer is of the controller.
+// views, the interval of the periodic passes, the backoff of a shard, the deadline of a
+// waiting call, or a timer of a reservation. It reports whether the Timer is of the
+// controller.
 func (c *Controller) elapsed(ev machine.Elapsed, out []machine.Effect) ([]machine.Effect, bool, error) {
 	switch ev.Token {
 	case c.members.wait:
@@ -647,6 +655,10 @@ func (c *Controller) elapsed(ev machine.Elapsed, out []machine.Effect) ([]machin
 		var err error
 		out, err = c.trigger(c.periodic(out))
 		return out, true, err
+	}
+	if sid, ok := c.passes.timers[ev.Token]; ok {
+		next, err := c.retry(sid, ev.Token, out)
+		return next, true, err
 	}
 	out, ok, err := c.timeout(ev.Token, out)
 	if ok {
@@ -709,12 +721,15 @@ func (c *Controller) commit(p *pending, out []machine.Effect) ([]machine.Effect,
 //
 // The controller then evaluates the reservations with waiting calls. These commits start a
 // pass:
-//   - a commit that leaves a shard without a writer.
+//   - a commit that ends the transition of a shard and leaves the shard without a writer.
 //   - a commit that ends the transition of a shard whose writer the view does not have at
 //     the incarnation of its placement.
 //   - a commit that ends the transition of a shard whose writer is on a node that drains.
 //   - a commit that adds or removes a drain.
 //   - a commit that ends a transition while the bounds refused a move of the last plan.
+//
+// A shard that waits for its backoff counts for none of the first three, because the end of
+// its backoff starts its pass.
 func (c *Controller) apply(id store.CommitID, gen epoch.Epoch, out []machine.Effect) ([]machine.Effect, error) {
 	p := c.commits[id]
 	delete(c.commits, id)
@@ -740,6 +755,7 @@ func (c *Controller) apply(id store.CommitID, gen epoch.Epoch, out []machine.Eff
 	var err error
 	if p.batch {
 		out, err = c.engine.Applied(out)
+		out = c.ended(mu, out)
 		out, err = c.batchAfter(out, err)
 		var serr error
 		out, serr = c.settle(out)
@@ -780,19 +796,19 @@ func (c *Controller) follow(f *followup, gen epoch.Epoch, out []machine.Effect) 
 	return out
 }
 
-// lost reports whether the mutation mu leaves a shard that the next pass places again: a
-// placement without a writer, or a shard whose transition mu ends while the view does not
-// have its writer at the incarnation of its placement. A shard whose transition mu ends with
+// lost reports whether the mutation mu ends the transition of a shard that the next pass
+// places again: a shard whose placement mu leaves without a writer, or whose writer the view
+// does not have at the incarnation of its placement. A shard whose transition mu ends with
 // its writer on a node that drains counts too. A pass skips a shard with a transition in
 // flight, so the end of the transition starts the pass that repairs the shard or moves it
-// off the node. lost reads the assignment after mu has applied.
+// off the node. A shard that waits for its backoff does not count, because every pass
+// defers its moves until the end of the backoff starts its pass. lost reads the assignment
+// after mu has applied. A placement without a writer has no writer in the view.
 func (c *Controller) lost(mu *store.Mutation) bool {
-	for i := range mu.Put {
-		if _, ok := writer(&mu.Put[i], c.spec.writer); !ok {
-			return true
-		}
-	}
 	for _, sid := range mu.Done {
+		if c.passes.deferred(sid) {
+			continue
+		}
 		p := c.assignment.placement(sid)
 		w, _ := writer(&p, c.spec.writer)
 		if _, live := c.members.at(w.Node, p.Incarnation); !live || c.budget.draining(w.Node) {

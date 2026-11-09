@@ -24,6 +24,7 @@ import (
 	"go.thesmos.sh/sharder/internal/machine/agent"
 	"go.thesmos.sh/sharder/internal/machine/root"
 	"go.thesmos.sh/sharder/internal/machine/routes"
+	"go.thesmos.sh/sharder/membership"
 	"go.thesmos.sh/sharder/ownership"
 	"go.thesmos.sh/sharder/placement"
 	"go.thesmos.sh/sharder/placement/planner"
@@ -76,9 +77,10 @@ func converged(h *sim.Check, w *world) {
 		}
 		expect.Empty(h, st.Transitions, h.Statement())
 		expect.Equal(h, s.controllers(w, scope), []string{st.Cell.Controller}, h.Statement())
-		admissible := s.admissible(scope, inc, &st, s.version(ctx, ns))
+		view := s.viewOf(scope, inc)
+		admissible := s.admissible(&view, &st, s.version(ctx, ns))
 		for j := range placements {
-			s.settledShard(h, w, ns, &placements[j], admissible)
+			s.settledShard(h, w, ns, &placements[j], admissible, &view)
 		}
 	}
 }
@@ -121,16 +123,14 @@ func (s *env) controllers(w *world, scope shard.Scope) []string {
 	return out
 }
 
-// admissible returns the nodes of the view of the scope in the namespace incarnation inc that
-// may take a replica under the spec version version. It leaves out each node that a drain of st
-// names, and each node in the zone that the constraint of the zones refuses. The first version of
-// a spec of an unconstrained variant has no constraint.
-func (s *env) admissible(scope shard.Scope, inc shard.NamespaceIncarnation, st *store.State,
-	version epoch.Epoch,
-) []shard.NodeID {
+// admissible returns the nodes of the view of a cell that may take a replica under the spec
+// version version. It leaves out each node that a drain of st names, and each node in the zone
+// that the constraint of the zones refuses. The first version of a spec of an unconstrained
+// variant has no constraint.
+func (s *env) admissible(view *membership.View, st *store.State, version epoch.Epoch) []shard.NodeID {
 	constrained := !s.variant.unconstrained || version > firstVersion
 	var out []shard.NodeID
-	for _, n := range s.viewOf(scope, inc).Nodes {
+	for _, n := range view.Nodes {
 		drained := slices.ContainsFunc(st.Drains, func(d store.Drain) bool { return d.Node == n.ID })
 		refused := constrained && slices.Contains(n.Labels, tag.Tag{Key: zoneLabel, Value: zoneWest})
 		if !drained && !refused {
@@ -140,21 +140,33 @@ func (s *env) admissible(scope shard.Scope, inc shard.NamespaceIncarnation, st *
 	return out
 }
 
-// settledShard checks the shard of the placement p of the namespace ns. A placement without a
-// replica has no node in admissible, and the writer of a placement is on a node of admissible
-// unless admissible is empty. The agent of the node of the writer of p alone has a tenure of the
-// shard, at the epoch of p. The router of each host routes a key of the shard to the writer of p
-// at its epoch, and has no route of a shard without a replica.
+// settledShard checks the shard of the placement p of the namespace ns against the view of its
+// cell. A placement without a replica has no node in admissible. The writer of p is live while
+// the view has its node at the incarnation of p. A writer is live and on a node of admissible
+// unless admissible is empty. A writer that is not live remains only while admissible is empty.
+// The agent of the node of the writer alone may have a tenure of the shard, at the epoch of p,
+// and the agent of a live writer has it. A writer that is not live has it while its process runs
+// on under ownership.ContinueFenced, and a node that restarts restores no writer. A route takes
+// the address of each replica from the view, so the router of each host routes a key of the
+// shard to the writer of p at its epoch while the view lists the node of the writer. It has no
+// route of a shard without a replica or whose writer has left the view.
 func (s *env) settledShard(h *sim.Check, w *world, ns shard.Namespace, p *shard.Placement,
-	admissible []shard.NodeID,
+	admissible []shard.NodeID, view *membership.View,
 ) {
 	expect.True(h, len(p.Replicas) <= 1, h.Statement())
 	var writer shard.NodeID
+	live, listed := false, false
 	if len(p.Replicas) == 0 {
 		expect.Empty(h, admissible, h.Statement())
 	} else {
 		writer = p.Replicas[0].Node
+		for _, n := range view.Nodes {
+			if n.ID == writer {
+				listed, live = true, n.Incarnation == p.Incarnation
+			}
+		}
 		if len(admissible) > 0 {
+			expect.True(h, live, h.Statement())
 			expect.Contains(h, admissible, writer, h.Statement())
 		}
 	}
@@ -168,17 +180,20 @@ func (s *env) settledShard(h *sim.Check, w *world, ns shard.Namespace, p *shard.
 			continue
 		}
 		token, err := part.agent.Token(p.Shard)
-		if hh.node.ID == writer {
+		switch {
+		case hh.node.ID != writer:
+			expect.HasError(h, err, h.Statement())
+		case live:
 			expect.NoError(h, err, h.Statement())
 			expect.Equal(h, token.Epoch, p.Epoch, h.Statement())
-		} else {
-			expect.HasError(h, err, h.Statement())
+		case err == nil:
+			expect.Equal(h, token.Epoch, p.Epoch, h.Statement())
 		}
 		if !found {
 			continue
 		}
 		route, err := part.router.Route(w.Context(), key)
-		if writer == "" {
+		if !listed {
 			expect.ErrorIs(h, err, routes.ErrNoRoute, h.Statement())
 			continue
 		}
@@ -277,12 +292,12 @@ func longestMove(r *config.Registry, spec *config.Spec) (time.Duration, error) {
 
 // recovery returns the longest recovery of the namespace of spec once the faults have ended, as
 // one chain of the waits of its machines: the TTL of its lease, the longest backoff of a
-// campaign, of a watch of the views, of an agent and of a router, the periodic passes of its
-// placer, the move of its cell, and a move for each round of the moves of its shards. A pass
-// examines at most maxSourceShards shards as the sources of its moves, so the recovery counts a
-// pass for each maxSourceShards shards of the layout and one more. A round moves as many shards
-// as the bounds of its budget on the transitions in flight admit, and move is the longest move of
-// every preset.
+// campaign, of a watch of the views, of the moves of a shard, of an agent and of a router, the
+// periodic passes of its placer, the move of its cell, and a move for each round of the moves
+// of its shards. A pass examines at most maxSourceShards shards as the sources of its moves, so
+// the recovery counts a pass for each maxSourceShards shards of the layout and one more. A round
+// moves as many shards as the bounds of its budget on the transitions in flight admit, and move
+// is the longest move of every preset.
 //
 // Error modes:
 //   - the errors of config.Resolve and config.Build for spec.
@@ -308,7 +323,7 @@ func recovery(r *config.Registry, spec *config.Spec, move time.Duration) (time.D
 	perRound := min(*b.MaxTransitions, *b.MaxNodeTransitions)
 	rounds := (maxSlots + perRound - 1) / perRound
 	examined := max(conf.Search.MaxSourceShards, 1)
-	backoffs := root.CampaignRetryMax + control.ViewRetryMax + agent.RetryMax + routes.RetryMax
+	backoffs := root.CampaignRetryMax + control.ViewRetryMax + control.MoveRetryMax + agent.RetryMax + routes.RetryMax
 	passes := time.Duration(1+(maxSlots+examined-1)/examined) * placer.Schedule().Interval
 	return time.Duration(own.Lease.TTL) + backoffs + passes + time.Duration(1+rounds)*move, nil
 }

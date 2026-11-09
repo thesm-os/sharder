@@ -100,6 +100,10 @@ type Config struct {
 	//   - The view has ended the incarnation of the endpoint.
 	//   - The handler of the node returned an error that a retry cannot fix.
 	Refused func(sid shard.ID, at store.Endpoint)
+	// Aborted receives the shard sid of each transition that ends on its abort path, an
+	// abandoned transition included. The Engine calls it during the call of Applied that
+	// applies the batch that ends the transition.
+	Aborted func(sid shard.ID)
 	// Scope is the scope of the transitions.
 	Scope shard.Scope
 	// Settings are the settings that a new version of the spec changes.
@@ -122,6 +126,9 @@ func (c *Config) validate() error {
 	}
 	if c.Refused == nil {
 		return fmt.Errorf("%w: no receiver of the refused adds", ErrConfig)
+	}
+	if c.Aborted == nil {
+		return fmt.Errorf("%w: no receiver of the aborted transitions", ErrConfig)
 	}
 	if c.Scope.Namespace == "" {
 		return fmt.Errorf("%w: no namespace", ErrConfig)
@@ -186,6 +193,8 @@ type Engine struct {
 	fits func(m *store.Mutation) error
 	// refused receives each add that fails definitively.
 	refused func(sid shard.ID, at store.Endpoint)
+	// aborted receives the shard of each transition that ends on its abort path.
+	aborted func(sid shard.ID)
 	// transitions maps the shard of each transition in flight to the transition.
 	transitions *idmap.Map[shard.ID, *transition]
 	// waits maps the token of each callback and Timer in flight to its transition.
@@ -226,7 +235,7 @@ type Engine struct {
 //
 // Error modes:
 //   - an error that wraps ErrConfig for a nil cfg, and for a cfg without Tokens,
-//     Protocol, Fits, Refused, the namespace of Scope, Incarnation or Term.
+//     Protocol, Fits, Refused, Aborted, the namespace of Scope, Incarnation or Term.
 //   - an error that wraps ErrConfig for a negative LockDelay, and for a MaxTransitions, a
 //     MaxNodeTransitions or a NodeCallbacks below one.
 //   - an error that wraps ErrConfig and the error of resilience.NewRetrier for a cfg
@@ -259,6 +268,7 @@ func New(cfg *Config) (*Engine, error) {
 		tokens:             cfg.Tokens,
 		fits:               cfg.Fits,
 		refused:            cfg.Refused,
+		aborted:            cfg.Aborted,
 		transitions:        idmap.NewTyped128[shard.ID, *transition](0),
 		waits:              make(map[machine.Token]*transition),
 		nodes:              make(map[shard.NodeID]*node),
@@ -489,6 +499,8 @@ func (e *Engine) Configure(s *Settings, out []machine.Effect) ([]machine.Effect,
 
 // Applied reports that the batch in flight has applied, and appends the callbacks of the
 // steps that follow the batch to out. A transition that the batch ended leaves e.
+// Config.Aborted receives the shard of each one that ended on its abort path, in the order
+// of the batch.
 //
 // Error modes:
 //   - an error that wraps fsm.ErrRejected when the phase or the wait of a transition
@@ -504,6 +516,9 @@ func (e *Engine) Applied(out []machine.Effect) ([]machine.Effect, error) {
 		}
 		e.transitions.Delete(t.record.Operation.Shard)
 		e.order = slices.DeleteFunc(e.order, func(o *transition) bool { return o == t })
+		if t.phase.State() == shard.PhaseAborted {
+			e.aborted(t.record.Operation.Shard)
+		}
 	}
 	return out, e.fault
 }

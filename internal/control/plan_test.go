@@ -25,6 +25,8 @@ import (
 
 	"go.thesmos.sh/sharder/builtin"
 	"go.thesmos.sh/sharder/config"
+	"go.thesmos.sh/sharder/internal/control"
+	"go.thesmos.sh/sharder/internal/engine"
 	"go.thesmos.sh/sharder/internal/machine"
 	"go.thesmos.sh/sharder/partition"
 	"go.thesmos.sh/sharder/partition/fixedslots"
@@ -71,7 +73,7 @@ func TestPlan(t *testing.T) {
 	t.Run("Step", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("starts no pass before the first view", func(t *testing.T) {
+		t.Run("does not start a pass before the first view", func(t *testing.T) {
 			t.Parallel()
 			h := newHarness(t)
 			h.start(t)
@@ -674,7 +676,7 @@ func TestPlan(t *testing.T) {
 				"the controller must count each move that the bounds refuse")
 		})
 
-		t.Run("starts no pass at the end of a transition without refused moves", func(t *testing.T) {
+		t.Run("does not start a pass at the end of a transition without refused moves", func(t *testing.T) {
 			t.Parallel()
 			h := served(t)
 			assert.Length(t, h.plans, 1, "the end of a transition must not start a pass")
@@ -739,6 +741,303 @@ func TestPlan(t *testing.T) {
 			h.run(t)
 			assert.Equal(t, h.writers(t)[nodeC.ID], 0,
 				"the end of the move to the draining node must start the pass that moves its writer off")
+		})
+
+		t.Run("does not start a pass at the end of a move whose drop fails definitively", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			h.answer = refusedOn(protocol.Drop, nodeA.ID)
+			plans := len(h.plans)
+			p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+			h.submit(t, &p, operator)
+			assert.Length(t, h.plans, plans+1, "only the drain must start a pass")
+		})
+
+		t.Run("arms the backoff of a shard whose drop fails definitively", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			h.answer = refusedOn(protocol.Drop, nodeA.ID)
+			p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+			h.submit(t, &p, operator)
+			assert.Contains(t, durations(h.timers), firstBackoff, "the abort must arm the first backoff of the shard")
+		})
+
+		t.Run("starts a pass at the end of the backoff of a shard", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			h.answer = refusedOn(protocol.Drop, nodeA.ID)
+			p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+			h.submit(t, &p, operator)
+			plans := len(h.plans)
+			h.elapse(t, firstBackoff)
+			assert.Length(t, h.plans, plans+1, "the end of the backoff must start a pass")
+		})
+
+		t.Run("doubles the backoff of a shard with each move that aborts in a row", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			h.answer = refusedOn(protocol.Drop, nodeA.ID)
+			p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+			h.submit(t, &p, operator)
+			h.elapse(t, firstBackoff)
+			assert.Contains(t, durations(h.timers), 2*firstBackoff,
+				"the second abort in a row must double the ceiling of the backoff")
+		})
+
+		t.Run("defers the move of a shard during its backoff", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			h.answer = refusedOn(protocol.Drop, nodeA.ID)
+			p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+			h.submit(t, &p, operator)
+			plans, drops := len(h.plans), sentTo(h.sent, protocol.Drop, nodeA.ID)
+			h.elapse(t, interval)
+			expect.Length(t, h.plans, plans+1, "the interval must start a pass")
+			expect.Equal(t, sentTo(h.sent, protocol.Drop, nodeA.ID), drops,
+				"the pass must not move a shard during its backoff")
+		})
+
+		t.Run("moves the other shards of a pass while a shard waits for its backoff", func(t *testing.T) {
+			t.Parallel()
+			h := served(t, func(s *setup) { s.spec.Budget.MaxTransitions = new(1) })
+			var on []shard.ID
+			for _, sid := range h.shardIDs(t) {
+				if h.placements(t)[sid].Replicas[0].Node == nodeA.ID {
+					on = append(on, sid)
+				}
+			}
+			assert.True(t, len(on) > 1, "the first passes must place two shards or more on node A")
+			h.answer = func(r *protocol.Request) error {
+				if r.Call == protocol.Drop && r.Shard == on[0] {
+					return errRefused
+				}
+				return nil
+			}
+			p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+			h.submit(t, &p, operator)
+			placements := h.placements(t)
+			expect.Equal(t, placements[on[0]].Replicas[0].Node, nodeA.ID,
+				"the shard whose drop fails must keep its writer on the draining node")
+			for _, sid := range on[1:] {
+				expect.NotEqual(t, placements[sid].Replicas[0].Node, nodeA.ID,
+					"the other shards must move off the draining node during the backoff")
+			}
+		})
+
+		t.Run("moves a deferred shard at once after a view that ends the incarnation of its node", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			h.answer = func(r *protocol.Request) error {
+				if r.Call == protocol.Drop && r.Node == nodeA.ID && r.NodeIncarnation == nodeA.Incarnation {
+					return errRefused
+				}
+				return nil
+			}
+			p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+			h.submit(t, &p, operator)
+			later := restarted(nodeA)
+			h.view(t, later, nodeB)
+			h.live(t, later, nodeB)
+		})
+
+		t.Run("does not start a pass at the end of a backoff that a view has ended", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			h.answer = func(r *protocol.Request) error {
+				if r.Call == protocol.Drop && r.Node == nodeA.ID && r.NodeIncarnation == nodeA.Incarnation {
+					return errRefused
+				}
+				return nil
+			}
+			p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+			h.submit(t, &p, operator)
+			h.view(t, restarted(nodeA), nodeB)
+			plans := len(h.plans)
+			h.elapse(t, firstBackoff)
+			assert.Length(t, h.plans, plans, "the end of a backoff that a view has ended must not start a pass")
+		})
+
+		t.Run("starts a pass at a view that ends the incarnation of a node without replicas while a shard waits",
+			func(t *testing.T) {
+				t.Parallel()
+				h := spare(t)
+				h.answer = refusedOn(protocol.Drop, nodeA.ID)
+				p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+				h.submit(t, &p, operator)
+				assert.Equal(t, h.writers(t)[nodeC.ID], 0, "node C must not host a replica")
+				plans := len(h.plans)
+				h.view(t, nodeA, nodeB, restarted(nodeC))
+				assert.Length(t, h.plans, plans+1, "the view must start the pass of the deferred shards")
+			})
+
+		t.Run("does not start a pass at a view that ends no incarnation while a shard waits for its backoff",
+			func(t *testing.T) {
+				t.Parallel()
+				h := spare(t)
+				h.answer = refusedOn(protocol.Drop, nodeA.ID)
+				p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+				h.submit(t, &p, operator)
+				plans := len(h.plans)
+				h.view(t, nodeA, nodeB, nodeC)
+				assert.Length(t, h.plans, plans, "a view that ends no incarnation must keep the deferral of the shards")
+			})
+
+		t.Run("does not start a pass at a view that ends an incarnation without replicas after the backoff has ended",
+			func(t *testing.T) {
+				t.Parallel()
+				h := served(t, func(s *setup) { s.spec.Placement = planned(repairConfig) })
+				h.view(t, nodeA, nodeB, nodeC)
+				sid := h.shardOn(t, nodeA.ID)
+				refusals := 1
+				h.answer = func(r *protocol.Request) error {
+					if r.Call == protocol.Drop && r.Shard == sid && refusals > 0 {
+						refusals--
+						return errRefused
+					}
+					return nil
+				}
+				move := proposalOf(t, 1, proposal.Move, h.placements(t)[sid].Epoch,
+					proposal.MoveArgs{Node: nodeB.ID, Shard: sid})
+				h.submit(t, &move, operator)
+				h.elapse(t, firstBackoff)
+				assert.Equal(t, h.placements(t)[sid].Replicas[0].Node, nodeA.ID,
+					"the pass at the end of the backoff must not move the shard")
+				plans := len(h.plans)
+				h.view(t, nodeA, nodeB, restarted(nodeC))
+				assert.Length(t, h.plans, plans,
+					"a view that ends an incarnation without replicas must not start a pass without a deferral")
+			})
+
+		t.Run("does not start a pass at the end of a Timer that a later abort of its shard has replaced",
+			func(t *testing.T) {
+				t.Parallel()
+				h := spare(t)
+				h.answer = refusedOn(protocol.Drop, nodeA.ID)
+				p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+				h.submit(t, &p, operator)
+				h.view(t, nodeA, nodeB, restarted(nodeC))
+				assert.Contains(t, durations(h.timers), 2*firstBackoff,
+					"the pass after the view must abort the moves again and arm the doubled backoff")
+				plans := len(h.plans)
+				h.elapse(t, firstBackoff)
+				assert.Length(t, h.plans, plans, "the end of a replaced Timer must not start a pass")
+			})
+
+		t.Run("does not start a pass at the end of a move that leaves its shard without a writer after its attempts",
+			func(t *testing.T) {
+				t.Parallel()
+				h := served(t)
+				h.answer = func(r *protocol.Request) error {
+					if r.Call == protocol.Add && r.Node == nodeB.ID {
+						return protocol.ErrUnreachable
+					}
+					return nil
+				}
+				onA := h.writers(t)[nodeA.ID]
+				p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+				h.submit(t, &p, operator)
+				plans := len(h.plans)
+				for attempt := range engine.Attempts - 1 {
+					for range onA {
+						h.elapse(t, firstBackoff<<attempt)
+					}
+				}
+				assert.Equal(t, h.writers(t)[nodeB.ID], shards-onA,
+					"the moves must leave their shards without a writer")
+				assert.Length(t, h.plans, plans,
+					"the end of a move whose add fails after its attempts must not start a pass")
+			})
+
+		t.Run("takes the end of the Timer of a backoff once", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			h.answer = refusedOn(protocol.Drop, nodeA.ID)
+			p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+			h.submit(t, &p, operator)
+			i := slices.IndexFunc(h.timers, func(tm machine.Timer) bool { return tm.Duration == firstBackoff })
+			assert.True(t, i >= 0, "the abort must arm the Timer of a backoff")
+			tok := h.timers[i].Token
+			h.elapse(t, firstBackoff)
+			_, _, ok := h.controller.Step(machine.Elapsed{Token: tok}, []machine.Effect{marker})
+			assert.False(t, ok, "the controller must not take the end of the Timer of a backoff twice")
+		})
+
+		t.Run("does not start a pass at the end of a backoff whose shard has moved", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			sid := h.shardOn(t, nodeA.ID)
+			refusals := 1
+			h.answer = func(r *protocol.Request) error {
+				if r.Call == protocol.Drop && r.Shard == sid && refusals > 0 {
+					refusals--
+					return errRefused
+				}
+				return nil
+			}
+			drain := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+			h.submit(t, &drain, operator)
+			move := proposalOf(t, 2, proposal.Move, h.placements(t)[sid].Epoch,
+				proposal.MoveArgs{Node: nodeB.ID, Shard: sid})
+			h.submit(t, &move, operator)
+			assert.Equal(t, h.placements(t)[sid].Replicas[0].Node, nodeB.ID, "the move proposal must take effect")
+			plans := len(h.plans)
+			h.elapse(t, firstBackoff)
+			assert.Length(t, h.plans, plans, "the end of the backoff of a shard that has moved must not start a pass")
+		})
+
+		t.Run("clears the backoff of a shard once its move takes effect", func(t *testing.T) {
+			t.Parallel()
+			h := spare(t)
+			sid := h.shardOn(t, nodeA.ID)
+			refusals := 1
+			h.answer = func(r *protocol.Request) error {
+				if r.Call == protocol.Drop && r.Shard == sid && refusals > 0 {
+					refusals--
+					return errRefused
+				}
+				return nil
+			}
+			first := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+			h.submit(t, &first, operator)
+			h.elapse(t, firstBackoff)
+			moved := h.placements(t)[sid].Replicas[0].Node
+			assert.NotEqual(t, moved, nodeA.ID, "the move after the backoff must take effect")
+			refusals = 1
+			i := slices.IndexFunc(h.nodes, func(n shard.Node) bool { return n.ID == moved })
+			second := proposalOf(t, 2, proposal.Drain, h.nodes[i].Incarnation, proposal.NodeArgs{Node: moved})
+			h.submit(t, &second, operator)
+			expect.Contains(t, durations(h.timers), firstBackoff,
+				"the next abort of the shard must arm the first backoff")
+			expect.NotContains(t, durations(h.timers), 2*firstBackoff,
+				"a move that takes effect must clear the count of the aborts of its shard")
+		})
+
+		t.Run("logs the backoff of a shard whose move aborts without a fault", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			sid := h.shardOn(t, nodeA.ID)
+			h.answer = refusedOn(protocol.Drop, nodeA.ID)
+			p := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+			h.submit(t, &p, operator)
+			got := h.logged(logBackoff)
+			assert.NotEmpty(t, got, "the controller must log the backoff of a shard")
+			expect.Equal(t, got[0][attrShardKey], sid.String(), "the log must name the shard")
+			expect.Equal(t, got[0][attrDelayKey], firstBackoff.String(), "the log must state the delay of the backoff")
+		})
+
+		t.Run("starts a move proposal of a shard during its backoff", func(t *testing.T) {
+			t.Parallel()
+			h := served(t)
+			sid := h.shardOn(t, nodeA.ID)
+			h.answer = refusedOn(protocol.Drop, nodeA.ID)
+			drain := proposalOf(t, 1, proposal.Drain, nodeA.Incarnation, proposal.NodeArgs{Node: nodeA.ID})
+			h.submit(t, &drain, operator)
+			drops := sentTo(h.sent, protocol.Drop, nodeA.ID)
+			move := proposalOf(t, 2, proposal.Move, h.placements(t)[sid].Epoch,
+				proposal.MoveArgs{Node: nodeB.ID, Shard: sid})
+			h.submit(t, &move, operator)
+			assert.Equal(t, sentTo(h.sent, protocol.Drop, nodeA.ID), drops+1,
+				"a move proposal must start during the backoff of its shard")
 		})
 
 		t.Run("logs a move that the protocol cannot script", func(t *testing.T) {
@@ -854,7 +1153,18 @@ const (
 	attrShardKey      = "shard"
 	attrErrorKey      = "error"
 	attrConstraintKey = "constraint"
+	attrDelayKey      = "delay"
 )
+
+// firstBackoff is the first backoff of a shard whose move aborts without a fault: half of its
+// ceiling control.MoveRetryBase, at the source of randomness of the tests.
+const firstBackoff = time.Duration(half * float64(control.MoveRetryBase))
+
+// repairConfig is the configuration of a planner that repairs and does not improve: the goal
+// count, no pass on a change of the membership, and no share of the shards for the moves of
+// the improvement.
+const repairConfig = `{"goals":[{"name":"count","tier":0,"weight":1}],"triggers":{"onMembership":false},` +
+	`"churn":{"maxShardFraction":0}}`
 
 // errRefused is the error of an agent that refuses a callback. A retry does not fix it.
 var errRefused = errs.WithClass(errors.New("test: the agent refuses the call"), errs.Invalid)
@@ -994,4 +1304,26 @@ func durations(timers []machine.Timer) []time.Duration {
 		ds = append(ds, tm.Duration)
 	}
 	return ds
+}
+
+// refusedOn returns an answer of the agents that refuses each callback c to the node n with
+// errRefused, and replies to every other callback with success.
+func refusedOn(c protocol.Call, n shard.NodeID) func(*protocol.Request) error {
+	return func(r *protocol.Request) error {
+		if r.Call == c && r.Node == n {
+			return errRefused
+		}
+		return nil
+	}
+}
+
+// sentTo counts the requests of rs with the call c to the node n.
+func sentTo(rs []*protocol.Request, c protocol.Call, n shard.NodeID) int {
+	count := 0
+	for _, r := range rs {
+		if r.Call == c && r.Node == n {
+			count++
+		}
+	}
+	return count
 }

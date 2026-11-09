@@ -41,13 +41,15 @@
 //     replicas.
 //   - A change of the view, when the schedule of the placer sets OnMembership.
 //   - The interval of the schedule of the placer, and a newer spec.
-//   - A report with a new permanent fault, a commit that leaves a shard without a writer,
-//     and a commit that adds or removes a drain.
+//   - A report with a new permanent fault, and a commit that adds or removes a drain.
+//   - A commit that ends the transition of a shard and leaves the shard without a writer.
 //   - A commit that ends the transition of a shard whose writer the view does not have at
 //     the incarnation of its placement.
 //   - A commit that ends the transition of a shard whose writer is on a node that drains.
 //   - The end of a transition, while the bounds of the engine refused a move of the last
 //     plan.
+//   - The end of the backoff of a shard, and a view that ends a node incarnation while a
+//     shard waits for its backoff.
 //
 // The input of a pass lists a fault of a shard for each node whose live incarnation reports
 // the replica of the shard with a permanent fault, or failed an add of the shard
@@ -69,6 +71,28 @@
 // Controller skips a target on a node that started to drain after the input of the pass. A
 // shard without a reported load has Config.Load in a pass, or the mean load of the shards
 // with one when Config.Load is nil.
+//
+// # Backoffs
+//
+// A move aborts without a fault when its transition ends on its abort path without a
+// definite failure of an add. The next pass would read the same state and plan the same
+// move, so the commit that ends such a move defers the moves of its shard for a backoff:
+//
+//   - The delay is resilience.Backoff of the moves of the shard that aborted without a fault
+//     in a row, between [MoveRetryBase] and [MoveRetryMax], with the jitter of Config.Rand.
+//     The bounds are the bounds of the retries of a callback of the engine.
+//   - Every pass skips the target of the shard until the Timer of the backoff ends. The end
+//     of the Timer starts a pass.
+//   - The shard does not count for a trigger of a pass while it waits, so the commit of its
+//     end does not start a pass for it.
+//   - A view that ends a node incarnation ends the deferral of every shard and starts a pass.
+//     The count of the aborts of each shard remains.
+//   - A move of the shard that takes effect, at the end of its script, clears its backoff.
+//
+// The commit that ends a move after a definite failure of an add starts a pass at once,
+// because that pass lists the node of the add as a fault of the shard. A move proposal
+// starts during the deferral of its shard. The Controller logs each deferral with the shard
+// and the delay.
 //
 // # Budget
 //

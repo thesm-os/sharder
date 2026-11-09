@@ -238,6 +238,9 @@ type harness struct {
 	batches []*store.Mutation
 	// refusals lists every add that the Engine reported as failed definitively, in order.
 	refusals []refusalOf
+	// aborts lists the shard of every transition that the Engine passed to Config.Aborted,
+	// in order.
+	aborts []shard.ID
 	// tokens is the counter of the tokens of the machine of the Engine.
 	tokens machine.Token
 	// seq is the Seq of the last commit to the store.
@@ -266,6 +269,7 @@ func newHarness(tb testCase, ps []shard.Placement, opts ...func(*setup)) *harnes
 	tb.Cleanup(func() { assert.NoError(tb, h.st.Close(), "the store must close") })
 	s.cfg.Tokens = &h.tokens
 	s.cfg.Refused = func(sid shard.ID, at store.Endpoint) { h.refusals = append(h.refusals, refusalOf{at: at, sid: sid}) }
+	s.cfg.Aborted = func(sid shard.ID) { h.aborts = append(h.aborts, sid) }
 	s.cfg.Fits = s.fits
 	if s.fits == nil {
 		s.cfg.Fits = func(m *store.Mutation) error { return h.st.Fits(cellScope, m) }
@@ -342,6 +346,10 @@ func TestEngine(t *testing.T) {
 				give: func(c *engine.Config) { c.Refused = nil },
 			},
 			{
+				name: "returns ErrConfig for a config without a receiver of the aborted transitions",
+				give: func(c *engine.Config) { c.Aborted = nil },
+			},
+			{
 				name: "returns ErrConfig for a config without a namespace",
 				give: func(c *engine.Config) { c.Scope.Namespace = "" },
 			},
@@ -381,6 +389,7 @@ func TestEngine(t *testing.T) {
 					Tokens:      &tokens,
 					Fits:        func(*store.Mutation) error { return nil },
 					Refused:     func(shard.ID, store.Endpoint) {},
+					Aborted:     func(shard.ID) {},
 					Scope:       cellScope,
 					Term:        term,
 					Incarnation: incA,
@@ -1444,6 +1453,41 @@ func TestEngine(t *testing.T) {
 			h.drain(t)
 			assert.True(t, h.start(t, moveOf(h.placement(t, p.Shard), nodeB, nodeA, nodeB)),
 				"Start must admit a move of a shard whose transition has ended")
+		})
+
+		t.Run("passes the shard of a transition that ends on its abort path to Aborted", func(t *testing.T) {
+			t.Parallel()
+			p := placement(1, nodeA)
+			h := newHarness(t, []shard.Placement{p})
+			h.view(t, nodeA, nodeB)
+			h.answer = refuse(protocol.Drop, nodeA.ID)
+			h.start(t, moveOf(p, nodeA, nodeB, nodeA))
+			assert.True(t, h.flush(t), "the first batch must commit the record of the transition")
+			assert.True(t, h.answerOne(t), "the first batch must send the drop")
+			assert.Empty(t, h.aborts, "the Engine must not pass a transition before the batch that ends it applies")
+			assert.True(t, h.flush(t), "the refused drop must end the transition in the next batch")
+			assert.Equal(t, h.aborts, []shard.ID{p.Shard}, "the Engine must pass the shard once the batch has applied")
+		})
+
+		t.Run("passes the shard of an abandoned transition to Aborted", func(t *testing.T) {
+			t.Parallel()
+			p := placement(1, nodeA)
+			h := newHarness(t, []shard.Placement{p})
+			h.view(t, nodeA, nodeB, nodeC)
+			h.answer = refuse(protocol.Add, "")
+			h.start(t, moveOf(p, nodeA, nodeB, nodeC))
+			h.drain(t)
+			assert.Equal(t, h.aborts, []shard.ID{p.Shard}, "the Engine must pass the shard of the abandoned transition")
+		})
+
+		t.Run("does not pass a transition that ends at the end of its script to Aborted", func(t *testing.T) {
+			t.Parallel()
+			p := placement(1, nodeA)
+			h := newHarness(t, []shard.Placement{p})
+			h.view(t, nodeA, nodeB)
+			h.start(t, moveOf(p, nodeA, nodeB, nodeA))
+			h.drain(t)
+			assert.Empty(t, h.aborts, "the Engine must not pass the shard of a move that took effect")
 		})
 	})
 

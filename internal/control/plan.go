@@ -21,6 +21,7 @@ import (
 	"go.thesmos.sh/core/idmap"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/pcg"
+	"go.thesmos.sh/core/resilience"
 
 	"go.thesmos.sh/sharder/internal/engine"
 	"go.thesmos.sh/sharder/internal/machine"
@@ -42,7 +43,29 @@ const (
 	attrNode = "node"
 	// attrConstraint is the constraint of a violation.
 	attrConstraint = "constraint"
+	// attrDelay is the delay of the backoff of a shard.
+	attrDelay = "delay"
 )
+
+// The bounds of the backoff of the moves of a shard after its moves abort without a fault.
+// They are the bounds of the retries of a callback of the engine. resilience.Backoff returns
+// each backoff as a draw of Config.Rand below its ceiling.
+const (
+	// MoveRetryBase is the ceiling of the backoff after the first abort. The ceiling doubles
+	// with each later abort in a row.
+	MoveRetryBase = engine.RetryBase
+	// MoveRetryMax is the highest ceiling of the backoff.
+	MoveRetryMax = engine.RetryMax
+)
+
+// backoff is the backoff of a shard whose last moves aborted without a fault.
+type backoff struct {
+	// aborts counts the moves of the shard that aborted without a fault in a row.
+	aborts int
+	// timer is the token of the Timer whose end ends the deferral of the shard, and zero
+	// while no pass defers the shard.
+	timer machine.Token
+}
 
 // passes is the state of the planning passes of a controller. The placement passes run one
 // at a time. The pass of a move or an explain proposal runs while a placement pass runs.
@@ -53,6 +76,16 @@ type passes struct {
 	// record and the reply of the proposal, until the batch that commits the first record
 	// of the transition.
 	moving *idmap.Map[shard.ID, moving]
+	// backoffs maps each shard whose last moves aborted without a fault to its backoff.
+	backoffs *idmap.Map[shard.ID, *backoff]
+	// timers maps the token of each Timer of a backoff to its shard, until the Timer ends.
+	timers map[machine.Token]shard.ID
+	// faulted contains each shard whose transition in flight has an add that failed
+	// definitively.
+	faulted *idmap.Map[shard.ID, struct{}]
+	// aborted lists the shards of the transitions that the batch of the step ended on their
+	// abort path. The engine passes each one during Engine.Applied.
+	aborted []shard.ID
 	// running is the token of the placement pass in flight, and zero without one.
 	running machine.Token
 	// interval is the token of the Timer of the next periodic pass, and zero without one.
@@ -63,6 +96,26 @@ type passes struct {
 	queued bool
 	// refused reports that the bounds of the engine refused a move of the last plan.
 	refused bool
+}
+
+// deferred reports whether every pass defers the moves of the shard sid until the Timer of
+// its backoff ends.
+func (p *passes) deferred(sid shard.ID) bool {
+	b, ok := p.backoffs.Get(sid)
+	return ok && b.timer != 0
+}
+
+// release ends the deferral of every shard, and reports whether a pass deferred a shard. The
+// count of the aborts of each shard remains. The Timer of each deferral that release ends
+// does not start a pass.
+func (p *passes) release() bool {
+	released := false
+	for _, b := range p.backoffs.All() {
+		if b.timer != 0 {
+			b.timer, released = 0, true
+		}
+	}
+	return released
 }
 
 // plan is a pass in flight: a placement pass, or the pass of a move or an explain
@@ -290,6 +343,54 @@ func (c *Controller) periodic(out []machine.Effect) []machine.Effect {
 	return out
 }
 
+// ended takes the ends of the transitions of the batch mu, once Engine.Applied has passed
+// each one that ended on its abort path. A move that took effect clears the backoff of its
+// shard. A move that aborted after a definite failure of an add keeps the backoff as it is,
+// because the next pass lists the node of the add as a fault of the shard. Each other move
+// that aborted defers the moves of its shard: ended counts the abort, logs the backoff and
+// appends its Timer to out. The delay of the Timer is resilience.Backoff of the aborts of the
+// shard in a row, within MoveRetryBase and MoveRetryMax.
+func (c *Controller) ended(mu *store.Mutation, out []machine.Effect) []machine.Effect {
+	for _, sid := range mu.Done {
+		_, faulted := c.passes.faulted.Delete(sid)
+		if !slices.Contains(c.passes.aborted, sid) {
+			c.passes.backoffs.Delete(sid)
+			continue
+		}
+		if faulted {
+			continue
+		}
+		b, ok := c.passes.backoffs.Get(sid)
+		if !ok {
+			b = &backoff{}
+			c.passes.backoffs.Set(sid, b)
+		}
+		b.aborts++
+		b.timer = c.next()
+		c.passes.timers[b.timer] = sid
+		delay := resilience.Backoff(c.rand, b.aborts, MoveRetryBase, MoveRetryMax)
+		c.logger.LogAttrs(context.Background(), slog.LevelWarn,
+			"control: a move aborted, and its shard waits for a backoff",
+			slog.String(attrShard, sid.String()), slog.Duration(attrDelay, delay))
+		out = append(out, machine.Timer{Token: b.timer, Duration: delay})
+	}
+	c.passes.aborted = c.passes.aborted[:0]
+	return out
+}
+
+// retry takes the end of the Timer tok of the backoff of the shard sid. The end of the Timer
+// of the deferral of the shard ends the deferral and starts a pass. A Timer whose deferral a
+// view, a later abort or a move that took effect has replaced does not start a pass.
+func (c *Controller) retry(sid shard.ID, tok machine.Token, out []machine.Effect) ([]machine.Effect, error) {
+	delete(c.passes.timers, tok)
+	b, ok := c.passes.backoffs.Get(sid)
+	if !ok || b.timer != tok {
+		return out, nil
+	}
+	b.timer = 0
+	return c.trigger(out)
+}
+
 // input returns the input of a pass over the committed state of the scope. The pass reads
 // a copy of the assignment, because the controller changes the assignment during the pass.
 func (c *Controller) input() *placement.Input {
@@ -399,13 +500,14 @@ func (c *Controller) placed(p *plan, ev *machine.Planned, out []machine.Effect) 
 }
 
 // moves starts the move of each shard that the plan pl changes, in the order of the IDs of
-// the shards, and commits the next batch of the engine. It skips a target on a node that
-// drains, because the drain started after the input of the pass. The commit of the drain
-// starts the next pass. The budget defers a move that makes more replicas of its shard
-// unavailable than maxUnavailable allows. The admission defers a move that the current
-// state refuses, such as a move that the constraints of the spec refuse once the moves and
-// the transitions after the input of the pass count. The bounds of the engine refuse a
-// move above them, and the end of a transition then starts a pass.
+// the shards, and commits the next batch of the engine. It skips the target of a shard that
+// waits for its backoff, because the end of the backoff starts the pass of the shard. It
+// skips a target on a node that drains, because the drain started after the input of the
+// pass. The commit of the drain starts the next pass. The budget defers a move that makes
+// more replicas of its shard unavailable than maxUnavailable allows. The admission defers a
+// move that the current state refuses, such as a move that the constraints of the spec
+// refuse once the moves and the transitions after the input of the pass count. The bounds
+// of the engine refuse a move above them, and the end of a transition then starts a pass.
 func (c *Controller) moves(pl *placement.Plan, out []machine.Effect) ([]machine.Effect, error) {
 	var adm *admission
 	if len(pl.Targets) > 0 {
@@ -420,6 +522,9 @@ func (c *Controller) moves(pl *placement.Plan, out []machine.Effect) ([]machine.
 	var fault error
 	refused := false
 	for _, sid := range slices.SortedFunc(maps.Keys(pl.Targets), shard.ID.Compare) {
+		if c.passes.deferred(sid) {
+			continue
+		}
 		t := pl.Targets[sid]
 		cur := c.assignment.placement(sid)
 		from, to, ok := change(&cur, &t, c.spec.writer)

@@ -215,8 +215,10 @@ func (c *Controller) watchViews(out []machine.Effect) []machine.Effect {
 // viewed takes one item of the watch of the views, and reports whether the item is of the
 // watch in flight. A view replaces the membership of the scope, ends the incarnations that
 // it no longer lists, and can start a pass. The writer gap of each shard whose writer is on
-// a node that the view ends starts at the view. A watch that ends with a transient error
-// runs again after a backoff.
+// a node that the view ends starts at the view. A view that ends an incarnation also ends
+// the deferral of every shard that waits for its backoff, and then starts a pass, because
+// the view can end the incarnation whose refusal aborted the move of the shard. A watch that
+// ends with a transient error runs again after a backoff.
 //
 // Error modes:
 //   - an error that wraps the error of the watch for an error that is not transient.
@@ -243,13 +245,15 @@ func (c *Controller) viewed(ev *machine.Viewed, out []machine.Effect) ([]machine
 	if lost {
 		c.fails(ended)
 	}
+	released := len(ended) > 0 && c.passes.release()
 	out, err := c.engine.View(&c.members.view, out)
 	out, err = c.batchAfter(out, err)
 	out, serr := c.settle(out)
 	if joined := errors.Join(err, serr); joined != nil {
 		return out, true, joined
 	}
-	if out, err = c.admit(out); err == nil && (first || changed && c.spec.schedule.OnMembership || lost) {
+	starts := first || changed && c.spec.schedule.OnMembership || lost || released
+	if out, err = c.admit(out); err == nil && starts {
 		out, err = c.trigger(out)
 	}
 	return out, true, err
@@ -257,9 +261,12 @@ func (c *Controller) viewed(ev *machine.Viewed, out []machine.Effect) ([]machine
 
 // refuse takes the definite failure of the add of the shard sid on the endpoint at. Each
 // pass treats the replica of sid on the node of at as having a permanent fault until the
-// view ends the incarnation of at, so the pass places sid on another node. refuse ignores
-// an endpoint whose incarnation the view has ended already.
+// view ends the incarnation of at, so the pass places sid on another node. refuse does not
+// record such a fault for an endpoint whose incarnation the view has ended already. The end
+// of the transition of sid starts its pass at once in both cases, because the input of that
+// pass differs from the input of the pass that planned the move.
 func (c *Controller) refuse(sid shard.ID, at store.Endpoint) {
+	c.passes.faulted.Set(sid, struct{}{})
 	if mb, ok := c.members.at(at.Node, at.Incarnation); ok {
 		mb.refused.Set(sid, struct{}{})
 	}
