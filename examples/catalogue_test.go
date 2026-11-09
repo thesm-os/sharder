@@ -26,7 +26,7 @@ const (
 )
 
 // TestCatalogue checks the directories of the examples and the table of README.md against
-// the keys that the support matrix requires.
+// the keys of the catalogue.
 func TestCatalogue(t *testing.T) {
 	t.Parallel()
 
