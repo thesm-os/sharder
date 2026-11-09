@@ -3,4 +3,4 @@
 "go.thesmos.sh/sharder/examples": patch
 ---
 
-Update `go.thesmos.sh/core` to v0.42.0.
+Update `go.thesmos.sh/core` to v0.43.0.

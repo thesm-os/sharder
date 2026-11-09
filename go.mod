@@ -9,10 +9,10 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	go.dokimi.dev/assert v0.20.0
 	go.dokimi.dev/conform v0.16.3
-	go.dokimi.dev/sim v0.10.1
+	go.dokimi.dev/sim v0.10.2
 	go.dokimi.dev/spec v0.5.1
 	go.dokimi.dev/stub v0.3.3
-	go.thesmos.sh/core v0.42.0
+	go.thesmos.sh/core v0.43.0
 	go.thesmos.sh/kanon v0.5.0
 )
 
