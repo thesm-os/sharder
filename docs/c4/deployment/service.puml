@@ -7,8 +7,8 @@
 
 title Deployment: service topology, outside the support matrix
 
-Deployment_Node(controllers, "sharderd process", "one per controller process, registered in each root scope") {
-    Container(sharderd, "sharderd", "Go program", "Hosts the controllers of many namespaces, with the adapters that its main package selects.")
+Deployment_Node(controllers, "Controller process", "one per controller process, registered in each root scope") {
+    Container(program, "Controller program", "Go program of the application", "Hosts the controllers of many namespaces, with the adapters that its main package selects.")
     Container(controller, "Controller", "Go library", "Leads the roots that elect it, and runs the cell controllers that the roots place on this process.")
 }
 
@@ -20,12 +20,12 @@ Deployment_Node(clients, "Application client process", "one per client") {
     Container(router, "Router", "Go library", "Routes each key.")
 }
 
-Deployment_Node(storea, "Store cluster A", "a store backend, such as etcd") {
+Deployment_Node(storea, "Store cluster A", "a store backend") {
     ContainerDb(root, "Root scope", "store scope", "The spec, the cell map and the root's election.")
     ContainerDb(cell1, "Scope of cell c1", "store scope", "Placements, transitions, the cell record, and node leases when the store provides membership.")
 }
 
-Deployment_Node(storeb, "Store cluster B", "a store backend, such as etcd") {
+Deployment_Node(storeb, "Store cluster B", "a store backend") {
     ContainerDb(cell2, "Scope of cell c2", "store scope", "Placements, transitions, the cell record, and node leases when the store provides membership.")
 }
 
@@ -33,7 +33,7 @@ Deployment_Node(database, "Application database", "the application's storage") {
     ContainerDb(fences, "Fence records", "the application's schema", "One watermark per namespace incarnation and shard.")
 }
 
-Rel(sharderd, controller, "Runs", "in process")
+Rel(program, controller, "Runs", "in process")
 BiRel(controller, agent, "Callbacks and reports", "Do, Report, through the transport adapter")
 Rel(router, controller, "Looks up routes", "Lookup, through the transport adapter")
 Rel(controller, root, "Campaigns, commits the cell map", "store adapter")

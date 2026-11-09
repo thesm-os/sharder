@@ -41,7 +41,7 @@ The scope is the journaled cell split, routing across cells, and the joining of 
 
 ## Not in this milestone
 
-- The `service` topology with `sharderd`: nobody has scheduled it.
+- The `service` topology: nobody has scheduled it.
 - The `lookup` routing source: nobody has scheduled it.
 - Moving a shard between cells without a split, and balancing load across cells: nobody has scheduled them.
 - Moving a live scope to another backend cluster: nobody has scheduled it.
@@ -54,4 +54,5 @@ None. No milestone depends on this one.
 
 | Date | What changed | Why |
 |---|---|---|
+| 2026-11-09 | Removed `sharderd` from the `service` topology in the list of the items outside this milestone | RFC-0018 supersedes the module `cmd` of sharder, so the controllers of the `service` topology run in a program of the application |
 | 2026-09-28 | Created as deferred | The design review of 2026-09-28 found that a cell split copies a range between two scopes without a durable record of its progress |

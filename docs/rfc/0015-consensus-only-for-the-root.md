@@ -454,7 +454,7 @@ After the model, tests of real processes inject the same faults across OS proces
 
 ### A control plane apart from the application
 
-A quorum, or `sharderd` of the `service` topology, runs as a deployment of its own beside the application.
+A quorum, or the controller processes of the `service` topology, run as a deployment of their own beside the application.
 
 Rejected because sharder is a library that an application embeds to scale horizontally, so every process of a deployment runs the application's binary. The `service` topology of RFC-0001 remains outside the support matrix.
 

@@ -10,7 +10,7 @@ The C4 model describes sharder at three levels of zoom, and deploys it once per 
 | Kind | Diagram | Shows | Specified in |
 |---|---|---|---|
 | System context | [sharder](#system-context) | sharder, the people who operate it, and the systems it depends on | [RFC-0001](../rfc/0001-architecture-and-core-model.md) |
-| Containers | [sharder](#containers) | the libraries, the adapters, the programs and the store | [RFC-0001](../rfc/0001-architecture-and-core-model.md), [RFC-0007](../rfc/0007-membership-store-and-distribution.md), [RFC-0008](../rfc/0008-agent-router-and-budgets.md) |
+| Containers | [sharder](#containers) | the libraries, the adapters and the store | [RFC-0001](../rfc/0001-architecture-and-core-model.md), [RFC-0007](../rfc/0007-membership-store-and-distribution.md), [RFC-0008](../rfc/0008-agent-router-and-budgets.md), [RFC-0018](../rfc/0018-maintenance-calls.md), [ADR-0051](../adr/0051-sharder-does-not-provide-an-etcd-adapter.md) |
 | Components | [Controller](#controller) | planning, transitions, proposals, the budget and the root | [RFC-0004](../rfc/0004-placement-and-rebalancing.md), [RFC-0006](../rfc/0006-ownership-handoff-and-fencing.md), [RFC-0009](../rfc/0009-horizontal-scaling-with-cells.md) |
 | Components | [Agent](#agent) | callbacks, leases, tokens and reports | [RFC-0008](../rfc/0008-agent-router-and-budgets.md) |
 | Components | [Router](#router) | positions, the cell map, the route cache and computed routes | [RFC-0003](../rfc/0003-partitioning-strategies.md), [RFC-0008](../rfc/0008-agent-router-and-budgets.md) |
@@ -22,8 +22,8 @@ The diagrams show the whole design. The first release supports a subset of it, t
 
 | In the diagrams | In the support matrix | Outside it |
 |---|---|---|
-| Topology | `embedded`, with one cell per namespace | `service` with `sharderd`, `leaderless`, more than one cell |
-| Store | etcd, through `go.thesmos.sh/sharder/etcd`. `store/memory` in tests and simulations | Every other backend |
+| Topology | `embedded`, with one cell per namespace | `service`, `leaderless`, more than one cell |
+| Store | `store/memory`, in tests and simulations | The store of a deployment |
 | Transport | `httptransport` | `grpc` |
 | Routing | `watch` | `lookup`, `compute` |
 | Ownership | `exclusive`, fenced by the application's fence | `delegated`, with the application authority, and approvals, with the approver |
@@ -49,8 +49,8 @@ The diagrams show the whole design. The first release supports a subset of it, t
 
 - The controller, the agent and the router are packages of the root module, which imports only core, kanon's runtime, `github.com/cespare/xxhash/v2` and the standard library.
 - Every call between processes goes through a transport adapter, `httptransport`, which sends kanon-encoded bodies over HTTP/2 and the call's version and features in headers. Calls within one process go through `protocol.Local`, which checks the same metadata.
-- The store adapter implements `store.Store` and `membership.Membership` over an etcd client that the embedder built. The store has one root scope per namespace and one scope per cell.
-- `sharderctl` sends every operation to the controller that applies it through `Submit`, and a cluster manager calls `Disrupt` and `Done`. The transport adapter authenticates each caller, and the controller authorises it by the kind of the operation. Operators need store read credentials for `sharderctl status` and `history`, and no write credentials.
+- The store adapter implements `store.Store` and `membership.Membership` over the backend of the deployment, with a client that the embedder built. The support matrix contains no store of a deployment. The store has one root scope per namespace and one scope per cell.
+- The client of package `maintenance` sends every operation of an operator to the controller that applies it through `Submit`, and a cluster manager calls `Disrupt` and `Done`. The application builds the command line of its operators on that client. The transport adapter authenticates each caller, and the controller authorises it by the kind of the operation. An operator needs store read credentials for the status, and no write credentials.
 
 ## Components
 
@@ -93,7 +93,7 @@ The service topology is outside the support matrix.
 
 ![Deployment of the service topology](deployment/service.svg)
 
-- `sharderd` processes host the roots and the cell controllers of many namespaces.
+- The controller processes of the application host the roots and the cell controllers of many namespaces. The application builds their program on package `controller`.
 - The root scope and the scope of cell `c1` share store cluster A, and cell `c2` has its own cluster B, as the store adapter maps them.
 
 ### Leaderless topology

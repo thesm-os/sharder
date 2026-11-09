@@ -4,7 +4,7 @@ title: Readers of the store take store.Reader
 status: Accepted
 date: 2026-10-10
 supersedes: none
-superseded-by: none
+superseded-by: RFC-0018 in part, ADR-0050 in part
 rfc: RFC-0007, RFC-0008
 ---
 

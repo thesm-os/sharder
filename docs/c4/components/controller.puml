@@ -6,7 +6,7 @@
 
 title Components: Controller
 
-Container(sharderctl, "sharderctl", "Go program", "Sends proposals and prints the replies.")
+Container(maintenance, "Maintenance client", "Go library", "Sends the proposals of an operator, and returns the receipts.")
 System_Ext(manager, "Cluster manager", "Admits and ends planned disruptions.")
 Container(router, "Router", "Go library", "Looks up uncached routes in lookup mode, outside the support matrix.")
 Container(transport, "Transport adapter", "Go module", "Sends protocol calls between processes, with the caller's authenticated identity, version and features.")
@@ -28,7 +28,7 @@ Container(agent, "Agent", "Go library", "Runs callbacks and sends reports.")
 Container(adapters, "Store adapter", "Go module", "Implements store.Store and membership.Membership.")
 System_Ext(monitoring, "Monitoring", "Metrics and logs.")
 
-Rel(sharderctl, transport, "Sends proposals", "Submit")
+Rel(maintenance, transport, "Sends proposals", "Submit")
 Rel(manager, transport, "Admits and ends disruptions", "Disrupt, Done")
 Rel(router, transport, "Looks up routes", "ControllerClient")
 Rel(agent, transport, "Sends reports", "ControllerClient")

@@ -26,3 +26,4 @@ Each RFC proposes one part of the design of `sharder` and records the alternativ
 | [0015](0015-consensus-only-for-the-root.md) | Consensus only for the root, and cell scopes that the root replicates | Draft |
 | [0016](0016-test-code-that-dokimi-generates.md) | Enumerations, error checks, conformance suites, doubles and builders that dokimi generates | Accepted |
 | [0017](0017-simulation-that-dokimi-generates.md) | A deterministic simulation of a namespace that dokimi generates | Accepted |
+| [0018](0018-maintenance-calls.md) | Maintenance calls for the applications that embed sharder | Accepted |

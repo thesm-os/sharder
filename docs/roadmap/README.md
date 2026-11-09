@@ -17,7 +17,7 @@ What we are building, in what order, and what has to be true first. Milestone nu
 
 ## Authority architecture and downstream integrations
 
-The direction in draft RFC-0015 replaces the old assumed etcd dependency with an external consensus root and replicated cell scopes. RFC-0014 supplies a local file-store proposal. Both RFCs remain Draft: this roadmap does not accept their protocols or claim an available backend. Milestone 0001 first records the architecture decision, selects the external root-quorum library and passes the backend and cross-process acceptance gates. Historical etcd tests remain useful scenarios, not a release dependency.
+sharder does not provide an etcd adapter (ADR-0051). The direction of draft RFC-0015 is an external consensus root with replicated cell scopes, and RFC-0014 supplies a local file-store proposal. Both RFCs remain Draft: this roadmap does not accept their protocols or claim an available backend. Milestone 0001 first records the architecture decision, selects the external root-quorum library and passes the backend and cross-process acceptance gates.
 
 Theke v2's default replicated design uses a separate primary-backup application adapter: a consensus configuration master, all-counted data commits, fenced configuration activation and committed-cut reads. Local theke fences are not the transactional Guard of milestone 0001. Milestone 0003 must specify and test this capability before the integration is advertised. Milestone 0002 is the alternative for applications whose own consensus authority elects and commits data. Neither a control-store implementation nor a replica-count setting provides the application adapter automatically.
 

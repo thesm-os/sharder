@@ -4,10 +4,10 @@ title: A deterministic simulation of a namespace that dokimi generates
 author: Roy Klopper
 status: Accepted
 created: 2026-10-28
-updated: 2026-11-08
+updated: 2026-11-09
 discussion: none
 supersedes: RFC-0001 in part
-superseded-by: none
+superseded-by: RFC-0018 in part, ADR-0050 in part, ADR-0051 in part
 produces-adr: ADR-0048
 research: none
 related: RFC-0001, RFC-0004, RFC-0006, RFC-0007, RFC-0008, RFC-0014, RFC-0015, RFC-0016
@@ -33,7 +33,7 @@ We propose that the generator `sim` of dokimi writes the simulation of the machi
 - The predicate of convergence and its bound.
 - The scenarios of the crash points, and a simulation for each trace.
 
-Each run of the simulation is a stateful machine of assert, so prop shrinks a failing run to its smallest case and stores the case as a regression case. `store/memory` gains a manual mode for a runtime on one goroutine. sim v0.10.1 provides these mechanisms of a world:
+Each run of the simulation is a stateful machine of assert, so prop shrinks a failing run to its smallest case and stores the case as a regression case. `store/memory` gains a manual mode for a runtime on one goroutine. sim v0.10.2 provides these mechanisms of a world:
 
 - The machines of a process run on one host, and a shared dependency reads the time of the run.
 - The clock of a host has a monotonic time, which the jumps and the strobe of the clock do not move.
@@ -42,9 +42,10 @@ Each run of the simulation is a stateful machine of assert, so prop shrinks a fa
 - The error of a machine ends its host, and a restart starts the host again.
 - A simulation sets the mean and the most steps of the active phase of a case. Each case keeps a delivery and the advance of time.
 - The final phase runs until the bound of the convergence has passed. A performer makes the world poll a wait at a time on the clock of its host.
+- The final phase starts a host that exits again, as a supervisor starts a process that has exited. The first restart is at once, and the delay of each later one doubles from 10 s up to 5 minutes.
 - A loss after an effect applies the launch, the stop and the message of its outcome, and loses the result alone.
 
-Core's `hlc.NewOver` runs a hybrid logical clock over a physical clock that the caller supplies. The design needs one more mechanism, which sharder requests from dokimi: a final phase that starts a host again once it exits, as a supervisor starts a process that has exited.
+Core's `hlc.NewOver` runs a hybrid logical clock over a physical clock that the caller supplies.
 
 This RFC supersedes the simulator of RFC-0001 and amends the testing standard.
 
@@ -353,11 +354,11 @@ Each oracle is an invariant with a planted defect of the same form: a system wit
 - Each transition has ended in `Done` or `Aborted`.
 - One controller serves each cell, at the address that the record of the cell states.
 - Each shard has a writer, or no node of the view of its cell that is not drained and that the constraint of its spec admits.
-- The writer of each shard is on such a node, unless the view of its cell has none. A drain has then completed, and repair has moved each replica that a changed constraint or a changed node refuses.
-- The agent of the node of each writer alone has a tenure of its shard, at the epoch of its placement.
-- The router of each host routes a key of each shard to the writer of its placement at its epoch, and has no route of a shard without a writer.
+- The writer of each shard is live and on such a node, unless the view of its cell has none. Live means that the view has the node of the writer at the incarnation of its placement. A drain has then completed, and repair has moved each replica that a changed constraint or a changed node refuses.
+- The agent of the node of each writer alone may have a tenure of its shard, at the epoch of its placement, and the agent of a live writer has it. A writer that is not live remains only on a shard that no node may take. It keeps its tenure while its process runs on under `ContinueFenced`, and a node that restarts restores no writer.
+- The router of each host routes a key of each shard to the writer of its placement at its epoch while the view lists the node of the writer, because a route takes the address of each replica from the view. It has no route of a shard without a writer or whose writer has left the view.
 
-The function under `within` derives the bound from the specs of the presets. A recovery adds the TTL of the lease, the longest backoff of each machine, the periodic passes of the placer, and the longest move of a protocol for the cell and for each round of the moves of its shards. The recovery counts one pass for each `maxSourceShards` shards of the layout, and one more. A round moves as many shards as the bounds on the transitions in flight admit. The longest move adds the longest backoff of a step, the timeouts of the steps of the script up to a failed step and of the abort path of that step, and the lock delay of a drop. The bound doubles the longest recovery, because a timer on the slowest clock of a world takes twice its duration in the time of the run. It is 9m40s for the presets of the simulation. sim gives the final phase at most 1,000 steps for each second of the bound, 580,000 steps for 9m40s. The run counts the bound from the end of the last fault, so a pause that lasts into `Settle` does not shorten it. A run that does not converge within the bound fails with the statement of the convergence, apart from a violation of an invariant.
+The function under `within` derives the bound from the specs of the presets. A recovery adds the TTL of the lease, the longest backoff of each machine and of the moves of a shard, the periodic passes of the placer, and the longest move of a protocol for the cell and for each round of the moves of its shards. The recovery counts one pass for each `maxSourceShards` shards of the layout, and one more. A round moves as many shards as the bounds on the transitions in flight admit. The longest move adds the longest backoff of a step, the timeouts of the steps of the script up to a failed step and of the abort path of that step, and the lock delay of a drop. The bound doubles the longest recovery, because a timer on the slowest clock of a world takes twice its duration in the time of the run. It is 10m0s for the presets of the simulation. sim gives the final phase at most 1,000 steps for each second of the bound, 600,000 steps for 10m0s. The run counts the bound from the end of the last fault, so a pause that lasts into `Settle` does not shorten it. A run that does not converge within the bound fails with the statement of the convergence, apart from a violation of an invariant.
 
 A world in which the action Upgrade has raised the schema of a scope has no settled state, because each host that runs a machine of the scope exits at the error of that machine. The predicate checks none of its facts in such a world.
 
@@ -487,14 +488,14 @@ The change that accepts this RFC also updates three items of milestone 0001:
 | Faults of each kind in force at once | 1 |
 | Steps of the active phase of a case | A mean of 1,000, and at most 2,000 |
 | Choices of a case | 82 for each step of `max-steps`, 164,000 |
-| Steps of the final phase of a case | 1,000 for each second of the bound of the convergence, 580,000 |
+| Steps of the final phase of a case | 1,000 for each second of the bound of the convergence, 600,000 |
 | Cases of a simulation | 100, the default of prop |
 | Simulations of the traces | 38 traces over 4 presets, 152 |
 | Runs of the crash points of one scenario | 1 plus 2 for each event of its first run |
 
-These times were measured with sim v0.10.1 on four cores:
+These times were measured on four cores. sim v0.10.2 changes the final phase alone, so the times without the convergence are those of sim v0.10.1:
 
-- The falsification proved its 23 checks in 2.1 s.
+- The falsification proved its 23 checks in 1.6 s with sim v0.10.2.
 - The random cases of `MachineSimulation` without their convergence, and the crash points of the scenario of the spec edit, took 4.7 s.
 - A simulation of a trace without its convergence took 1.7 to 20.8 s.
 
@@ -534,7 +535,7 @@ These times were measured with sim v0.10.1 on four cores:
 | A session of each campaign that bounds its term | In | The term of a root must end at the expiry of the lease of its host. The agent of the root joins the root scope only once the first term has created the namespace, so its session cannot bound that term | A store whose campaigns take a session of the membership |
 | The end of the machines of a host at the error of one of them | In | A process of sharder ends every part at the error of one part, and a recreation of a namespace stops every agent of the old incarnation | A process of sharder whose parts end apart |
 | The shares of `require` at about half of a measurement over 1,000 cases | In | A share that a run seldom reaches fails the simulation without a defect, and half of the measured share still detects a change that halves it | A change of the steps of a case, or of the deliveries of its active phase |
-| A mean of 1,000 steps and at most 2,000 in the active phase of a case | In | The shares of `require` are measured at these steps, and a longer active phase strikes more faults in a case. The falsification proves its 23 checks at these steps in 2.1 s | A change of the deliveries or of the budget of choices of the active phase |
+| A mean of 1,000 steps and at most 2,000 in the active phase of a case | In | The shares of `require` are measured at these steps, and a longer active phase strikes more faults in a case. The falsification proves its 23 checks at these steps in 1.6 s | A change of the deliveries or of the budget of choices of the active phase |
 | A hybrid logical clock of core over the clock of its host, through `hlc.NewOver` | In | The world hashes each effect with every pointer followed, and the effect of a planning pass contains the clock of its controller | None |
 | The monotonic time of the host as the `Elapsed` of its clock | In | The transition engine moves the window of its retry budget by `Elapsed`, and the timers of a host wait for its monotonic time. A reading of `Now` moves with each jump, and the time of the run has no drift | None |
 | A new hybrid logical clock for each incarnation of a host | In | A process of sharder builds its clock when it starts, so a clock that a host keeps across a crash hides the instants that a restarted process issues below those of its last incarnation | None |
@@ -552,7 +553,7 @@ These times were measured with sim v0.10.1 on four cores:
 | The local deadline of a session on the monotonic time of the clock of its host, which the performer applies with `Membership.Lose` | In | A node measures the validity of its lease on its own clock. A deadline on the time of the run ends each session of a host whose clock runs below two thirds of the rate of the run before its first renewal: in a case of 2026-11-08, one root agent joined 57 times. A deadline on the wall time of the clock moves with each jump of the clock | None |
 | The mode of a loss of the lease of each namespace as an input of the case | In | The outage table states the writers under `stop` and under `continue-fenced`, the trace at line 96 runs under `stop`, and the agent revokes its tenures at the end of a session under `stop` alone | None |
 | A recorder of the instruments for each incarnation of a host | In | A process builds its reporter when it starts. A recorder that a host keeps across a crash keeps the instruments that the machines of the crashed incarnation bound, so the gauges of a cell show two controllers | None |
-| Bounds of one on the transitions in flight in the specs of `MachineSimulation` | Out | The bound of the convergence then counts a round of moves for each shard, 54m40s against 9m40s. Under the defaults of the presets no bound binds for 16 shards, so the planted defect of the bounds runs specs with bounds of one | A final phase whose steps do not grow with the bound |
+| Bounds of one on the transitions in flight in the specs of `MachineSimulation` | Out | The bound of the convergence then counts a round of moves for each shard, 55m0s against 10m0s. Under the defaults of the presets no bound binds for 16 shards, so the planted defect of the bounds runs specs with bounds of one | A final phase whose steps do not grow with the bound |
 | The convergence of a world in which the action Upgrade has raised the schema of a scope | Out | Each host that runs a machine of the scope exits at the error of that machine, and the machines of the other namespace of the host exit with it | A release whose machines serve a scope of a newer schema |
 | A forged callback with the key of a served callback and another payload | In | An agent keeps the result of a callback that did not end with a transient error, so the forgery takes the key of a callback to which the controller had a reply without an error. A forgery of a key whose result the agent does not keep can take effect as the first callback of its key | None |
 | A reference application over a fenced store in `machinetest` | In | Writer safety and exactly-once effects need the writes and the keys of an application | None |
@@ -628,7 +629,6 @@ Rejected because it would repeat the generations, the receipts, the elections an
 
 ## Drawbacks
 
-- sim starts an exited host again once, when the final phase starts. A recreation of a namespace whose agents stop in the final phase leaves their host down, and the case fails its convergence until dokimasia/dokimi#80 is released.
 - A random case of the planted defect of the reported violations seldom keeps a replica against a constraint, so the proof of that oracle rests on the scenario of the spec edit.
 - Each campaign of a root joins a session of its own, which a store of a deployment does not need. The term of a root ends at the expiry of that session, which the client of an etcd store gets from the lease of its election keys.
 - The interfaces of the store, the membership, the fence and the handler declare the errors of a lost call, so each of their doubles gains a helper for each error.

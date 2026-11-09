@@ -16,7 +16,7 @@ Deployment_Node(clients, "Application client process", "one per client") {
     Container(router, "Router", "Go library", "Routes each key.")
 }
 
-Deployment_Node(storecluster, "Store cluster", "etcd") {
+Deployment_Node(storecluster, "Store cluster", "the backend of the store adapter") {
     ContainerDb(root, "Root scope", "store scope", "The namespace incarnation, the mapping, the spec, the cell map and the root's election.")
     ContainerDb(cells, "Cell scope", "store scope, one per cell, and one cell in the support matrix", "Placements, transitions, reservations, the cell record and node leases.")
 }
@@ -27,11 +27,11 @@ Deployment_Node(database, "Application database", "the application's storage") {
 
 Rel(controller, agent, "Sends callbacks to the agents of its cell", "Do, through httptransport, or protocol.Local for its own node")
 Rel(agent, controller, "Reports", "Report, through httptransport")
-Rel(controller, root, "Campaigns, commits the cell map", "etcd adapter")
-Rel(controller, cells, "Acquires the scope, commits assignments", "etcd adapter")
-Rel(agent, cells, "Watches its index, renews its lease", "etcd adapter")
-Rel(router, root, "Watches the cell map", "etcd adapter")
-Rel(router, cells, "Watches the cell's routes", "etcd adapter")
+Rel(controller, root, "Campaigns, commits the cell map", "store adapter")
+Rel(controller, cells, "Acquires the scope, commits assignments", "store adapter")
+Rel(agent, cells, "Watches its index, renews its lease", "store adapter")
+Rel(router, root, "Watches the cell map", "store adapter")
+Rel(router, cells, "Watches the cell's routes", "store adapter")
 Rel(agent, fences, "Acquires fences", "the application's fence.Guard")
 
 SHOW_LEGEND()

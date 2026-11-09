@@ -13,14 +13,13 @@ System_Ext(clients, "Application clients", "Send requests to the replicas of a k
 System_Ext(manager, "Cluster manager", "Restarts and moves processes.")
 
 System_Boundary(sharder, "sharder") {
-    Container(sharderctl, "sharderctl", "Go program, module sharder/cmd", "Sends proposals to apply specs, drain nodes and move shards, and prints the controllers' replies.")
-    Container(sharderd, "sharderd", "Go program, module sharder/cmd", "Hosts the controllers of many namespaces in the service topology. Outside the support matrix.")
+    Container(maintenance, "Maintenance client", "Go library, package maintenance, in the command line of the application", "Reads the status of a namespace, sends the proposals of an operator to the controllers that apply them, and requests the disruptions of a cell.")
     Container(controller, "Controller", "Go library, package controller, in application servers", "Runs the root of each namespace and the cell assigned to it: planning, transitions, proposals and the disruption budget.")
     Container(agent, "Agent", "Go library, package replica, in each application server", "Adds and drops replicas through the application's Handler, refuses stale callbacks, renews the node's lease, and reports the node's replicas, load and faults.")
     Container(router, "Router", "Go library, package router, in each application client", "Maps a key to its cell and route from a watch of the store, and routes again after a NotOwnerError.")
     Container(transport, "Transport adapter", "Go module sharder/httptransport. sharder/grpc is outside the support matrix", "Implements the protocol's clients, and serves the agent and the controller on the embedder's server with the embedder's credentials. Sends each call's version and features in headers.")
-    Container(adapters, "Store adapter", "Go module sharder/etcd", "Implements store.Store and membership.Membership over an etcd client that the embedder built.")
-    ContainerDb(store, "Store", "etcd, with one root scope and one scope per cell", "Root scope: the namespace incarnation, the mapping, the spec, the cell map and the root leader's record. Cell scope: placements, the per-node index, transitions, reservations, drains, the cell record and node leases. Both: commit receipts, and the applied proposals with their callers.")
+    Container(adapters, "Store adapter", "Go package of the deployment, and store/memory in tests and simulations", "Implements store.Store and membership.Membership over the backend of the deployment, with a client that the embedder built.")
+    ContainerDb(store, "Store", "the backend of the store adapter, with one root scope and one scope per cell", "Root scope: the namespace incarnation, the mapping, the spec, the cell map and the root leader's record. Cell scope: placements, the per-node index, transitions, reservations, drains, the cell record and node leases. Both: commit receipts, and the applied proposals with their callers.")
 }
 
 System_Ext(storage, "Application storage", "The application's database and its fence records.")
@@ -34,14 +33,13 @@ Lay_R(controller, router)
 Lay_R(router, agent)
 Lay_R(storage, monitoring)
 
-Rel(operator, sharderctl, "Runs")
-Rel(approver, sharderctl, "Signs proposals", "sharderctl sign")
+Rel(operator, maintenance, "Applies specs, drains nodes and moves shards", "the command line of the application")
+Rel(approver, maintenance, "Signs proposals", "the command line of the application")
 Rel(manager, transport, "Admits and ends planned disruptions", "Disrupt, Done")
 BiRel(servers, agent, "Start and close the agent, report faults; receive replica callbacks", "Go API, Handler")
 Rel(clients, router, "Route each key", "Go API")
 
-Rel(sharderd, controller, "Runs", "in process")
-Rel(sharderctl, transport, "Sends proposals", "Submit")
+Rel(maintenance, transport, "Sends proposals and disruptions", "Submit, Disrupt, Done")
 BiRel(controller, transport, "Sends callbacks; serves reports, proposals and disruptions", "AgentClient, ControllerServer")
 BiRel(agent, transport, "Serves callbacks; sends reports and its own disruption", "AgentServer, ControllerClient")
 Rel(router, transport, "Looks up routes in lookup mode, outside the support matrix", "ControllerClient")
@@ -49,8 +47,8 @@ Rel(router, transport, "Looks up routes in lookup mode, outside the support matr
 Rel(controller, adapters, "Acquires scopes, commits cell maps, specs, assignments, reservations and applied proposals, watches membership", "store.Store, membership.Membership")
 Rel(agent, adapters, "Watches its index and the cell record, renews its lease", "store.Store, membership.Membership")
 Rel(router, adapters, "Watches the cell map and each cell's routes", "store.Store")
-Rel(sharderctl, adapters, "Reads controller records, status and history", "store.Store")
-Rel(adapters, store, "Reads, writes and watches scopes, renews leases", "the etcd v3 API")
+Rel(maintenance, adapters, "Reads the records of the controllers, the status and the views", "store.Reader, membership.Membership")
+Rel(adapters, store, "Reads, writes and watches scopes, renews leases", "the API of the backend")
 
 Rel(agent, storage, "Acquires each writer's fence", "the application's fence.Guard")
 Rel(servers, storage, "Write shard data, checked against the fence", "the application's fence.Guard")

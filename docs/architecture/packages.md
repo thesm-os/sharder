@@ -12,7 +12,7 @@ The repository has two Go modules. The root module is the library, and the examp
 | Module | Directory | Contains | Requires |
 |---|---|---|---|
 | `go.thesmos.sh/sharder` | `.` | The library | `go.thesmos.sh/core`, `go.thesmos.sh/kanon` and `github.com/cespare/xxhash/v2`. Its tests and its kits also require `go.dokimi.dev/assert`, `go.dokimi.dev/conform`, `go.dokimi.dev/spec` and `go.dokimi.dev/stub` |
-| `go.thesmos.sh/sharder/examples` | `examples/` | One example per preset and per topology of the support matrix | The root module and `go.thesmos.sh/core`. Its tests also require `go.dokimi.dev/assert` |
+| `go.thesmos.sh/sharder/examples` | `examples/` | One example per preset and per topology of the support matrix, and one per operation of an operator | The root module and `go.thesmos.sh/core`. Its tests also require `go.dokimi.dev/assert` |
 
 The root module contains the in-memory store and membership of `store/memory`, and the in-process transport of `protocol/local`. It contains no adapter of a production store and no network transport.
 
@@ -79,6 +79,7 @@ A package may import the packages in its row, and every package that those packa
 | `router` | `Router` with its requests and results, `Watcher` with its `Config`, `Do`, `NotOwnerError`, and the errors of a router | `shard`, `config`, `store`, `membership` and its internal packages |
 | `router/routertest` | The suite of `Watcher` and the double of `Router` | `router` |
 | `embedded` | `Process` with its `Config` and its `Namespace`, the `Transport` of a process, and the errors of a process | `shard`, `config`, `fence`, `store`, `membership`, `protocol`, `controller`, `replica` and `router` |
+| `maintenance` | `Client` with its `Config`, the requests and the results of its calls, and the errors of a client | `shard`, `config`, `proposal`, `budget`, `store`, `membership` and `protocol` |
 
 ## Internal packages
 
@@ -105,7 +106,7 @@ The internal packages contain the machines and the logic that two components sha
 
 ## The examples
 
-`examples/` contains one directory per example. The key of each directory is the kind of the example and the registered name that it shows: `preset-actor-entities/`, `preset-consumer-group/`, `preset-exclusive-worker/`, `preset-leader-election/` and `topology-embedded/`. Each directory contains the program in `main.go` and its test in `main_test.go`. The program contains the application of the example. `examples/internal/fencedstore` is the fenced storage that the examples share.
+`examples/` contains one directory per example. The key of each directory is the kind of the example and the name that it shows: `operation-disruption/`, `operation-drain/`, `operation-explain/`, `operation-move/`, `operation-spec/`, `operation-undrain/`, `preset-actor-entities/`, `preset-consumer-group/`, `preset-exclusive-worker/`, `preset-leader-election/` and `topology-embedded/`. Each directory contains the program in `main.go` and its test in `main_test.go`. The program contains the application of the example. `examples/internal/fencedstore` is the fenced storage that the examples share.
 
 ## Import rules
 

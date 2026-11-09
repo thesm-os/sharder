@@ -52,7 +52,8 @@ tenant-06: 1:worker-a 2:worker-a 3:worker-b 4:worker-b 5:worker-b 6:worker-a 7:w
 ```
 
 The jobs that run on worker-b differ from run to run. The [catalogue of the
-examples](examples/README.md) lists an example for each preset and for the topology `embedded`.
+examples](examples/README.md) lists an example for each preset, for the topology `embedded` and
+for each operation of an operator.
 
 ## Embed sharder
 
@@ -128,6 +129,7 @@ documentation.
 | Area | Packages | Provides |
 |---|---|---|
 | Processes | [`embedded`](embedded/), [`controller`](controller/), [`replica`](replica/), [`router`](router/) | An application process of the topology `embedded`, a controller process with the root of each namespace and the controllers of its cells, the agent that hosts the replicas of a node, and the router that maps the key of a request to the replicas of its shard |
+| Operations | [`maintenance`](maintenance/) | The status of a namespace, the proposals of an operator and the disruptions of a cell, on which an application builds the command line of its operators |
 | Specs | [`config`](config/), [`builtin`](builtin/) | Namespace specs, the registry of strategies and presets, the support matrix, and the built-in strategies and presets |
 | Partitioning | [`partition`](partition/), [`partition/fixedslots`](partition/fixedslots/), [`partition/singleton`](partition/singleton/), [`partition/xxhash64`](partition/xxhash64/) | The map from keys to positions, the division of a cell into shards, the partitioners `fixed-slots` and `singleton`, and the hash `xxhash64` |
 | Placement | [`placement`](placement/), [`placement/planner`](placement/planner/), [`placement/constraint`](placement/constraint/), [`placement/goal`](placement/goal/) | The placement of the replicas of a cell on its nodes, the planner, and its six constraints and seven goals |

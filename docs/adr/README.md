@@ -9,8 +9,8 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 
 | ADR | Title | Status |
 |---|---|---|
-| [0001](0001-conformance-kits-per-contract.md) | Conformance kits for every contract with more than one implementation | Superseded in part by [0045](0045-dokimi-generates-the-test-code.md) |
-| [0002](0002-store-reader-for-readers.md) | Readers of the store take store.Reader | Accepted |
+| [0001](0001-conformance-kits-per-contract.md) | Conformance kits for every contract with more than one implementation | Superseded in part by [0045](0045-dokimi-generates-the-test-code.md) and [0051](0051-sharder-does-not-provide-an-etcd-adapter.md) |
+| [0002](0002-store-reader-for-readers.md) | Readers of the store take store.Reader | Superseded in part by [0050](0050-applications-run-maintenance-through-the-library.md) |
 | [0003](0003-implementations-below-contracts.md) | Built-in implementations are subpackages of their contracts | Accepted |
 | [0004](0004-proposals-in-their-own-package.md) | Proposals and approvals form package proposal | Superseded by [0008](0008-declarations-of-the-support-matrix.md) |
 | [0005](0005-core-assigns-shard-ids.md) | The core assigns shard IDs from core's identifiers | Superseded by [0018](0018-shard-ids-are-128-bit-identifiers.md) |
@@ -32,7 +32,7 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0021](0021-engine-bounds-callbacks-per-node.md) | The transition engine bounds the callbacks to each node with a queue of its own | Accepted |
 | [0022](0022-engine-commits-one-batch-at-a-time.md) | The transition engine commits its changes with one batch in flight | Accepted |
 | [0023](0023-membership-ends-node-incarnations.md) | The transition engine takes the end of a node incarnation from the membership view | Accepted |
-| [0024](0024-controller-makes-the-source-the-fallback.md) | A controller makes the source of a move its fallback, or gives the move none | Accepted |
+| [0024](0024-controller-makes-the-source-the-fallback.md) | A controller makes the source of a move its fallback, or gives the move none | Superseded in part by [0049](0049-abort-without-a-fault-defers-the-shard.md) |
 | [0025](0025-cell-logs-the-cell-above-its-bounds.md) | The controller of a cell logs the cell above its bounds | Accepted |
 | [0026](0026-agent-joins-again-after-its-session.md) | The agent joins its cell again with a new incarnation after its session ends | Accepted |
 | [0027](0027-agent-raises-epoch-from-the-ack.md) | The agent raises its controller epoch from the ack of a report | Accepted |
@@ -41,7 +41,7 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0030](0030-routes-take-addresses-from-views.md) | A route takes the address of each replica from the view of its cell | Accepted |
 | [0031](0031-constructors-take-a-config.md) | The constructors of the components take a pointer to their configuration | Accepted |
 | [0032](0032-controller-hosts-cells-through-a-root-agent.md) | A controller process hosts its cells through an agent of the root | Accepted |
-| [0033](0033-placement-records-the-writer-incarnation.md) | A placement records the incarnation of its writer | Accepted |
+| [0033](0033-placement-records-the-writer-incarnation.md) | A placement records the incarnation of its writer | Superseded in part by [0049](0049-abort-without-a-fault-defers-the-shard.md) |
 | [0034](0034-replica-declares-the-agent-of-the-matrix.md) | Package replica declares the agent of the support matrix in the form of the interfaces standard | Accepted |
 | [0035](0035-router-declares-the-router-of-the-matrix.md) | Package router declares the router of the support matrix in the form of the interfaces standard | Accepted |
 | [0036](0036-local-routes-controller-calls-by-address.md) | The local transport routes the calls of a controller by the address in the record of the cell | Accepted |
@@ -57,3 +57,6 @@ Each ADR records one decision and what it cost. Once an ADR is accepted, do not 
 | [0046](0046-specs-build-structs-through-fixtures.md) | The specs build the structs with generated builders through the fixtures of their package | Accepted |
 | [0047](0047-planner-applies-the-placer-suite-through-subject.md) | The planner applies the suite of Placer through the directive subject | Accepted |
 | [0048](0048-dokimi-generates-the-simulation-of-a-namespace.md) | dokimi generates the simulation of the machines of a namespace | Accepted |
+| [0049](0049-abort-without-a-fault-defers-the-shard.md) | A move that aborts without a fault defers the moves of its shard for a backoff | Accepted |
+| [0050](0050-applications-run-maintenance-through-the-library.md) | Applications run the maintenance of their namespaces through package maintenance | Accepted |
+| [0051](0051-sharder-does-not-provide-an-etcd-adapter.md) | sharder does not provide an etcd adapter | Accepted |

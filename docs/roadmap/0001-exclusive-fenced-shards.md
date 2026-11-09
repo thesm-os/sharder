@@ -27,7 +27,7 @@ An application can embed sharder to spread exclusive shards over its processes, 
 
 - [ ] Record the accepted control-store architecture. The direction of Draft RFC-0015 is an external consensus root plus replicated cell scopes, with Draft RFC-0014's file-store format as a prerequisite. Neither draft is accepted by this checklist, and no release claims them as implemented.
 - [ ] Select and pin the root-quorum library, its durable-state and lease assumptions, membership replacement, backup/recovery and supported failure model. The library supplies the required root `store.Store` and `membership.Membership` laws.
-- [ ] Reconcile RFC-0007 and the support matrix with the accepted architecture. Remove the obsolete assumption that etcd is the release backend. A single-process `store/file` is tested and documented as such; it does not satisfy cross-process control-plane availability by itself.
+- [ ] Reconcile RFC-0007 and the support matrix with the accepted architecture. A single-process `store/file` is tested and documented as such; it does not satisfy cross-process control-plane availability by itself.
 - [ ] Specify and test the root/cell protocol boundary, configuration activation, committed versus prepared state, read authority, session renewal across failover and crash recovery before enabling the cross-process deployment.
 
 ### The boundary
@@ -84,7 +84,7 @@ CI runs the simulation of each trace and its stored cases over every supported p
 - [ ] A change of a node's capacity or labels that invalidates the current assignment is repaired without a writer-safety violation, and a drain completes when it makes the balance worse.
 - [ ] A constraint that a spec edit adds while a transition is in flight does not stop the transition. A replica that the transition places against the constraint is reported and repaired.
 - [ ] A controller of an older release refuses a scope with a newer `Head.Schema` before any commit, also when the schema rises between its head read and its acquisition.
-- [ ] An unknown commit followed by a takeover leaves `Outcome` without a receipt, and no component reports the commit as rejected. `sharderctl` reports a proposal's outcome from `Applied`.
+- [ ] An unknown commit followed by a takeover leaves `Outcome` without a receipt, and no component reports the commit as rejected. `maintenance.Client.Status` reports a proposal's outcome from `Applied`.
 - [ ] A read with pages, a watch and a membership watch that resume across a recreation of the namespace under the same name, at an equal generation, return `shard.ErrIncarnation`. A delayed `Join` of the old incarnation changes nothing in the new one.
 - [ ] A callback of a new controller that arrives before the agent's watch delivers the controller's record returns `errs.Transient` and succeeds on a retry. A caller that claims a higher controller epoch without a matching record does not change the agent's state.
 - [ ] A removal that the watch delivers after a newer `add` on the same node incarnation leaves the newer tenure active. Within one transition, a move away from A removes A's tenure at e and the abort path restores A at e+2, and the delayed removal of the tenure at e has no effect. A cleanup still stops a replica that a late callback started after its operation ended.
@@ -186,7 +186,7 @@ The second design review of 2026-09-28 raised 21 findings against the revised RF
 | The public API cannot host the root and a cell | S-01 | Fixed: `WithNode`, the controller's `AgentServer`, `Dispatch`, initial specs and `router.New` | The two-process example |
 | A deferred drain loses its disruption on failover | S-02 | Fixed: pending reservations | The crash-before-admission trace |
 | A controller refuses a newer schema only after it has acquired the scope | S-03 | Fixed: the schema check precedes the acquisition, and a protocol version raises the schema | The newer-schema trace |
-| A takeover deletes the evidence of an old outcome | S-04 | Contract clarified: a barrier prevents future application only, and `sharderctl` reads `Applied` | The unknown-commit takeover trace |
+| A takeover deletes the evidence of an old outcome | S-04 | Contract clarified: a barrier prevents future application only, and `maintenance.Client.Status` reads `Applied` | The unknown-commit takeover trace |
 | A resumed read or watch does not name its incarnation | S-05 | Fixed: reads, page tokens, watches and membership calls are bound to an incarnation | The recreation trace, and `store/storetest` |
 | The outage table claims that no newer tenure acquires during a store outage | A-01 | Corrected | The outage trace |
 | A simulated pause stops the process's clock | A-02 | Fixed: the clock advances during a pause | The simulator check |
@@ -230,7 +230,7 @@ It needs these from outside this repository:
 - Core's `id.ID128`, which a shard ID embeds.
 - `resilience.Retrier.Start` and `Retry` in core, with which the transition engine decides each retry of a callback without a wait inside the call.
 - kanon's generator, and its runtime packages `go.thesmos.sh/kanon` and `go.thesmos.sh/kanon/wire`, which the generated codecs import.
-- The generator `sim` of dokimi and the module `go.dokimi.dev/sim` v0.10.1 for the simulation of RFC-0017, with the mechanism that dokimasia/dokimi#80 requests.
+- The generator `sim` of dokimi and the module `go.dokimi.dev/sim` v0.10.2 for the simulation of RFC-0017.
 - `hlc.NewOver` in core, which runs the clock of each host of that simulation over the clock of the host.
 - A nightly step of ergon that runs the long tests, which dokimasia/ergon#78 requests, for the job that runs the failure traces.
 
@@ -240,7 +240,7 @@ Milestones 0002 to 0005 wait for this one.
 
 ## Scope
 
-The scope is the support matrix of the first release and its enforcement: `Resolve`, the built-in presets, the examples and the documentation all read `builtin.Support`. The root module, the accepted authority backend, `httptransport` and `sharderctl` are in scope. Backend implementation starts only after the authority decision gates above; the local file store and replicated control backend have distinct deployment claims. The RFCs contain the design.
+The scope is the support matrix of the first release and its enforcement: `Resolve`, the built-in presets, the examples and the documentation all read `builtin.Support`. The root module with its maintenance calls, the accepted authority backend and `httptransport` are in scope. Backend implementation starts only after the authority decision gates above; the local file store and replicated control backend have distinct deployment claims. The RFCs contain the design.
 
 ## Not in this milestone
 
@@ -249,7 +249,7 @@ The scope is the support matrix of the first release and its enforcement: `Resol
 - Resharding, `hash-range` and `key-range`: milestone 0004.
 - Namespaces of more than one cell, and cell splits: milestone 0005.
 - `explicit`, the function placers and `static`: nobody has scheduled them.
-- The `service` topology with `sharderd`, the `leaderless` topology, `lookup` and `compute` routing, and `hold`: nobody has scheduled them.
+- The `service` topology, the `leaderless` topology, `lookup` and `compute` routing, and `hold`: nobody has scheduled them.
 - `affinity` and `overlapping` ownership, and `make-before-break`, `graceful` and `staged` handoffs: nobody has scheduled them.
 - The gRPC transport and approvals: nobody has scheduled them.
 - Restoring a store from a backup: not supported, and nobody has scheduled it.
@@ -260,13 +260,15 @@ The scope is the support matrix of the first release and its enforcement: `Resol
 |---|---|---|
 | RFC-0014, RFC-0015 or the external root-quorum dependency remains unresolved | Cross-process support and every dependent milestone | Keep that capability disabled; complete the protocol decision and real-process gates before advertising it |
 | The selected backend cannot durably encode a supported transaction shape within its limits | This milestone, and milestones 0002 to 0005 | Split the shape into smaller commits, or publish lower limits for a cell |
-| dokimi releases no mechanism for dokimasia/dokimi#80 | The convergence of each case whose recreation of a namespace takes effect in its final phase, and the failure traces of recreations in the simulator | Revise RFC-0017 for the mechanism that dokimi releases in its place |
 | ergon releases no nightly step for dokimasia/ergon#78 | The run of the failure traces in CI | Revise RFC-0017 for the mechanism that ergon releases in its place |
 
 ## Changes
 
 | Date | What changed | Why |
 |---|---|---|
+| 2026-11-09 | Removed the assumption that etcd is the release backend from the check of the support matrix | ADR-0051 records that sharder does not provide an etcd adapter |
+| 2026-11-09 | Replaced `sharderctl` with the maintenance calls of package `maintenance` in the scope, in the check of an unknown commit and in the finding S-04. Removed `sharderd` from the `service` topology in the items that nobody has scheduled | RFC-0018 gives the applications that embed sharder the calls of maintenance, and sharder provides no command and no program |
+| 2026-11-09 | Named sim v0.10.2 in the prerequisites, and removed the request dokimasia/dokimi#80 from the prerequisites and the risks | sim v0.10.2 starts a host that exits in the final phase of a case again |
 | 2026-11-08 | Named sim v0.10.1 in the prerequisites, and replaced the requests dokimasia/dokimi#76, #77 and #78 with dokimasia/dokimi#80 in the prerequisites and the risks | sim v0.10.1 releases the mechanisms of #76, #77 and #78. A host that exits in the final phase of a case remains down, so the simulation needs one more mechanism of dokimi |
 | 2026-11-08 | Added the requests dokimasia/ergon#78 and dokimasia/dokimi#78 to the prerequisites and the risks | The spec of the failure traces of RFC-0017 runs in the nightly workflow, and ergon has no nightly step that runs tests. sim drops the start and the stop of a cell machine at a loss after the effect |
 | 2026-11-08 | Added the generator `sim` of dokimi with sim v0.9.0, `hlc.NewOver` of core v0.42.0 and the requests dokimasia/dokimi#76 and #77 to the prerequisites and the risks | The simulation of RFC-0017 runs on sim v0.9.0 and core v0.42.0, and needs two more mechanisms of dokimi |

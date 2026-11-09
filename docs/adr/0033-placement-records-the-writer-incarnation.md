@@ -4,7 +4,7 @@ title: A placement records the incarnation of its writer
 status: Accepted
 date: 2026-10-13
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0049 in part
 rfc: RFC-0005, RFC-0006, RFC-0007
 ---
 

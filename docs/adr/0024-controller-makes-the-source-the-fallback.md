@@ -4,7 +4,7 @@ title: A controller makes the source of a move its fallback, or gives the move n
 status: Accepted
 date: 2026-10-12
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0049 in part
 rfc: RFC-0004, RFC-0006, RFC-0009
 ---
 

@@ -15,7 +15,7 @@ Deployment_Node(clients, "Application client process", "one per client") {
     Container(router, "Router", "Go library", "Computes each route with the namespace's function placer.")
 }
 
-Deployment_Node(storecluster, "Store cluster", "a store backend, such as etcd") {
+Deployment_Node(storecluster, "Store cluster", "a store backend") {
     ContainerDb(root, "Root scope", "store scope", "The spec.")
     ContainerDb(cell, "Scope of the single cell", "store scope", "One election per written shard, whose term is the shard's epoch, and node leases when the store provides membership.")
 }
