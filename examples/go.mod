@@ -3,20 +3,20 @@
 
 module go.thesmos.sh/sharder/examples
 
-go 1.27.3
+go 1.27.4
 
 require (
-	go.dokimi.dev/assert v0.20.0
-	go.thesmos.sh/core v0.43.0
+	go.dokimi.dev/assert v0.23.0
+	go.thesmos.sh/core v0.50.0
 	go.thesmos.sh/sharder v0.1.1
 )
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
-	go.dokimi.dev/conform v0.16.3 // indirect
+	go.dokimi.dev/conform v0.18.1 // indirect
 	go.dokimi.dev/fault v0.2.4 // indirect
-	go.dokimi.dev/host v0.2.1 // indirect
+	go.dokimi.dev/host v0.2.2 // indirect
 	go.dokimi.dev/medium v0.2.1 // indirect
 	go.dokimi.dev/spec v0.5.1 // indirect
 	go.dokimi.dev/stub v0.3.3 // indirect
